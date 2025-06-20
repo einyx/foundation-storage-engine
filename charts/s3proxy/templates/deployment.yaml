@@ -1,0 +1,299 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "s3proxy.fullname" . }}
+  labels:
+    {{- include "s3proxy.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "s3proxy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "s3proxy.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "s3proxy.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # Log level configuration
+            - name: LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+
+            # Server configuration
+            - name: SERVER_LISTEN
+              value: {{ .Values.config.server.listen | quote }}
+            - name: SERVER_READ_TIMEOUT
+              value: {{ .Values.config.server.readTimeout | quote }}
+            - name: SERVER_WRITE_TIMEOUT
+              value: {{ .Values.config.server.writeTimeout | quote }}
+            - name: SERVER_IDLE_TIMEOUT
+              value: {{ .Values.config.server.idleTimeout | quote }}
+            - name: SERVER_MAX_BODY_SIZE
+              value: {{ .Values.config.server.maxBodySize | quote }}
+
+            # S3 configuration
+            - name: S3_REGION
+              value: {{ .Values.config.s3.region | quote }}
+            - name: S3_VIRTUAL_HOST
+              value: {{ .Values.config.s3.virtualHost | quote }}
+            - name: S3_PATH_STYLE
+              value: {{ .Values.config.s3.pathStyle | quote }}
+            - name: S3_IGNORE_UNKNOWN_HEADERS
+              value: {{ .Values.config.s3.ignoreUnknownHeaders | quote }}
+
+            # Storage provider
+            - name: STORAGE_PROVIDER
+              value: {{ .Values.config.storage.provider | quote }}
+
+            {{- if eq .Values.config.storage.provider "azure" }}
+            # Azure configuration
+            {{- if and .Values.externalSecrets.enabled .Values.externalSecrets.azure.enabled }}
+            # Using ExternalSecrets for Azure credentials
+            - name: AZURE_ACCOUNT_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalSecrets.azure.targetSecretName }}
+                  key: AZURE_ACCOUNT_NAME
+            - name: AZURE_ACCOUNT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalSecrets.azure.targetSecretName }}
+                  key: AZURE_ACCOUNT_KEY
+            {{- if .Values.externalSecrets.azure.remoteRefs.sasToken.key }}
+            - name: AZURE_SAS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalSecrets.azure.targetSecretName }}
+                  key: AZURE_SAS_TOKEN
+            {{- end }}
+            {{- else }}
+            # Using traditional secret management
+            - name: AZURE_ACCOUNT_NAME
+              value: {{ .Values.config.storage.azure.accountName | quote }}
+            {{- if .Values.config.storage.azure.accountKey }}
+            - name: AZURE_ACCOUNT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "s3proxy.fullname" . }}
+                  key: azure-account-key
+            {{- end }}
+            {{- if .Values.config.storage.azure.sasToken }}
+            - name: AZURE_SAS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "s3proxy.fullname" . }}
+                  key: azure-sas-token
+            {{- end }}
+            {{- end }}
+            - name: AZURE_CONTAINER_NAME
+              value: {{ .Values.config.storage.azure.containerName | quote }}
+            {{- if .Values.config.storage.azure.endpoint }}
+            - name: AZURE_ENDPOINT
+              value: {{ .Values.config.storage.azure.endpoint | quote }}
+            {{- end }}
+            - name: AZURE_USE_SAS
+              value: {{ .Values.config.storage.azure.useSAS | quote }}
+            {{- end }}
+
+            {{- if eq .Values.config.storage.provider "s3" }}
+            # S3 backend configuration
+            {{- if .Values.config.storage.s3.endpoint }}
+            - name: S3_ENDPOINT
+              value: {{ .Values.config.storage.s3.endpoint | quote }}
+            {{- end }}
+            - name: S3_REGION
+              value: {{ .Values.config.storage.s3.region | quote }}
+            {{- if and .Values.externalSecrets.enabled .Values.externalSecrets.aws.enabled }}
+            # Using ExternalSecrets for AWS credentials
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalSecrets.aws.targetSecretName }}
+                  key: AWS_ACCESS_KEY_ID
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalSecrets.aws.targetSecretName }}
+                  key: AWS_SECRET_ACCESS_KEY
+            {{- else }}
+            # Using traditional secret management
+            {{- if .Values.config.storage.s3.accessKey }}
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "s3proxy.fullname" . }}
+                  key: s3-access-key
+            {{- end }}
+            {{- if .Values.config.storage.s3.secretKey }}
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "s3proxy.fullname" . }}
+                  key: s3-secret-key
+            {{- end }}
+            {{- end }}
+            - name: S3_USE_PATH_STYLE
+              value: {{ .Values.config.storage.s3.usePathStyle | quote }}
+            - name: S3_DISABLE_SSL
+              value: {{ .Values.config.storage.s3.disableSSL | quote }}
+            {{- end }}
+
+            {{- if eq .Values.config.storage.provider "filesystem" }}
+            # Filesystem configuration
+            - name: FS_BASE_DIR
+              value: {{ .Values.config.storage.filesystem.baseDir | quote }}
+            {{- end }}
+
+            # Authentication configuration
+            - name: AUTH_TYPE
+              value: {{ .Values.config.auth.type | quote }}
+            {{- if and .Values.externalSecrets.enabled .Values.externalSecrets.auth.enabled }}
+            # Using ExternalSecrets for auth credentials
+            - name: AUTH_IDENTITY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalSecrets.auth.targetSecretName }}
+                  key: AUTH_IDENTITY
+            - name: AUTH_CREDENTIAL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalSecrets.auth.targetSecretName }}
+                  key: AUTH_CREDENTIAL
+            {{- else }}
+            # Using traditional secret management
+            {{- if .Values.config.auth.identity }}
+            - name: AUTH_IDENTITY
+              value: {{ .Values.config.auth.identity | quote }}
+            {{- end }}
+            {{- if .Values.config.auth.credential }}
+            - name: AUTH_CREDENTIAL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "s3proxy.fullname" . }}
+                  key: auth-credential
+            {{- end }}
+            {{- end }}
+
+            # AWS Credentials for fast auth
+            {{- if .Values.awsCredentials.enabled }}
+            {{- if .Values.awsCredentials.existingSecret }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.awsCredentials.existingSecret }}
+                  key: {{ .Values.awsCredentials.accessKeyIdKey }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.awsCredentials.existingSecret }}
+                  key: {{ .Values.awsCredentials.secretAccessKeyKey }}
+            {{- else if .Values.awsCredentials.accessKeyId }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "s3proxy.fullname" . }}
+                  key: aws-access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "s3proxy.fullname" . }}
+                  key: aws-secret-access-key
+            {{- end }}
+            {{- end }}
+
+            # Encryption configuration
+            - name: ENCRYPTION_ENABLED
+              value: {{ .Values.config.encryption.enabled | quote }}
+            {{- if .Values.config.encryption.enabled }}
+            - name: ENCRYPTION_ALGORITHM
+              value: {{ .Values.config.encryption.algorithm | quote }}
+            - name: ENCRYPTION_KEY_PROVIDER
+              value: {{ .Values.config.encryption.keyProvider | quote }}
+
+            {{- if eq .Values.config.encryption.keyProvider "local" }}
+            {{- if and .Values.externalSecrets.enabled .Values.externalSecrets.encryption.enabled }}
+            # Using ExternalSecrets for encryption keys
+            - name: ENCRYPTION_LOCAL_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalSecrets.encryption.targetSecretName }}
+                  key: ENCRYPTION_LOCAL_MASTER_KEY
+            {{- else if .Values.config.encryption.local.masterKey }}
+            # Using traditional secret management
+            - name: ENCRYPTION_LOCAL_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "s3proxy.fullname" . }}
+                  key: encryption-master-key
+            {{- end }}
+            {{- end }}
+
+            {{- if eq .Values.config.encryption.keyProvider "kms" }}
+            {{- if .Values.config.encryption.kms.keyId }}
+            - name: ENCRYPTION_KMS_KEY_ID
+              value: {{ .Values.config.encryption.kms.keyId | quote }}
+            {{- end }}
+            {{- if .Values.config.encryption.kms.region }}
+            - name: ENCRYPTION_KMS_REGION
+              value: {{ .Values.config.encryption.kms.region | quote }}
+            {{- end }}
+            - name: ENCRYPTION_KMS_CACHE_TTL
+              value: {{ .Values.config.encryption.kms.cacheTTL | quote }}
+            {{- end }}
+            {{- end }}
+
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.config.storage.filesystem.baseDir }}
+          {{- end }}
+      {{- if .Values.persistence.enabled }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (include "s3proxy.fullname" .) }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,16 @@
+# Trivy ignore file
+# https://aquasecurity.github.io/trivy/latest/docs/vulnerability/examples/filter/
+
+# Example CVEs to ignore (uncomment and modify as needed)
+# CVE-2022-12345
+
+# Ignore test dependencies
+*_test.go
+
+# Ignore vendor directory
+vendor/
+
+# Ignore specific paths
+testdata/
+examples/
+docs/

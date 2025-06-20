@@ -1,0 +1,20 @@
+apiVersion: v2
+name: s3proxy
+description: A high-performance S3-compatible proxy server for multiple storage backends
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - s3
+  - proxy
+  - minio
+  - storage
+  - azure
+  - blob
+home: https://github.com/alessio/s3proxy-go
+sources:
+  - https://github.com/alessio/s3proxy-go
+maintainers:
+  - name: Alessio
+    email: alessio@example.com
+icon: https://min.io/resources/img/logo.svg

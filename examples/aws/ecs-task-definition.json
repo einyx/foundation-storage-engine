@@ -1,0 +1,90 @@
+{
+  "containerDefinitions": [
+    {
+      "environment": [
+        {
+          "name": "SERVER_LISTEN",
+          "value": ":9000"
+        },
+        {
+          "name": "STORAGE_PROVIDER",
+          "value": "s3"
+        },
+        {
+          "name": "S3_ENDPOINT",
+          "value": "https://s3.amazonaws.com"
+        },
+        {
+          "name": "S3_REGION",
+          "value": "us-east-1"
+        },
+        {
+          "name": "AUTH_TYPE",
+          "value": "basic"
+        },
+        {
+          "name": "AUTH_IDENTITY",
+          "value": "minio"
+        },
+        {
+          "name": "ENABLE_OBJECT_CACHE",
+          "value": "true"
+        },
+        {
+          "name": "CACHE_MAX_MEMORY",
+          "value": "1073741824"
+        },
+        {
+          "name": "LOG_LEVEL",
+          "value": "info"
+        },
+        {
+          "name": "LOG_FORMAT",
+          "value": "json"
+        }
+      ],
+      "essential": true,
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "curl -f http://localhost:9000/minio/health/live || exit 1"
+        ],
+        "interval": 30,
+        "retries": 3,
+        "startPeriod": 60,
+        "timeout": 5
+      },
+      "image": "ghcr.io/s3proxy/s3proxy-go:latest",
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/s3proxy-minio-dev",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "name": "s3proxy",
+      "portMappings": [
+        {
+          "containerPort": 9000,
+          "protocol": "tcp"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "AUTH_CREDENTIAL",
+          "valueFrom": "${AWS_SECRET_ARN}"
+        }
+      ]
+    }
+  ],
+  "cpu": "1024",
+  "executionRoleArn": "${AWS_EXECUTION_ROLE_ARN}",
+  "family": "s3proxy-minio-dev",
+  "memory": "2048",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "taskRoleArn": "${AWS_TASK_ROLE_ARN}"
+}

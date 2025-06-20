@@ -1,0 +1,143 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# Build output
+/s3proxy
+/bin/
+/dist/
+
+# GoReleaser
+dist/
+
+# IDE specific files
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.*
+*.env
+!.env.example
+!.env.sample
+!.env.template
+
+# Secrets and credentials
+**/secrets/
+**/credentials/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*-key.json
+*-credentials.json
+*-secret.json
+*-secret.yaml
+*-secret.yml
+
+# Local configuration
+local.yaml
+local.yml
+local.json
+config.local.yaml
+config.local.yml
+config.local.json
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+*.tfvars
+!terraform.tfvars.example
+
+# Kubernetes secrets
+*-secret.yaml
+*-secret.yml
+secrets.yaml
+secrets.yml
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage.txt
+coverage.html
+coverage.out
+*.cover
+
+# Benchmarks
+*.bench
+
+# Profiling
+*.prof
+*.pprof
+
+# Debug
+debug
+__debug_bin
+
+# Temporary files
+*.tmp
+tmp/
+temp/
+
+# Test files
+.test-master-key
+test-*.go
+debug-*.go
+test-data/
+test-fs-encryption/
+debug-fs/
+
+# Pre-commit
+.pre-commit-config.yaml.bak
+
+# Security scanning
+gosec-report.json
+gosec-results.sarif
+trivy-results.json
+trivy-results.sarif
+semgrep-results.sarif
+.secrets.baseline
+sbom.spdx.json
+trufflehog-results.json
+
+# AWS credentials and config
+.aws/
+aws-config.yaml
+aws-*.yaml
+!aws-*-example.yaml
+
+# MinIO credentials
+minio-*.yaml
+!minio-*-example.yaml
+
+# Wiki (embedded git repo)
+wiki/

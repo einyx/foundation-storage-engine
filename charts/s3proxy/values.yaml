@@ -1,0 +1,323 @@
+# Default values for s3proxy.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: einyxx/s3proxy
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Service configuration
+service:
+  # Service name - defaults to "minio" for compatibility
+  name: s3proxy-go
+  type: ClusterIP
+  port: 9000
+  targetPort: 8080
+  annotations: {}
+  labels: {}
+
+# S3 Proxy Configuration
+config:
+  # Log level: debug, info, warn, error
+  logLevel: "info"
+
+  # Server settings
+  server:
+    listen: ":8080"
+    readTimeout: "60s"
+    writeTimeout: "60s"
+    idleTimeout: "120s"
+    maxBodySize: "5368709120"  # 5GB
+
+  # S3 API settings
+  s3:
+    region: "us-east-1"
+    virtualHost: false
+    pathStyle: true
+    ignoreUnknownHeaders: true
+
+  # Storage backend configuration
+  storage:
+    # Provider: azure, s3, filesystem
+    provider: "azure"
+
+    # Azure Blob Storage settings
+    azure:
+      accountName: ""
+      accountKey: ""
+      containerName: ""
+      endpoint: ""
+      useSAS: false
+      sasToken: ""
+
+    # S3 backend settings
+    s3:
+      endpoint: ""
+      region: "us-east-1"
+      accessKey: ""
+      secretKey: ""
+      usePathStyle: true
+      disableSSL: false
+
+    # Filesystem backend settings
+    filesystem:
+      baseDir: "/data"
+
+  # Authentication settings
+  auth:
+    # Type: none, basic, awsv2, awsv4
+    type: "none"
+    identity: ""
+    credential: ""
+
+  # Encryption settings
+  encryption:
+    enabled: false
+    algorithm: "AES-256-GCM"
+    keyProvider: "local"  # local or kms
+
+    # Local key configuration
+    local:
+      masterKey: ""
+
+    # KMS key configuration
+    kms:
+      keyId: ""
+      region: "us-east-1"
+      cacheTTL: 300
+
+    # Encryption policies
+    policies: []
+    # Example policy:
+    # - bucketPattern: "secure-*"
+    #   algorithm: "AES-256-GCM"
+    #   keyProvider: "kms"
+    #   mandatory: true
+
+# AWS Credentials from environment (for fast auth)
+awsCredentials:
+  enabled: false
+  accessKeyId: ""
+  secretAccessKey: ""
+  # Existing secret with AWS credentials
+  existingSecret: ""
+  # Keys in existing secret
+  accessKeyIdKey: "AWS_ACCESS_KEY_ID"
+  secretAccessKeyKey: "AWS_SECRET_ACCESS_KEY"  # pragma: allowlist secret
+
+# ConfigMap for additional configuration
+configMap:
+  enabled: true
+  data: {}
+
+# Secrets for sensitive data
+secrets:
+  enabled: true
+  # Additional secret data
+  data: {}
+
+# ExternalSecrets configuration
+externalSecrets:
+  enabled: false
+  # External Secrets Operator backend type
+  # Options: vault, aws-secrets-manager, azure-key-vault, google-secret-manager, etc.
+  backendType: vault
+
+  # Refresh interval for syncing secrets
+  refreshInterval: 15s
+
+  # Secret store configuration
+  secretStore:
+    name: ""
+    kind: SecretStore  # or ClusterSecretStore
+
+  # Azure storage credentials from external secret
+  azure:
+    enabled: false
+    # Remote references for Azure credentials
+    remoteRefs:
+      accountName:
+        key: "azure/storage/account-name"
+        property: ""  # optional: JSON property if secret contains JSON
+      accountKey:
+        key: "azure/storage/account-key"
+        property: ""
+      sasToken:
+        key: "azure/storage/sas-token"
+        property: ""
+    # Target secret name (will be created by ExternalSecrets)
+    targetSecretName: "s3proxy-azure-credentials"
+
+  # AWS/S3 storage credentials from external secret
+  aws:
+    enabled: false
+    # Remote references for AWS credentials
+    remoteRefs:
+      accessKeyId:
+        key: "aws/s3/access-key-id"
+        property: ""
+      secretAccessKey:
+        key: "aws/s3/secret-access-key"
+        property: ""
+    # Target secret name (will be created by ExternalSecrets)
+    targetSecretName: "s3proxy-aws-credentials"
+
+  # Authentication credentials from external secret
+  auth:
+    enabled: false
+    # Remote references for auth credentials
+    remoteRefs:
+      identity:
+        key: "s3proxy/auth/identity"
+        property: ""
+      credential:
+        key: "s3proxy/auth/credential"
+        property: ""
+    # Target secret name (will be created by ExternalSecrets)
+    targetSecretName: "s3proxy-auth-credentials"
+
+  # Encryption keys from external secret
+  encryption:
+    enabled: false
+    # Remote references for encryption keys
+    remoteRefs:
+      masterKey:
+        key: "s3proxy/encryption/master-key"
+        property: ""
+    # Target secret name (will be created by ExternalSecrets)
+    targetSecretName: "s3proxy-encryption-keys"
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  fsGroup: 1000
+  runAsNonRoot: true
+  runAsUser: 1000
+
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+# Persistence for filesystem backend
+persistence:
+  enabled: false
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 10Gi
+  annotations: {}
+  existingClaim: ""
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Liveness and readiness probes
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  # kubernetes.io/ingress.class: nginx
+  # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: s3proxy.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: s3proxy-tls
+  #    hosts:
+  #      - s3proxy.local
+
+# PodDisruptionBudget
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  # maxUnavailable: 1
+
+# NetworkPolicy
+networkPolicy:
+  enabled: false
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+
+# Monitoring
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+    # Additional labels for ServiceMonitor
+    # release: prometheus

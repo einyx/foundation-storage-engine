@@ -1,0 +1,205 @@
+# S3Proxy Helm Values for AWS Dev Environment with IAM Roles
+# Install with: helm install s3proxy-minio ./charts/s3proxy -n dev -f helm-values-aws-dev.yaml
+
+# Use the official image
+image:
+  repository: ghcr.io/einyx/s3proxy-go
+  tag: encryption
+  pullPolicy: Always
+
+# Service configuration - MinIO compatible
+service:
+  name: s3proxy-minio
+  type: ClusterIP
+  port: 9000
+  targetPort: 8080
+
+# S3 Proxy Configuration
+config:
+  # Server settings
+  server:
+    listen: ":8080"
+    readTimeout: "600s"
+    writeTimeout: "600s"
+    maxBodySize: "5368709120"  # 5GB
+
+  # Storage backend - AWS S3
+  storage:
+    provider: "s3"
+
+    # S3 backend settings
+    s3:
+      endpoint: "https://s3.amazonaws.com"
+      region: "us-east-1"
+      # Dummy credentials to satisfy validation - IRSA will override
+      accessKey: "${AWS_ACCESS_KEY_ID}"
+      secretKey: "${AWS_SECRET_ACCESS_KEY}"
+      profile: ""
+      usePathStyle: false
+      disableSSL: false
+
+  # Authentication - MinIO compatible
+  auth:
+    type: "awsv4"
+    identity: "${AUTH_IDENTITY}"
+    credential: "${AUTH_CREDENTIAL}"
+
+  # Performance settings
+  performance:
+    cacheSize: 2048  # MB
+    cacheTTL: 900    # 15 minutes
+    rateLimit: 10000
+    maxConcurrentRequests: 500
+
+# ServiceAccount with IAM role annotation
+serviceAccount:
+  create: true
+  annotations:
+    # EKS IRSA annotation - replace with your IAM role ARN
+    eks.amazonaws.com/role-arn: "${AWS_IAM_ROLE_ARN}"
+  name: "s3proxy"
+
+# Pod annotations
+podAnnotations:
+  # Optional: Force IRSA token refresh
+  eks.amazonaws.com/sts-regional-endpoints: "true"
+
+# Environment variables for AWS SDK
+env:
+  - name: AWS_REGION
+    value: "us-east-1"
+  - name: AWS_DEFAULT_REGION
+    value: "us-east-1"
+  # IRSA token configuration
+  - name: AWS_ROLE_ARN
+    value: "${AWS_IAM_ROLE_ARN}"
+  - name: AWS_WEB_IDENTITY_TOKEN_FILE
+    value: "/var/run/secrets/eks.amazonaws.com/serviceaccount/token"
+  # Force AWS SDK to use web identity
+  - name: AWS_SDK_LOAD_CONFIG
+    value: "true"
+  # Enable IMDSv2 for better security
+  - name: AWS_EC2_METADATA_DISABLED
+    value: "false"
+  - name: AWS_STS_REGIONAL_ENDPOINTS
+    value: "regional"
+  # Override listen port
+  - name: SERVER_LISTEN
+    value: ":8080"
+  # Provide dummy credentials that will be overridden by IRSA
+  - name: AWS_ACCESS_KEY_ID
+    value: "dummy"
+  - name: AWS_SECRET_ACCESS_KEY
+    value: "dummy"
+  # Cache configuration
+  - name: ENABLE_OBJECT_CACHE
+    value: "true"
+  - name: CACHE_MAX_MEMORY
+    value: "2147483648"
+  - name: CACHE_TTL
+    value: "15m"
+  # Logging
+  - name: LOG_LEVEL
+    value: "info"
+  - name: LOG_FORMAT
+    value: "json"
+
+# Resources
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+# Autoscaling
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Health probes
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Security Context
+podSecurityContext:
+  fsGroup: 1000
+  runAsNonRoot: true
+  runAsUser: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+
+# Monitoring
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      release: prometheus
+
+# Optional: Ingress configuration
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "5G"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+  hosts:
+    - host: minio-dev.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: minio-dev-tls
+      hosts:
+        - minio-dev.example.com
+
+# Node affinity for better performance
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - s3proxy
+          topologyKey: kubernetes.io/hostname
