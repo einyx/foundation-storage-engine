@@ -1,0 +1,56 @@
+# Example configuration for s3proxy
+# Copy this file to config.yaml and adjust settings as needed
+
+server:
+  port: 8080
+  host: "0.0.0.0"
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+
+storage:
+  backend: "azure"  # Options: azure, s3, file
+  
+  # Azure configuration
+  azure:
+    account_name: "your-storage-account"
+    account_key: "your-account-key"
+    container_name: "your-container"
+  
+  # S3 configuration
+  s3:
+    region: "us-east-1"
+    bucket: "your-bucket"
+    access_key: ""
+    secret_key: ""
+    endpoint: ""  # Optional: for S3-compatible services
+  
+  # File system configuration
+  file:
+    root_path: "/var/lib/s3proxy"
+
+logging:
+  level: "info"  # Options: debug, info, warn, error
+  format: "json"  # Options: json, text
+
+metrics:
+  enabled: true
+  port: 9090
+  path: "/metrics"
+
+cache:
+  enabled: true
+  size_mb: 1024
+  ttl: 3600s
+
+rate_limiting:
+  enabled: false
+  requests_per_second: 100
+  burst: 200
+
+# KMS encryption settings
+encryption:
+  enabled: false
+  kms:
+    key_id: ""
+    region: "us-east-1"
