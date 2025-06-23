@@ -17,7 +17,8 @@ including AWS S3, Azure Blob Storage, and local filesystem storage.
 
 
 <p align="center">
-  <img src="logo.png" width="20%" />
+  <img src="logo.png" width="20%" /> 
+  <br/>
   <img src="https://img.shields.io/badge/AWS%20S3-Compatible-FF9900?style=for-the-badge&logo=amazon-aws&logoColor=white" alt="AWS S3 Compatible" />
   <img src="https://img.shields.io/badge/Azure%20Blob-Supported-0078D4?style=for-the-badge&logo=microsoft-azure&logoColor=white" alt="Azure Blob Storage" />
   <img src="https://img.shields.io/badge/Kubernetes-Ready-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white" alt="Kubernetes Ready" />
