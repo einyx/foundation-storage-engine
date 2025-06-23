@@ -5,6 +5,7 @@ on:
     types: [published]
   repository_dispatch:
     types: [update-debian-mirror]
+  workflow_dispatch:  # Allow manual triggering
 
 permissions:
   contents: read
