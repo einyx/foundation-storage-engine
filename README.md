@@ -656,9 +656,9 @@ export TRACE_REQUESTS=true
 ```text
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │                 │     │                 │     │                 │
-│   S3 Clients    │────▶│   Foundation Storage Engine    │────▶│ Storage Backend │
-│   (AWS SDK)     │ HTTP│                 │     │ (S3/Azure/FS)   │
-│                 │     │                 │     │                 │
+│   S3 Clients    │────▶│   Foundation    │────▶│ Storage Backend │
+│   (AWS SDK)     │ HTTP│      Storage    │     │ (S3/Azure/FS)   │
+│                 │     │     Engine      │     │                 │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
                                │
                                ▼
