@@ -164,7 +164,7 @@ jobs:
       - name: Generate benchmark trends
         run: |
           # Install required tools
-          go install github.com/benchmark-action/github-action-benchmark/cmd/benchstat@latest
+          go install golang.org/x/perf/cmd/benchstat@latest
           pip install matplotlib pandas
           
           # Create Python script to generate graphs
