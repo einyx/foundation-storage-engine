@@ -11,7 +11,7 @@
 [![Vibes](https://img.shields.io/badge/vibes-immaculate%20✨-ff69b4?style=flat)](https://github.com/einyx/foundation-storage-engine)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat)](http://makeapullrequest.com)
 
-<img width=50% src=https://i.ibb.co/ZRRNkZMR/Screenshot-2025-06-23-at-19-37-39.png/>
+<img width=10% src="https://i.ibb.co/ZRRNkZMR/Screenshot-2025-06-23-at-19-37-39.png" />
 A high-performance, production-ready S3-compatible proxy server written in Go.
 Foundation Storage Engine provides a unified S3 API interface for multiple storage backends
 including AWS S3, Azure Blob Storage, and local filesystem storage.
