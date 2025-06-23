@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/einyx/foundation-storage-engine)](https://goreportcard.com/report/github.com/einyx/foundation-storage-engine)
 [![Docker Pulls](https://img.shields.io/docker/pulls/einyx/foundation-storage-engine)](https://hub.docker.com/r/einyx/foundation-storage-engine)
-[![CI Status](https://github.com/einyx/foundation-storage-engine/workflows/CI/badge.svg)](https://github.com/einyx/foundation-storage-engine/actions)
+[![CI Status](https://github.com/einyx/foundation-storage-engine/workflows/Release/badge.svg)](https://github.com/einyx/foundation-storage-engine/actions)
 [![codecov](https://codecov.io/gh/einyx/foundation-storage-engine/branch/main/graph/badge.svg?token=ABCDEFG)](https://codecov.io/gh/einyx/foundation-storage-engine)
 [![Release](https://img.shields.io/github/release/einyx/foundation-storage-engine.svg)](https://github.com/einyx/foundation-storage-engine/releases/latest)
 [![GoDoc](https://pkg.go.dev/badge/github.com/einyx/foundation-storage-engine?status.svg)](https://pkg.go.dev/github.com/einyx/foundation-storage-engine)
@@ -15,7 +15,9 @@ A high-performance, production-ready S3-compatible proxy server written in Go.
 Foundation Storage Engine provides a unified S3 API interface for multiple storage backends
 including AWS S3, Azure Blob Storage, and local filesystem storage.
 
+
 <p align="center">
+  <img src="logo.png" width="20%" />
   <img src="https://img.shields.io/badge/AWS%20S3-Compatible-FF9900?style=for-the-badge&logo=amazon-aws&logoColor=white" alt="AWS S3 Compatible" />
   <img src="https://img.shields.io/badge/Azure%20Blob-Supported-0078D4?style=for-the-badge&logo=microsoft-azure&logoColor=white" alt="Azure Blob Storage" />
   <img src="https://img.shields.io/badge/Kubernetes-Ready-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white" alt="Kubernetes Ready" />
