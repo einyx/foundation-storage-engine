@@ -84,13 +84,15 @@ type Metrics struct {
 	mu               sync.RWMutex
 }
 
-// NewMetrics creates a new metrics instance
+// NewMetrics creates a new metrics instance (singleton to avoid duplicate registration)
 func NewMetrics(namespace string) *Metrics {
 	if namespace == "" {
 		namespace = "foundation_storage_engine"
 	}
 
-	return &Metrics{
+	// Use singleton pattern to avoid duplicate registration in tests/benchmarks
+	defaultMetricsOnce.Do(func() {
+		defaultMetrics = &Metrics{
 		RequestsTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: namespace,
