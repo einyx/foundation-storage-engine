@@ -4,12 +4,16 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/einyx/foundation-storage-engine)](https://goreportcard.com/report/github.com/einyx/foundation-storage-engine)
 [![Docker Pulls](https://img.shields.io/docker/pulls/einyx/foundation-storage-engine)](https://hub.docker.com/r/einyx/foundation-storage-engine)
-[![CI Status](https://github.com/einyx/foundation-storage-engine/workflows/CI/badge.svg)](https://github.com/einyx/foundation-storage-engine/actions)
+[![CI Status](https://github.com/einyx/foundation-storage-engine/workflows/Release/badge.svg)](https://github.com/einyx/foundation-storage-engine/actions)
 [![codecov](https://codecov.io/gh/einyx/foundation-storage-engine/branch/main/graph/badge.svg?token=ABCDEFG)](https://codecov.io/gh/einyx/foundation-storage-engine)
 [![Release](https://img.shields.io/github/release/einyx/foundation-storage-engine.svg)](https://github.com/einyx/foundation-storage-engine/releases/latest)
 [![GoDoc](https://pkg.go.dev/badge/github.com/einyx/foundation-storage-engine?status.svg)](https://pkg.go.dev/github.com/einyx/foundation-storage-engine)
 [![Vibes](https://img.shields.io/badge/vibes-immaculate%20✨-ff69b4?style=flat)](https://github.com/einyx/foundation-storage-engine)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat)](http://makeapullrequest.com)
+
+<p align="center">
+  <img src="logo.png" width="20%"/>
+</p>
 
 A high-performance, production-ready S3-compatible proxy server written in Go.
 Foundation Storage Engine provides a unified S3 API interface for multiple storage backends
@@ -652,9 +656,9 @@ export TRACE_REQUESTS=true
 ```text
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │                 │     │                 │     │                 │
-│   S3 Clients    │────▶│   Foundation Storage Engine    │────▶│ Storage Backend │
-│   (AWS SDK)     │ HTTP│                 │     │ (S3/Azure/FS)   │
-│                 │     │                 │     │                 │
+│   S3 Clients    │────▶│   Foundation    │────▶│ Storage Backend │
+│   (AWS SDK)     │ HTTP│      Storage    │     │ (S3/Azure/FS)   │
+│                 │     │     Engine      │     │                 │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
                                │
                                ▼
