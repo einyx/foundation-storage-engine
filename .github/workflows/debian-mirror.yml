@@ -94,7 +94,7 @@ jobs:
           
       - name: Create repository index page
         run: |
-          cat > index.html << 'EOF'
+          cat > index.html << "HTMLEOF"
           <!DOCTYPE html>
           <html>
           <head>
@@ -171,11 +171,11 @@ sudo apt install foundation-storage-engine</code></pre>
               </ul>
           </body>
           </html>
-          EOF
+          HTMLEOF
           
           # Create a simple directory listing for pool
           mkdir -p debian/pool/main/f/foundation-storage-engine
-          cat > debian/pool/main/f/foundation-storage-engine/index.html << 'EOF'
+          cat > debian/pool/main/f/foundation-storage-engine/index.html << "HTMLEOF2"
           <!DOCTYPE html>
           <html>
           <head>
@@ -191,7 +191,7 @@ sudo apt install foundation-storage-engine</code></pre>
               <a href="../../../../../">[Parent Directory]</a><br><br>
           </body>
           </html>
-          EOF
+          HTMLEOF2
           
       - name: Update directory listing
         run: |
