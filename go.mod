@@ -2,8 +2,6 @@ module github.com/meshxdata/foundation-storage-engine
 
 go 1.23.0
 
-toolchain go1.24.3
-
 require (
 	github.com/Azure/azure-storage-blob-go v0.15.0
 	github.com/aws/aws-sdk-go v1.50.0
