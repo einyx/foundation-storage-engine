@@ -59,14 +59,15 @@ nfpms:
     maintainer: S3Proxy Team
     description: High-performance S3-compatible proxy with encryption support
     license: Apache 2.0
+    builds:
+      - s3proxy
     formats:
       - deb
       - rpm
     dependencies:
       - systemd
+    bindir: /usr/bin
     contents:
-      - src: "./s3proxy"
-        dst: /usr/bin/s3proxy
       - src: config-test.yaml
         dst: /etc/s3proxy/config.yaml.example
         type: config
