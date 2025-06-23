@@ -6,7 +6,7 @@
 [![Container Image](https://img.shields.io/badge/ghcr.io-meshxdata%2Ffoundation--storage--engine-blue?logo=docker&logoColor=white)](https://github.com/meshxdata/foundation-storage-engine/pkgs/container/foundation-storage-engine)
 [![CI Status](https://github.com/meshxdata/foundation-storage-engine/workflows/Release/badge.svg)](https://github.com/meshxdata/foundation-storage-engine/actions)
 [![codecov](https://codecov.io/gh/meshxdata/foundation-storage-engine/branch/main/graph/badge.svg?token=ABCDEFG)](https://codecov.io/gh/meshxdata/foundation-storage-engine)
-[![Release](https://img.shields.io/github/release/meshxdata/foundation-storage-engine.svg)](https://github.com/meshxdata/foundation-storage-engine/releases/latest)
+[![Release](https://img.shields.io/github/v/release/meshxdata/foundation-storage-engine)](https://github.com/meshxdata/foundation-storage-engine/releases/latest)
 [![GoDoc](https://pkg.go.dev/badge/github.com/meshxdata/foundation-storage-engine?status.svg)](https://pkg.go.dev/github.com/meshxdata/foundation-storage-engine)
 [![Vibes](https://img.shields.io/badge/vibes-immaculate%20✨-ff69b4?style=flat)](https://github.com/meshxdata/foundation-storage-engine)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat)](http://makeapullrequest.com)

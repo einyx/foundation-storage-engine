@@ -6,6 +6,10 @@ on:
   repository_dispatch:
     types: [update-debian-mirror]
   workflow_dispatch:  # Allow manual triggering
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -14,6 +18,7 @@ permissions:
 jobs:
   update-debian-mirror:
     runs-on: self-hosted
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
