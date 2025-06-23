@@ -15,6 +15,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+var (
+	defaultMetrics     *Metrics
+	defaultMetricsOnce sync.Once
+)
+
 // Metrics holds all the metrics for the foundation-storage-engine
 type Metrics struct {
 	// Request metrics
