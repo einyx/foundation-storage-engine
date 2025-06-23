@@ -26,6 +26,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Create Docker cache directories
+        run: |
+          mkdir -p ~/.docker/.cache/images/docker.io--tonistiigi--binfmt/latest/linux-x64
+          mkdir -p /opt/hostedtoolcache/docker.io--tonistiigi--binfmt/latest/linux-x64 || true
+          
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         
