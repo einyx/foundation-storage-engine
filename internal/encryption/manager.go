@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/einyx/foundation-storage-engine/internal/encryption/types"
+	"github.com/meshxdata/foundation-storage-engine/internal/encryption/types"
 )
 
 // Manager coordinates encryption operations

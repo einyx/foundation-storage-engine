@@ -5,8 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"github.com/einyx/foundation-storage-engine/internal/encryption/types"
-	"github.com/einyx/foundation-storage-engine/internal/kms"
+	"github.com/meshxdata/foundation-storage-engine/internal/encryption/types"
+	"github.com/meshxdata/foundation-storage-engine/internal/kms"
 )
 
 // KMSKeyProviderAdapter adapts a KMS provider to the encryption key provider interface

@@ -3,7 +3,7 @@ package storage
 import (
 	"testing"
 
-	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/meshxdata/foundation-storage-engine/internal/config"
 )
 
 func TestNewS3Backend(t *testing.T) {

@@ -16,7 +16,7 @@ import (
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/sirupsen/logrus"
 
-	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/meshxdata/foundation-storage-engine/internal/config"
 )
 
 type AzureBackend struct {

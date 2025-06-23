@@ -10,7 +10,7 @@ import (
 
 	lru "github.com/hashicorp/golang-lru/v2"
 
-	"github.com/einyx/foundation-storage-engine/internal/storage"
+	"github.com/meshxdata/foundation-storage-engine/internal/storage"
 )
 
 // ObjectCache provides high-performance caching for S3 objects

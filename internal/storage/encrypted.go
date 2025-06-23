@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/einyx/foundation-storage-engine/internal/encryption"
-	"github.com/einyx/foundation-storage-engine/internal/encryption/types"
+	"github.com/meshxdata/foundation-storage-engine/internal/encryption"
+	"github.com/meshxdata/foundation-storage-engine/internal/encryption/types"
 )
 
 // readCloserWrapper wraps an io.Reader to implement io.ReadCloser

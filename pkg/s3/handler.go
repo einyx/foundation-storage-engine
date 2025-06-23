@@ -18,9 +18,9 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 
-	"github.com/einyx/foundation-storage-engine/internal/auth"
-	"github.com/einyx/foundation-storage-engine/internal/config"
-	"github.com/einyx/foundation-storage-engine/internal/storage"
+	"github.com/meshxdata/foundation-storage-engine/internal/auth"
+	"github.com/meshxdata/foundation-storage-engine/internal/config"
+	"github.com/meshxdata/foundation-storage-engine/internal/storage"
 )
 
 const (

@@ -5,11 +5,11 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"github.com/einyx/foundation-storage-engine/internal/config"
-	"github.com/einyx/foundation-storage-engine/internal/encryption/keys"
-	"github.com/einyx/foundation-storage-engine/internal/encryption/stream"
-	"github.com/einyx/foundation-storage-engine/internal/encryption/types"
-	"github.com/einyx/foundation-storage-engine/internal/kms"
+	"github.com/meshxdata/foundation-storage-engine/internal/config"
+	"github.com/meshxdata/foundation-storage-engine/internal/encryption/keys"
+	"github.com/meshxdata/foundation-storage-engine/internal/encryption/stream"
+	"github.com/meshxdata/foundation-storage-engine/internal/encryption/types"
+	"github.com/meshxdata/foundation-storage-engine/internal/kms"
 )
 
 // NewFromConfig creates an encryption manager from configuration

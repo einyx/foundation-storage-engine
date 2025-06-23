@@ -14,8 +14,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"github.com/einyx/foundation-storage-engine/internal/config"
-	"github.com/einyx/foundation-storage-engine/internal/proxy"
+	"github.com/meshxdata/foundation-storage-engine/internal/config"
+	"github.com/meshxdata/foundation-storage-engine/internal/proxy"
 )
 
 var (

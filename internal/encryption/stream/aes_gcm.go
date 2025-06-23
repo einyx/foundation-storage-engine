@@ -11,7 +11,7 @@ import (
 	"io"
 	"strconv"
 
-	"github.com/einyx/foundation-storage-engine/internal/encryption/types"
+	"github.com/meshxdata/foundation-storage-engine/internal/encryption/types"
 )
 
 const (

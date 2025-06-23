@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/meshxdata/foundation-storage-engine/internal/config"
 )
 
 type FileSystemBackend struct {

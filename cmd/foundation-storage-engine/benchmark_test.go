@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/einyx/foundation-storage-engine/internal/config"
-	"github.com/einyx/foundation-storage-engine/internal/proxy"
+	"github.com/meshxdata/foundation-storage-engine/internal/config"
+	"github.com/meshxdata/foundation-storage-engine/internal/proxy"
 )
 
 func BenchmarkFoundationStorageEngineGet(b *testing.B) {

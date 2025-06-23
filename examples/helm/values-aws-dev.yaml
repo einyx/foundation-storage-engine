@@ -3,7 +3,7 @@
 
 # Use the official image
 image:
-  repository: ghcr.io/einyx/s3proxy-go
+  repository: ghcr.io/meshxdata/foundation-storage-engine
   tag: encryption
   pullPolicy: Always
 
