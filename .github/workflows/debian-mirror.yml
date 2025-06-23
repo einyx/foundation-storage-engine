@@ -138,11 +138,9 @@ jobs:
               <h3>Add the repository to your system:</h3>
               
               <pre><code># Add the repository
-		echo "deb https://foundation-storage-engine-debian-mirror.s3.amazonaws.com/ stable main" | sudo tee /etc/apt/sources.list.d/foundation-storage-engine.list
-
-		sudo apt update
-
-		sudo apt install foundation-storage-engine</code></pre>
+                echo "deb https://foundation-storage-engine-debian-mirror.s3.amazonaws.com/ stable main" | sudo tee /etc/apt/sources.list.d/foundation-storage-engine.list
+                sudo apt update
+                sudo apt install foundation-storage-engine</code></pre>
               
               <div class="warning">
                   <strong>Note:</strong> This repository is unsigned. You may need to use <code>--allow-unauthenticated</code> flag or configure apt to allow unsigned repositories.
