@@ -16,7 +16,6 @@
   <img src="logo.png" width="20%"/>
 </p>
 
-A high-performance, production-ready S3-compatible proxy server written in Go.
 Foundation Storage Engine provides a unified S3 API interface for multiple storage backends
 including AWS S3, Azure Blob Storage, and local filesystem storage.
 
@@ -32,7 +31,7 @@ including AWS S3, Azure Blob Storage, and local filesystem storage.
 
 ### Performance
 
-- **Ultra-fast authentication** with built-in caching for AWS signatures
+- **Fast authentication** with built-in caching for AWS signatures
 - **Zero-copy streaming** for large object transfers
 - **Connection pooling** with HTTP/2 support
 - **Intelligent caching layer** for metadata and small objects (10-40x performance boost)
