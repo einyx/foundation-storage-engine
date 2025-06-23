@@ -139,7 +139,7 @@ jobs:
               <h3>Add the repository to your system:</h3>
               
               <pre><code># Add the repository
-                echo "deb https://foundation-storage-engine-debian-mirror.s3.amazonaws.com/ stable main" | sudo tee /etc/apt/sources.list.d/foundation-storage-engine.list
+                echo "deb https://apt.mirror.s3.amazonaws.com/ stable main" | sudo tee /etc/apt/sources.list.d/foundation-storage-engine.list
                 sudo apt update
                 sudo apt install foundation-storage-engine</code></pre>
               
@@ -207,19 +207,19 @@ jobs:
           cp index.html debian/
           
           # Sync the entire debian directory to S3
-          aws s3 sync debian/ s3://foundation-storage-engine-debian-mirror/ \
+          aws s3 sync debian/ s3://apt.mirror/ \
             --delete \
             --cache-control "max-age=300"
             
           # Set proper content types
-          aws s3 cp s3://foundation-storage-engine-debian-mirror/ s3://foundation-storage-engine-debian-mirror/ \
+          aws s3 cp s3://apt.mirror/ s3://apt.mirror/ \
             --exclude "*" \
             --include "*.gz" \
             --content-type "application/gzip" \
             --metadata-directive REPLACE \
             --recursive
             
-          aws s3 cp s3://foundation-storage-engine-debian-mirror/ s3://foundation-storage-engine-debian-mirror/ \
+          aws s3 cp s3://apt.mirror/ s3://apt.mirror/ \
             --exclude "*" \
             --include "*.deb" \
             --content-type "application/vnd.debian.binary-package" \

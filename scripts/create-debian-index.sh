@@ -45,7 +45,7 @@ cat > index.html << 'EOF'
     <h3>Add the repository to your system:</h3>
     
     <pre><code># Add the repository
-echo "deb https://foundation-storage-engine-debian-mirror.s3.amazonaws.com/ stable main" | sudo tee /etc/apt/sources.list.d/foundation-storage-engine.list
+echo "deb https://apt.mirror.s3.amazonaws.com/ stable main" | sudo tee /etc/apt/sources.list.d/foundation-storage-engine.list
 
 # Update package list
 sudo apt update
