@@ -1,0 +1,234 @@
+name: Update Debian Mirror
+
+on:
+  release:
+    types: [published]
+  repository_dispatch:
+    types: [update-debian-mirror]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write  # Required for AWS OIDC authentication
+
+jobs:
+  update-debian-mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          
+      - name: Create debian directory
+        run: mkdir -p debian
+        
+      - name: Download all release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the latest release
+          RELEASE_TAG=$(gh release view --json tagName -q .tagName || echo "")
+          
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "No release found, checking all releases..."
+            # Get all releases and download .deb files
+            gh release list --limit 10 --json tagName -q '.[].tagName' | while read -r tag; do
+              echo "Checking release: $tag"
+              gh release download "$tag" --pattern "*.deb" --dir debian --skip-existing || true
+            done
+          else
+            echo "Downloading from release: $RELEASE_TAG"
+            gh release download "$RELEASE_TAG" --pattern "*.deb" --dir debian --skip-existing || true
+          fi
+          
+      - name: Install repository tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev apt-utils
+          
+      - name: Generate repository metadata
+        run: |
+          cd debian
+          
+          # Create pool directory structure
+          mkdir -p pool/main/f/foundation-storage-engine
+          
+          # Move all .deb files to pool
+          find . -maxdepth 1 -name "*.deb" -exec mv {} pool/main/f/foundation-storage-engine/ \;
+          
+          # Create dists directory structure
+          mkdir -p dists/stable/main/binary-amd64
+          mkdir -p dists/stable/main/binary-arm64
+          
+          # Generate Packages files
+          cd ..
+          dpkg-scanpackages debian/pool/main /dev/null > debian/dists/stable/main/binary-amd64/Packages
+          dpkg-scanpackages debian/pool/main /dev/null > debian/dists/stable/main/binary-arm64/Packages
+          
+          # Compress Packages files
+          gzip -k -f debian/dists/stable/main/binary-amd64/Packages
+          gzip -k -f debian/dists/stable/main/binary-arm64/Packages
+          
+      - name: Create Release file
+        run: |
+          cat > debian/dists/stable/Release << EOF
+          Origin: Foundation Storage Engine
+          Label: Foundation Storage Engine
+          Suite: stable
+          Codename: stable
+          Version: 1.0
+          Architectures: amd64 arm64
+          Components: main
+          Description: Foundation Storage Engine Debian Repository
+          Date: $(date -R)
+          EOF
+          
+          # Generate checksums
+          cd debian/dists/stable
+          apt-ftparchive release . >> Release
+          
+      - name: Create repository index page
+        run: |
+          cat > index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Foundation Storage Engine - Debian Repository</title>
+              <style>
+                  body {
+                      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                      line-height: 1.6;
+                      color: #333;
+                      max-width: 800px;
+                      margin: 0 auto;
+                      padding: 20px;
+                  }
+                  h1 { color: #2c3e50; }
+                  pre {
+                      background: #f4f4f4;
+                      border: 1px solid #ddd;
+                      padding: 10px;
+                      overflow-x: auto;
+                  }
+                  code {
+                      background: #f4f4f4;
+                      padding: 2px 5px;
+                      border-radius: 3px;
+                  }
+                  .warning {
+                      background: #fff3cd;
+                      border: 1px solid #ffeaa7;
+                      padding: 10px;
+                      border-radius: 5px;
+                      margin: 10px 0;
+                  }
+              </style>
+          </head>
+          <body>
+              <h1>Foundation Storage Engine - Debian Repository</h1>
+              
+              <p>This is the official Debian package repository for Foundation Storage Engine.</p>
+              
+              <h2>Installation</h2>
+              
+              <h3>Add the repository to your system:</h3>
+              
+              <pre><code># Add the repository
+echo "deb https://foundation-storage-engine-debian-mirror.s3.amazonaws.com/ stable main" | sudo tee /etc/apt/sources.list.d/foundation-storage-engine.list
+
+# Update package list
+sudo apt update
+
+# Install the package
+sudo apt install foundation-storage-engine</code></pre>
+              
+              <div class="warning">
+                  <strong>Note:</strong> This repository is unsigned. You may need to use <code>--allow-unauthenticated</code> flag or configure apt to allow unsigned repositories.
+              </div>
+              
+              <h3>Alternative: Direct download</h3>
+              
+              <p>You can also browse and download packages directly:</p>
+              <ul>
+                  <li><a href="pool/main/f/foundation-storage-engine/">Browse all packages</a></li>
+              </ul>
+              
+              <h2>Supported Architectures</h2>
+              <ul>
+                  <li>amd64 (x86_64)</li>
+                  <li>arm64 (aarch64)</li>
+              </ul>
+              
+              <h2>More Information</h2>
+              <ul>
+                  <li><a href="https://github.com/meshxdata/foundation-storage-engine">GitHub Repository</a></li>
+                  <li><a href="https://github.com/meshxdata/foundation-storage-engine/releases">All Releases</a></li>
+              </ul>
+          </body>
+          </html>
+          EOF
+          
+          # Create a simple directory listing for pool
+          mkdir -p debian/pool/main/f/foundation-storage-engine
+          cat > debian/pool/main/f/foundation-storage-engine/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Package Directory</title>
+              <style>
+                  body { font-family: monospace; margin: 20px; }
+                  a { text-decoration: none; }
+                  a:hover { text-decoration: underline; }
+              </style>
+          </head>
+          <body>
+              <h2>Foundation Storage Engine Packages</h2>
+              <a href="../../../../../">[Parent Directory]</a><br><br>
+          </body>
+          </html>
+          EOF
+          
+      - name: Update directory listing
+        run: |
+          cd debian/pool/main/f/foundation-storage-engine
+          for file in *.deb; do
+            if [ -f "$file" ]; then
+              size=$(ls -lh "$file" | awk '{print $5}')
+              date=$(ls -l "$file" | awk '{print $6, $7, $8}')
+              echo "<a href=\"$file\">$file</a> $date $size<br>" >> index.html
+            fi
+          done
+          echo "</body></html>" >> index.html
+          
+      - name: Sync to S3
+        run: |
+          # Copy index.html to the root
+          cp index.html debian/
+          
+          # Sync the entire debian directory to S3
+          aws s3 sync debian/ s3://foundation-storage-engine-debian-mirror/ \
+            --delete \
+            --acl public-read \
+            --cache-control "max-age=300"
+            
+          # Set proper content types
+          aws s3 cp s3://foundation-storage-engine-debian-mirror/ s3://foundation-storage-engine-debian-mirror/ \
+            --exclude "*" \
+            --include "*.gz" \
+            --content-type "application/gzip" \
+            --metadata-directive REPLACE \
+            --recursive \
+            --acl public-read
+            
+          aws s3 cp s3://foundation-storage-engine-debian-mirror/ s3://foundation-storage-engine-debian-mirror/ \
+            --exclude "*" \
+            --include "*.deb" \
+            --content-type "application/vnd.debian.binary-package" \
+            --metadata-directive REPLACE \
+            --recursive \
+            --acl public-read
