@@ -424,6 +424,9 @@ func NewMetrics(namespace string) *Metrics {
 
 		lastResetTime: time.Now(),
 	}
+	})
+	
+	return defaultMetrics
 }
 
 // IncRequest increments request counter
