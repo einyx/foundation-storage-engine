@@ -108,7 +108,7 @@ jobs:
       
       # Upload regression test results
       - name: Upload regression test results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: regression-test-results
           path: regression-test-results/
@@ -154,7 +154,7 @@ jobs:
       
       # Download previous benchmark results
       - name: Download previous benchmarks
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: benchmark-history
           path: benchmark-history
@@ -263,7 +263,7 @@ jobs:
       
       # Upload benchmark history
       - name: Upload benchmark history
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: benchmark-history
           path: benchmark-history/
