@@ -4,10 +4,8 @@ This project implements comprehensive security scanning using multiple tools to 
 
 ## Security Tools
 
-### 1. Gitleaks
+### 1. TruffleHog
 - **Purpose**: Detect and prevent secrets in git repos
-- **Config**: `.gitleaks.toml`
-- **Usage**: `make gitleaks`
 
 ### 2. Gosec
 - **Purpose**: Go security checker
