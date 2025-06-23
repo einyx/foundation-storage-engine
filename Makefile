@@ -1,14 +1,14 @@
 .PHONY: all build test clean security-check install-security-tools
 
 # Build variables
-BINARY_NAME=s3proxy-go
+BINARY_NAME=foundation-storage-engine
 GO=go
 GOFLAGS=-v
 
 all: security-check test build
 
 build:
-	$(GO) build $(GOFLAGS) -o $(BINARY_NAME) .
+	$(GO) build $(GOFLAGS) -o $(BINARY_NAME) ./cmd/foundation-storage-engine
 
 test:
 	$(GO) test $(GOFLAGS) ./...

@@ -54,16 +54,16 @@
         "startPeriod": 60,
         "timeout": 5
       },
-      "image": "ghcr.io/s3proxy/s3proxy-go:latest",
+      "image": "ghcr.io/einyx/foundation-storage-engine:latest",
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
-          "awslogs-group": "/ecs/s3proxy-minio-dev",
+          "awslogs-group": "/ecs/foundation-storage-engine-minio-dev",
           "awslogs-region": "us-east-1",
           "awslogs-stream-prefix": "ecs"
         }
       },
-      "name": "s3proxy",
+      "name": "foundation-storage-engine",
       "portMappings": [
         {
           "containerPort": 9000,
@@ -80,7 +80,7 @@
   ],
   "cpu": "1024",
   "executionRoleArn": "${AWS_EXECUTION_ROLE_ARN}",
-  "family": "s3proxy-minio-dev",
+  "family": "foundation-storage-engine-minio-dev",
   "memory": "2048",
   "networkMode": "awsvpc",
   "requiresCompatibilities": [

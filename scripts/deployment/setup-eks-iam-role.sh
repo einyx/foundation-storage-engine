@@ -1,18 +1,18 @@
 #!/bin/bash
 set -e
 
-# Setup IAM Role for S3Proxy on EKS
-# This script creates an IAM role that can be assumed by the s3proxy service account
+# Setup IAM Role for Foundation Storage Engine on EKS
+# This script creates an IAM role that can be assumed by the foundation-storage-engine service account
 
 # Configuration
 CLUSTER_NAME=${1:-"my-eks-cluster"}
 NAMESPACE=${2:-"dev"}
-SERVICE_ACCOUNT=${3:-"s3proxy"}
-ROLE_NAME=${4:-"s3proxy-eks-role"}
+SERVICE_ACCOUNT=${3:-"foundation-storage-engine"}
+ROLE_NAME=${4:-"foundation-storage-engine-eks-role"}
 AWS_REGION=${AWS_REGION:-"us-east-1"}
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
-echo "🔧 Setting up IAM Role for S3Proxy on EKS"
+echo "🔧 Setting up IAM Role for Foundation Storage Engine on EKS"
 echo "   Cluster: $CLUSTER_NAME"
 echo "   Namespace: $NAMESPACE"
 echo "   Service Account: $SERVICE_ACCOUNT"
@@ -62,7 +62,7 @@ cat > /tmp/s3-policy.json <<EOF
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "S3ProxyFullAccess",
+      "Sid": "Foundation Storage EngineFullAccess",
       "Effect": "Allow",
       "Action": [
         "s3:*"
@@ -80,7 +80,7 @@ echo "📝 Creating IAM role..."
 aws iam create-role \
   --role-name "$ROLE_NAME" \
   --assume-role-policy-document file:///tmp/trust-policy.json \
-  --description "IAM role for s3proxy service on EKS" \
+  --description "IAM role for foundation-storage-engine service on EKS" \
   2>/dev/null || echo "   Role already exists, updating trust policy..."
 
 # Update trust policy if role exists
@@ -92,7 +92,7 @@ aws iam update-assume-role-policy \
 echo "📎 Attaching S3 access policy..."
 aws iam put-role-policy \
   --role-name "$ROLE_NAME" \
-  --policy-name S3ProxyAccess \
+  --policy-name FoundationStorageEngineAccess \
   --policy-document file:///tmp/s3-policy.json
 
 # Create namespace if it doesn't exist
@@ -119,11 +119,11 @@ echo "📋 Next steps:"
 echo "   1. Update helm-values-aws-dev.yaml with your account ID:"
 echo "      sed -i 's/YOUR_ACCOUNT_ID/${AWS_ACCOUNT_ID}/g' helm-values-aws-dev.yaml"
 echo ""
-echo "   2. Install S3Proxy with Helm:"
-echo "      helm install s3proxy-minio ./charts/s3proxy -n $NAMESPACE -f helm-values-aws-dev.yaml"
+echo "   2. Install Foundation Storage Engine with Helm:"
+echo "      helm install foundation-storage-engine-minio ./charts/foundation-storage-engine -n $NAMESPACE -f helm-values-aws-dev.yaml"
 echo ""
 echo "   3. Verify the deployment:"
 echo "      kubectl get pods -n $NAMESPACE"
-echo "      kubectl logs -n $NAMESPACE -l app.kubernetes.io/name=s3proxy"
+echo "      kubectl logs -n $NAMESPACE -l app.kubernetes.io/name=foundation-storage-engine"
 echo ""
 echo "🔐 The service will use IAM role: arn:aws:iam::${AWS_ACCOUNT_ID}:role/${ROLE_NAME}"

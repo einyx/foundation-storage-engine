@@ -10,13 +10,13 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}Verifying S3Proxy Build and Test Fixes${NC}"
+echo -e "${BLUE}Verifying Foundation Storage Engine Build and Test Fixes${NC}"
 echo "=========================================="
 
 echo -e "${YELLOW}1. Testing main application build...${NC}"
-if go build -o s3proxy-test ./cmd/s3proxy; then
+if go build -o foundation-storage-engine-test ./cmd/foundation-storage-engine; then
     echo -e "${GREEN}✓ Main application builds successfully${NC}"
-    rm -f s3proxy-test
+    rm -f foundation-storage-engine-test
 else
     echo -e "${RED}✗ Main application build failed${NC}"
     exit 1
@@ -48,9 +48,9 @@ else
 fi
 
 echo -e "${YELLOW}5. Testing Docker build capability...${NC}"
-if docker build -t s3proxy-test . > /dev/null 2>&1; then
+if docker build -t foundation-storage-engine-test . > /dev/null 2>&1; then
     echo -e "${GREEN}✓ Docker image builds successfully${NC}"
-    docker rmi s3proxy-test > /dev/null 2>&1
+    docker rmi foundation-storage-engine-test > /dev/null 2>&1
 else
     echo -e "${RED}✗ Docker build failed${NC}"
     echo "Note: This is expected if Docker is not running"

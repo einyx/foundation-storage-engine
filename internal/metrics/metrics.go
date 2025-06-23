@@ -15,7 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// Metrics holds all the metrics for the s3proxy
+// Metrics holds all the metrics for the foundation-storage-engine
 type Metrics struct {
 	// Request metrics
 	RequestsTotal    *prometheus.CounterVec
@@ -82,7 +82,7 @@ type Metrics struct {
 // NewMetrics creates a new metrics instance
 func NewMetrics(namespace string) *Metrics {
 	if namespace == "" {
-		namespace = "s3proxy"
+		namespace = "foundation_storage_engine"
 	}
 
 	return &Metrics{

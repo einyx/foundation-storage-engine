@@ -10,7 +10,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o s3proxy ./cmd/s3proxy
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o foundation-storage-engine ./cmd/foundation-storage-engine
 
 # Final stage
 FROM alpine:latest
@@ -18,7 +18,7 @@ FROM alpine:latest
 # Install wget for health checks
 RUN apk --no-cache add wget ca-certificates
 
-COPY --from=builder /app/s3proxy /s3proxy
+COPY --from=builder /app/foundation-storage-engine /foundation-storage-engine
 
 EXPOSE 8080
 
@@ -26,4 +26,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
-ENTRYPOINT ["/s3proxy"]
+ENTRYPOINT ["/foundation-storage-engine"]

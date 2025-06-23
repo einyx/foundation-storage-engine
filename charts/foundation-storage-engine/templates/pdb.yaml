@@ -3,9 +3,9 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "s3proxy.fullname" . }}
+  name: {{ include "foundation-storage-engine.fullname" . }}
   labels:
-    {{- include "s3proxy.labels" . | nindent 4 }}
+    {{- include "foundation-storage-engine.labels" . | nindent 4 }}
 spec:
   {{- if .Values.podDisruptionBudget.minAvailable }}
   minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
@@ -15,5 +15,5 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      {{- include "s3proxy.selectorLabels" . | nindent 6 }}
+      {{- include "foundation-storage-engine.selectorLabels" . | nindent 6 }}
 {{- end }}

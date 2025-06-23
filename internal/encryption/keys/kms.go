@@ -39,7 +39,7 @@ func (p *KMSKeyProvider) GenerateDEK(ctx context.Context) ([]byte, string, error
 		KeyId:   aws.String(p.keyID),
 		KeySpec: types.DataKeySpecAes256,
 		EncryptionContext: map[string]string{
-			"purpose":   "s3proxy-encryption",
+			"purpose":   "foundation-storage-engine-encryption",
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		},
 	}
@@ -67,7 +67,7 @@ func (p *KMSKeyProvider) DecryptDEK(ctx context.Context, encryptedKey string) ([
 	input := &kms.DecryptInput{
 		CiphertextBlob: ciphertext,
 		EncryptionContext: map[string]string{
-			"purpose": "s3proxy-encryption",
+			"purpose": "foundation-storage-engine-encryption",
 		},
 		KeyId: aws.String(p.keyID),
 	}

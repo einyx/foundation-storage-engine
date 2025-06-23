@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/einyx/s3proxy-go/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
 func TestNewProvider(t *testing.T) {

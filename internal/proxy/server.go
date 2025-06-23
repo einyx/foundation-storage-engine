@@ -11,12 +11,12 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 
-	"github.com/einyx/s3proxy-go/internal/auth"
-	"github.com/einyx/s3proxy-go/internal/cache"
-	"github.com/einyx/s3proxy-go/internal/config"
-	"github.com/einyx/s3proxy-go/internal/metrics"
-	"github.com/einyx/s3proxy-go/internal/storage"
-	"github.com/einyx/s3proxy-go/pkg/s3"
+	"github.com/einyx/foundation-storage-engine/internal/auth"
+	"github.com/einyx/foundation-storage-engine/internal/cache"
+	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/metrics"
+	"github.com/einyx/foundation-storage-engine/internal/storage"
+	"github.com/einyx/foundation-storage-engine/pkg/s3"
 )
 
 type Server struct {
@@ -84,7 +84,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		storage: storageBackend,
 		auth:    authProvider,
 		router:  mux.NewRouter(),
-		metrics: metrics.NewMetrics("s3proxy"),
+		metrics: metrics.NewMetrics("foundation_storage_engine"),
 	}
 
 	s.s3Handler = s3.NewHandler(s.storage, s.auth, cfg.S3, cfg.Chunking)

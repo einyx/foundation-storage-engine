@@ -1,4 +1,4 @@
-# Example configuration for s3proxy
+# Example configuration for foundation-storage-engine
 # Copy this file to config.yaml and adjust settings as needed
 
 server:
@@ -27,7 +27,7 @@ storage:
   
   # File system configuration
   file:
-    root_path: "/var/lib/s3proxy"
+    root_path: "/var/lib/foundation-storage-engine"
 
 logging:
   level: "info"  # Options: debug, info, warn, error

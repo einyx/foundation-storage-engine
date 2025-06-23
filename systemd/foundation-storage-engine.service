@@ -1,20 +1,20 @@
 [Unit]
-Description=S3Proxy - High-performance S3-compatible proxy
+Description=Foundation Storage Engine - High-performance S3-compatible proxy
 Documentation=https://github.com/{{ .Env.GITHUB_REPOSITORY }}
 After=network.target
 Wants=network.target
 
 [Service]
 Type=simple
-User=s3proxy
-Group=s3proxy
-ExecStart=/usr/bin/s3proxy -config /etc/s3proxy/config.yaml
+User=foundation-storage-engine
+Group=foundation-storage-engine
+ExecStart=/usr/bin/foundation-storage-engine -config /etc/foundation-storage-engine/config.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=s3proxy
+SyslogIdentifier=foundation-storage-engine
 KillMode=mixed
 KillSignal=SIGTERM
 
@@ -23,7 +23,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/s3proxy
+ReadWritePaths=/var/lib/foundation-storage-engine
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

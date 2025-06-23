@@ -3,7 +3,7 @@ package storage
 import (
 	"testing"
 
-	"github.com/einyx/s3proxy-go/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
 func TestNewS3Backend(t *testing.T) {

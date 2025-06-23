@@ -1,18 +1,18 @@
-# S3Proxy-Go
+# Foundation Storage Engine
 
 [![Go Version](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/einyx/s3proxy-go)](https://goreportcard.com/report/github.com/einyx/s3proxy-go)
-[![Docker Pulls](https://img.shields.io/docker/pulls/s3proxy/s3proxy-go)](https://hub.docker.com/r/s3proxy/s3proxy-go)
-[![CI Status](https://github.com/einyx/s3proxy-go/workflows/CI/badge.svg)](https://github.com/einyx/s3proxy-go/actions)
-[![codecov](https://codecov.io/gh/einyx/s3proxy-go/branch/main/graph/badge.svg?token=ABCDEFG)](https://codecov.io/gh/einyx/s3proxy-go)
-[![Release](https://img.shields.io/github/release/einyx/s3proxy-go.svg)](https://github.com/einyx/s3proxy-go/releases/latest)
-[![GoDoc](https://pkg.go.dev/badge/github.com/einyx/s3proxy-go?status.svg)](https://pkg.go.dev/github.com/einyx/s3proxy-go)
-[![Vibes](https://img.shields.io/badge/vibes-immaculate%20✨-ff69b4?style=flat)](https://github.com/einyx/s3proxy-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/einyx/foundation-storage-engine)](https://goreportcard.com/report/github.com/einyx/foundation-storage-engine)
+[![Docker Pulls](https://img.shields.io/docker/pulls/einyx/foundation-storage-engine)](https://hub.docker.com/r/einyx/foundation-storage-engine)
+[![CI Status](https://github.com/einyx/foundation-storage-engine/workflows/CI/badge.svg)](https://github.com/einyx/foundation-storage-engine/actions)
+[![codecov](https://codecov.io/gh/einyx/foundation-storage-engine/branch/main/graph/badge.svg?token=ABCDEFG)](https://codecov.io/gh/einyx/foundation-storage-engine)
+[![Release](https://img.shields.io/github/release/einyx/foundation-storage-engine.svg)](https://github.com/einyx/foundation-storage-engine/releases/latest)
+[![GoDoc](https://pkg.go.dev/badge/github.com/einyx/foundation-storage-engine?status.svg)](https://pkg.go.dev/github.com/einyx/foundation-storage-engine)
+[![Vibes](https://img.shields.io/badge/vibes-immaculate%20✨-ff69b4?style=flat)](https://github.com/einyx/foundation-storage-engine)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat)](http://makeapullrequest.com)
 
 A high-performance, production-ready S3-compatible proxy server written in Go.
-S3Proxy-Go provides a unified S3 API interface for multiple storage backends
+Foundation Storage Engine provides a unified S3 API interface for multiple storage backends
 including AWS S3, Azure Blob Storage, and local filesystem storage.
 
 <p align="center">
@@ -73,8 +73,8 @@ including AWS S3, Azure Blob Storage, and local filesystem storage.
 ![Latency](https://img.shields.io/badge/latency-<10ms-blue.svg)
 
 ```text
-BenchmarkS3ProxyGet-8           50000      23456 ns/op    1024 B/op     12 allocs/op
-BenchmarkS3ProxyPut-8           30000      45678 ns/op    2048 B/op     18 allocs/op
+BenchmarkFoundationStorageEngineGet-8           50000      23456 ns/op    1024 B/op     12 allocs/op
+BenchmarkFoundationStorageEnginePut-8           30000      45678 ns/op    2048 B/op     18 allocs/op
 BenchmarkAuthValidation-8     1000000       1234 ns/op      64 B/op      2 allocs/op
 ```
 
@@ -88,7 +88,7 @@ Benchmarked on Intel Core i7-9750H, 16GB RAM, NVMe SSD
 
 ```bash
 # Pull the image
-docker pull s3proxy/s3proxy-go:latest
+docker pull foundation-storage-engine/foundation-storage-engine:latest
 
 # Run with S3 backend
 docker run -p 8080:8080 \
@@ -99,7 +99,7 @@ docker run -p 8080:8080 \
   -e AUTH_TYPE=awsv4 \
   -e AUTH_IDENTITY=proxy-access-key \
   -e AUTH_CREDENTIAL=proxy-secret-key \
-  s3proxy/s3proxy-go:latest
+  foundation-storage-engine/foundation-storage-engine:latest
 
 # Run with Azure backend
 docker run -p 8080:8080 \
@@ -110,7 +110,7 @@ docker run -p 8080:8080 \
   -e AUTH_TYPE=basic \
   -e AUTH_IDENTITY=admin \
   -e AUTH_CREDENTIAL=password \
-  s3proxy/s3proxy-go:latest
+  foundation-storage-engine/foundation-storage-engine:latest
 ```
 
 ### Using Docker Compose
@@ -118,8 +118,8 @@ docker run -p 8080:8080 \
 ```yaml
 version: '3.8'
 services:
-  s3proxy:
-    image: s3proxy/s3proxy-go:latest
+  foundation-storage-engine:
+    image: foundation-storage-engine/foundation-storage-engine:latest
     ports:
       - "8080:8080"
     environment:
@@ -148,26 +148,26 @@ services:
 
 ```bash
 # Add the Helm repository
-helm repo add s3proxy https://charts.s3proxy.io
+helm repo add foundation-storage-engine https://charts.foundation-storage-engine.io
 helm repo update
 
 # Install with custom values
-helm install my-s3proxy s3proxy/s3proxy \
+helm install my-foundation-storage-engine foundation-storage-engine/foundation-storage-engine \
   --set storage.provider=azure \
   --set storage.azure.accountName=myaccount \
   --set storage.azure.accountKey=mykey \
   --set auth.type=awsv4
 
 # Or use a values file
-helm install my-s3proxy s3proxy/s3proxy -f values.yaml
+helm install my-foundation-storage-engine foundation-storage-engine/foundation-storage-engine -f values.yaml
 ```
 
 ### Building from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/einyx/s3proxy-go.git
-cd s3proxy-go
+git clone https://github.com/einyx/foundation-storage-engine.git
+cd foundation-storage-engine
 
 # Build the binary
 make build
@@ -176,7 +176,7 @@ make build
 make test
 
 # Run with configuration
-./bin/s3proxy --config config.yaml
+./bin/foundation-storage-engine --config config.yaml
 ```
 
 ## ⚙️ Configuration
@@ -304,8 +304,8 @@ logging:
 ### Using AWS Profile (with SSO support)
 
 ```bash
-# Run s3proxy with AWS profile
-STORAGE_PROVIDER=s3 AWS_PROFILE=dev ./bin/s3proxy
+# Run foundation-storage-engine with AWS profile
+STORAGE_PROVIDER=s3 AWS_PROFILE=dev ./bin/foundation-storage-engine
 
 # Or using config file
 cat > config.yaml <<EOF
@@ -318,7 +318,7 @@ auth:
   type: none  # or awsv4 for authenticated access
 EOF
 
-./bin/s3proxy -c config.yaml
+./bin/foundation-storage-engine -c config.yaml
 ```
 
 ### AWS CLI
@@ -445,27 +445,27 @@ Available at `/metrics` endpoint:
 
 ```prometheus
 # Request metrics
-s3proxy_requests_total{method="GET",status="200",operation="GetObject"}
-s3proxy_request_duration_seconds{method="GET",operation="GetObject"}
-s3proxy_request_size_bytes{method="PUT",operation="PutObject"}
-s3proxy_response_size_bytes{method="GET",operation="GetObject"}
+foundation-storage-engine_requests_total{method="GET",status="200",operation="GetObject"}
+foundation-storage-engine_request_duration_seconds{method="GET",operation="GetObject"}
+foundation-storage-engine_request_size_bytes{method="PUT",operation="PutObject"}
+foundation-storage-engine_response_size_bytes{method="GET",operation="GetObject"}
 
 # Error metrics
-s3proxy_errors_total{type="auth",operation="GetObject"}
-s3proxy_errors_total{type="storage",operation="PutObject"}
+foundation-storage-engine_errors_total{type="auth",operation="GetObject"}
+foundation-storage-engine_errors_total{type="storage",operation="PutObject"}
 
 # Performance metrics
-s3proxy_active_connections
-s3proxy_cache_hits_total{type="metadata"}
-s3proxy_cache_misses_total{type="metadata"}
-s3proxy_cache_evictions_total
-s3proxy_buffer_pool_size{pool="small"}
-s3proxy_buffer_pool_size{pool="large"}
+foundation-storage-engine_active_connections
+foundation-storage-engine_cache_hits_total{type="metadata"}
+foundation-storage-engine_cache_misses_total{type="metadata"}
+foundation-storage-engine_cache_evictions_total
+foundation-storage-engine_buffer_pool_size{pool="small"}
+foundation-storage-engine_buffer_pool_size{pool="large"}
 
 # Storage backend metrics
-s3proxy_storage_operations_total{backend="s3",operation="get"}
-s3proxy_storage_duration_seconds{backend="azure",operation="put"}
-s3proxy_storage_errors_total{backend="filesystem",error="not_found"}
+foundation-storage-engine_storage_operations_total{backend="s3",operation="get"}
+foundation-storage-engine_storage_duration_seconds{backend="azure",operation="put"}
+foundation-storage-engine_storage_errors_total{backend="filesystem",error="not_found"}
 ```
 
 ### Health Checks
@@ -481,7 +481,7 @@ Import the included Grafana dashboard for comprehensive monitoring:
 # Import dashboard
 curl -X POST http://grafana:3000/api/dashboards/import \
   -H "Content-Type: application/json" \
-  -d @grafana/s3proxy-dashboard.json
+  -d @grafana/foundation-storage-engine-dashboard.json
 ```
 
 ## 🎯 Performance Tuning
@@ -652,7 +652,7 @@ export TRACE_REQUESTS=true
 ```text
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │                 │     │                 │     │                 │
-│   S3 Clients    │────▶│   S3Proxy-Go    │────▶│ Storage Backend │
+│   S3 Clients    │────▶│   Foundation Storage Engine    │────▶│ Storage Backend │
 │   (AWS SDK)     │ HTTP│                 │     │ (S3/Azure/FS)   │
 │                 │     │                 │     │                 │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
@@ -689,8 +689,8 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md).
 
 ```bash
 # Fork and clone
-git clone https://github.com/YOUR_USERNAME/s3proxy-go.git
-cd s3proxy-go
+git clone https://github.com/YOUR_USERNAME/foundation-storage-engine.git
+cd foundation-storage-engine
 
 # Install dependencies
 make deps
@@ -740,25 +740,25 @@ see the [LICENSE](LICENSE) file for details.
 
 ## 📚 Resources
 
-- [Documentation](https://docs.s3proxy.io)
-- [API Reference](https://docs.s3proxy.io/api)
-- [Configuration Guide](https://docs.s3proxy.io/config)
-- [Performance Tuning](https://docs.s3proxy.io/performance)
-- [Security Guide](https://docs.s3proxy.io/security)
+- [Documentation](https://docs.foundation-storage-engine.io)
+- [API Reference](https://docs.foundation-storage-engine.io/api)
+- [Configuration Guide](https://docs.foundation-storage-engine.io/config)
+- [Performance Tuning](https://docs.foundation-storage-engine.io/performance)
+- [Security Guide](https://docs.foundation-storage-engine.io/security)
 
 ## 💬 Support
 
-- 🐛 [GitHub Issues](https://github.com/einyx/s3proxy-go/issues)
-- 💬 [Discussions](https://github.com/einyx/s3proxy-go/discussions)
-- 📧 [Email Support](mailto:support@s3proxy.io)
-- 💼 [Professional Support](https://s3proxy.io/support)
+- 🐛 [GitHub Issues](https://github.com/einyx/foundation-storage-engine/issues)
+- 💬 [Discussions](https://github.com/einyx/foundation-storage-engine/discussions)
+- 📧 [Email Support](mailto:support@foundation-storage-engine.io)
+- 💼 [Professional Support](https://foundation-storage-engine.io/support)
 
 ---
 
 <p align="center">
-  <a href="https://github.com/einyx/s3proxy-go/stargazers"><img src="https://img.shields.io/github/stars/einyx/s3proxy-go?style=social" alt="GitHub stars"></a>
-  <a href="https://github.com/einyx/s3proxy-go/network/members"><img src="https://img.shields.io/github/forks/einyx/s3proxy-go?style=social" alt="GitHub forks"></a>
-  <a href="https://twitter.com/intent/tweet?text=Check%20out%20S3Proxy-Go%20-%20A%20high-performance%20S3-compatible%20proxy%20server!&url=https://github.com/einyx/s3proxy-go"><img src="https://img.shields.io/twitter/url?style=social&url=https%3A%2F%2Fgithub.com%2Feinyx%2Fs3proxy-go" alt="Tweet"></a>
+  <a href="https://github.com/einyx/foundation-storage-engine/stargazers"><img src="https://img.shields.io/github/stars/einyx/foundation-storage-engine?style=social" alt="GitHub stars"></a>
+  <a href="https://github.com/einyx/foundation-storage-engine/network/members"><img src="https://img.shields.io/github/forks/einyx/foundation-storage-engine?style=social" alt="GitHub forks"></a>
+  <a href="https://twitter.com/intent/tweet?text=Check%20out%20Foundation Storage Engine%20-%20A%20high-performance%20S3-compatible%20proxy%20server!&url=https://github.com/einyx/foundation-storage-engine"><img src="https://img.shields.io/twitter/url?style=social&url=https%3A%2F%2Fgithub.com%2Feinyx%2Ffoundation-storage-engine" alt="Tweet"></a>
 </p>
 
-Made with ❤️ by the S3Proxy community
+Made with ❤️ by the Foundation Storage Engine community

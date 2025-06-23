@@ -34,7 +34,7 @@ func TestKMSIntegration(t *testing.T) {
 		KeySpec:      types.KeySpecAes256,
 		Region:       region,
 		EncryptionContext: map[string]string{
-			"application": "s3proxy-test",
+			"application": "foundation-storage-engine-test",
 			"environment": "test",
 		},
 		DataKeyCacheTTL: 1 * time.Minute,
@@ -81,7 +81,7 @@ func TestKMSIntegration(t *testing.T) {
 		headers := manager.GetEncryptionHeaders("test-bucket", nil)
 		assert.Equal(t, "aws:kms", headers["x-amz-server-side-encryption"])
 		assert.Equal(t, keyID, headers["x-amz-server-side-encryption-aws-kms-key-id"])
-		assert.Contains(t, headers["x-amz-server-side-encryption-context"], "application=s3proxy-test")
+		assert.Contains(t, headers["x-amz-server-side-encryption-context"], "application=foundation-storage-engine-test")
 	})
 
 	t.Run("BucketSpecificKMS", func(t *testing.T) {

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Setup script for S3Proxy with KMS using Docker Compose
+# Setup script for Foundation Storage Engine with KMS using Docker Compose
 set -e
 
 # Colors for output
@@ -10,7 +10,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}Setting up S3Proxy with KMS encryption using Docker Compose${NC}"
+echo -e "${BLUE}Setting up Foundation Storage Engine with KMS encryption using Docker Compose${NC}"
 
 # Check prerequisites
 check_prerequisites() {
@@ -71,16 +71,16 @@ setup_kms_key() {
     REGION=$(aws configure get region --profile dev)
 
     # Check if alias exists
-    if aws kms describe-key --key-id alias/s3proxy-dev --profile dev &> /dev/null; then
-        echo -e "${GREEN}KMS key alias 's3proxy-dev' already exists!${NC}"
-        KEY_ID=$(aws kms describe-key --key-id alias/s3proxy-dev --profile dev --query KeyMetadata.KeyId --output text)
+    if aws kms describe-key --key-id alias/foundation-storage-engine-dev --profile dev &> /dev/null; then
+        echo -e "${GREEN}KMS key alias 'foundation-storage-engine-dev' already exists!${NC}"
+        KEY_ID=$(aws kms describe-key --key-id alias/foundation-storage-engine-dev --profile dev --query KeyMetadata.KeyId --output text)
         echo -e "${GREEN}Key ID: ${KEY_ID}${NC}"
     else
-        echo -e "${YELLOW}Creating KMS key for S3Proxy development...${NC}"
+        echo -e "${YELLOW}Creating KMS key for Foundation Storage Engine development...${NC}"
 
         # Create key
         KEY_ID=$(aws kms create-key \
-            --description "S3Proxy Development Key" \
+            --description "Foundation Storage Engine Development Key" \
             --key-usage ENCRYPT_DECRYPT \
             --origin AWS_KMS \
             --profile dev \
@@ -91,15 +91,15 @@ setup_kms_key() {
 
         # Create alias
         aws kms create-alias \
-            --alias-name alias/s3proxy-dev \
+            --alias-name alias/foundation-storage-engine-dev \
             --target-key-id $KEY_ID \
             --profile dev
 
-        echo -e "${GREEN}Created alias: alias/s3proxy-dev${NC}"
+        echo -e "${GREEN}Created alias: alias/foundation-storage-engine-dev${NC}"
     fi
 
     # Export for docker-compose
-    export KMS_KEY_ID="alias/s3proxy-dev"
+    export KMS_KEY_ID="alias/foundation-storage-engine-dev"
     export AWS_REGION=$REGION
 }
 
@@ -114,8 +114,8 @@ AWS_PROFILE=dev
 AWS_REGION=${AWS_REGION}
 KMS_KEY_ID=${KMS_KEY_ID}
 
-# S3Proxy Configuration
-S3PROXY_PORT=8080
+# Foundation Storage Engine Configuration
+FOUNDATION_STORAGE_ENGINE_PORT=8080
 MINIO_PORT=9000
 MINIO_CONSOLE_PORT=9001
 EOF
@@ -132,12 +132,12 @@ start_services() {
 
     echo -e "${GREEN}Services started!${NC}"
     echo -e "${BLUE}Access points:${NC}"
-    echo -e "  S3Proxy:     http://localhost:8082"
+    echo -e "  Foundation Storage Engine:     http://localhost:8082"
     echo -e "  MinIO:       http://localhost:9000"
     echo -e "  MinIO UI:    http://localhost:9001"
     echo ""
     echo -e "${BLUE}Credentials:${NC}"
-    echo -e "  S3Proxy:     admin / secret"
+    echo -e "  Foundation Storage Engine:     admin / secret"
     echo -e "  MinIO:       minioadmin / minioadmin"
 }
 
@@ -149,12 +149,12 @@ test_setup() {
     echo "Waiting for services to start..."
     sleep 10
 
-    # Test S3Proxy health
+    # Test Foundation Storage Engine health
     if curl -sf http://localhost:8082/health > /dev/null; then
-        echo -e "${GREEN}S3Proxy is running!${NC}"
+        echo -e "${GREEN}Foundation Storage Engine is running!${NC}"
     else
-        echo -e "${RED}S3Proxy health check failed${NC}"
-        echo "Check logs with: docker-compose -f docker-compose.kms.yml logs s3proxy"
+        echo -e "${RED}Foundation Storage Engine health check failed${NC}"
+        echo "Check logs with: docker-compose -f docker-compose.kms.yml logs foundation-storage-engine"
     fi
 
     # Test MinIO
@@ -176,7 +176,7 @@ setup_localstack() {
 
         echo -e "${GREEN}LocalStack setup complete!${NC}"
         echo -e "${BLUE}Access points:${NC}"
-        echo -e "  S3Proxy:     http://localhost:8082"
+        echo -e "  Foundation Storage Engine:     http://localhost:8082"
         echo -e "  MinIO:       http://localhost:9000"
         echo -e "  LocalStack:  http://localhost:4566"
 
@@ -187,7 +187,7 @@ setup_localstack() {
 # Main execution
 main() {
     echo -e "${BLUE}===========================================${NC}"
-    echo -e "${BLUE}S3Proxy KMS Docker Setup${NC}"
+    echo -e "${BLUE}Foundation Storage Engine KMS Docker Setup${NC}"
     echo -e "${BLUE}===========================================${NC}"
 
     # Ask about LocalStack first

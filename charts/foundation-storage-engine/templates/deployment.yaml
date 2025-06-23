@@ -2,16 +2,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "s3proxy.fullname" . }}
+  name: {{ include "foundation-storage-engine.fullname" . }}
   labels:
-    {{- include "s3proxy.labels" . | nindent 4 }}
+    {{- include "foundation-storage-engine.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   selector:
     matchLabels:
-      {{- include "s3proxy.selectorLabels" . | nindent 6 }}
+      {{- include "foundation-storage-engine.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
@@ -21,13 +21,13 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       labels:
-        {{- include "s3proxy.selectorLabels" . | nindent 8 }}
+        {{- include "foundation-storage-engine.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "s3proxy.serviceAccountName" . }}
+      serviceAccountName: {{ include "foundation-storage-engine.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
@@ -100,14 +100,14 @@ spec:
             - name: AZURE_ACCOUNT_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "s3proxy.fullname" . }}
+                  name: {{ include "foundation-storage-engine.fullname" . }}
                   key: azure-account-key
             {{- end }}
             {{- if .Values.config.storage.azure.sasToken }}
             - name: AZURE_SAS_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "s3proxy.fullname" . }}
+                  name: {{ include "foundation-storage-engine.fullname" . }}
                   key: azure-sas-token
             {{- end }}
             {{- end }}
@@ -147,14 +147,14 @@ spec:
             - name: S3_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "s3proxy.fullname" . }}
+                  name: {{ include "foundation-storage-engine.fullname" . }}
                   key: s3-access-key
             {{- end }}
             {{- if .Values.config.storage.s3.secretKey }}
             - name: S3_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "s3proxy.fullname" . }}
+                  name: {{ include "foundation-storage-engine.fullname" . }}
                   key: s3-secret-key
             {{- end }}
             {{- end }}
@@ -195,7 +195,7 @@ spec:
             - name: AUTH_CREDENTIAL
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "s3proxy.fullname" . }}
+                  name: {{ include "foundation-storage-engine.fullname" . }}
                   key: auth-credential
             {{- end }}
             {{- end }}
@@ -217,12 +217,12 @@ spec:
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "s3proxy.fullname" . }}
+                  name: {{ include "foundation-storage-engine.fullname" . }}
                   key: aws-access-key-id
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "s3proxy.fullname" . }}
+                  name: {{ include "foundation-storage-engine.fullname" . }}
                   key: aws-secret-access-key
             {{- end }}
             {{- end }}
@@ -249,7 +249,7 @@ spec:
             - name: ENCRYPTION_LOCAL_MASTER_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "s3proxy.fullname" . }}
+                  name: {{ include "foundation-storage-engine.fullname" . }}
                   key: encryption-master-key
             {{- end }}
             {{- end }}
@@ -283,7 +283,7 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: {{ .Values.persistence.existingClaim | default (include "s3proxy.fullname" .) }}
+            claimName: {{ .Values.persistence.existingClaim | default (include "foundation-storage-engine.fullname" .) }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

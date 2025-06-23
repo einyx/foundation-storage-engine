@@ -5,11 +5,11 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"github.com/einyx/s3proxy-go/internal/config"
-	"github.com/einyx/s3proxy-go/internal/encryption/keys"
-	"github.com/einyx/s3proxy-go/internal/encryption/stream"
-	"github.com/einyx/s3proxy-go/internal/encryption/types"
-	"github.com/einyx/s3proxy-go/internal/kms"
+	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/encryption/keys"
+	"github.com/einyx/foundation-storage-engine/internal/encryption/stream"
+	"github.com/einyx/foundation-storage-engine/internal/encryption/types"
+	"github.com/einyx/foundation-storage-engine/internal/kms"
 )
 
 // NewFromConfig creates an encryption manager from configuration

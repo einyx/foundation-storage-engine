@@ -3,9 +3,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "s3proxy.fullname" . }}
+  name: {{ include "foundation-storage-engine.fullname" . }}
   labels:
-    {{- include "s3proxy.labels" . | nindent 4 }}
+    {{- include "foundation-storage-engine.labels" . | nindent 4 }}
 data:
   {{- range $key, $value := .Values.configMap.data }}
   {{ $key }}: |

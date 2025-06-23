@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/einyx/s3proxy-go/internal/config"
-	"github.com/einyx/s3proxy-go/internal/proxy"
+	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/proxy"
 )
 
-func BenchmarkS3ProxyGet(b *testing.B) {
+func BenchmarkFoundationStorageEngineGet(b *testing.B) {
 	// Create test server with optimized settings
 	cfg := &config.Config{
 		Server: config.ServerConfig{
@@ -107,7 +107,7 @@ func BenchmarkS3ProxyGet(b *testing.B) {
 	}
 }
 
-func BenchmarkS3ProxyPut(b *testing.B) {
+func BenchmarkFoundationStorageEnginePut(b *testing.B) {
 	// Create test server
 	cfg := &config.Config{
 		Server: config.ServerConfig{

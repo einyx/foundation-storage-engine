@@ -1,5 +1,5 @@
 apiVersion: v2
-name: s3proxy
+name: foundation-storage-engine
 description: A high-performance S3-compatible proxy server for multiple storage backends
 type: application
 version: 0.1.0
@@ -11,9 +11,9 @@ keywords:
   - storage
   - azure
   - blob
-home: https://github.com/alessio/s3proxy-go
+home: https://github.com/alessio/foundation-storage-engine
 sources:
-  - https://github.com/alessio/s3proxy-go
+  - https://github.com/alessio/foundation-storage-engine
 maintainers:
   - name: Alessio
     email: alessio@example.com

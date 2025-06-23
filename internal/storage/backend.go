@@ -7,7 +7,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/einyx/s3proxy-go/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
 type Backend interface {

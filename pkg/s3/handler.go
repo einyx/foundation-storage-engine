@@ -18,9 +18,9 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 
-	"github.com/einyx/s3proxy-go/internal/auth"
-	"github.com/einyx/s3proxy-go/internal/config"
-	"github.com/einyx/s3proxy-go/internal/storage"
+	"github.com/einyx/foundation-storage-engine/internal/auth"
+	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/storage"
 )
 
 const (
@@ -122,8 +122,8 @@ func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := listAllMyBucketsResult{}
-	result.Owner.ID = "s3proxy"
-	result.Owner.DisplayName = "S3Proxy"
+	result.Owner.ID = "foundation-storage-engine"
+	result.Owner.DisplayName = "foundation-storage-engine"
 
 	for _, b := range buckets {
 		result.Buckets.Bucket = append(result.Buckets.Bucket, bucket{

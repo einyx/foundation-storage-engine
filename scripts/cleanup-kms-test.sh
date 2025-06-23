@@ -123,12 +123,12 @@ delete_s3_bucket() {
 print_info "Starting cleanup of KMS test resources..."
 
 # Delete KMS keys
-delete_kms_key "alias/s3proxy-test"
-delete_kms_key "alias/s3proxy-sensitive"
-delete_kms_key "alias/s3proxy-financial"
+delete_kms_key "alias/foundation-storage-engine-test"
+delete_kms_key "alias/foundation-storage-engine-sensitive"
+delete_kms_key "alias/foundation-storage-engine-financial"
 
 # Delete S3 buckets
-BUCKET_PREFIX="s3proxy-test-${ACCOUNT_ID}"
+BUCKET_PREFIX="foundation-storage-engine-test-${ACCOUNT_ID}"
 delete_s3_bucket "${BUCKET_PREFIX}-public"
 delete_s3_bucket "${BUCKET_PREFIX}-internal"
 delete_s3_bucket "${BUCKET_PREFIX}-sensitive"

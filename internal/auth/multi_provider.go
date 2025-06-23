@@ -8,7 +8,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/einyx/s3proxy-go/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
 // MultiProvider supports multiple authentication methods simultaneously

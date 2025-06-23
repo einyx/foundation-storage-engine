@@ -54,7 +54,7 @@ print_info "Checking S3 proxy at $PROXY_ENDPOINT..."
 if ! curl -s -f "$PROXY_ENDPOINT/health" > /dev/null 2>&1; then
     print_warning "S3 proxy might not be running at $PROXY_ENDPOINT"
     print_info "For Docker setup: docker-compose -f docker-compose.kms.yml up -d"
-    print_info "For local setup: go run cmd/s3proxy/main.go -c examples/config-kms-docker.yaml"
+    print_info "For local setup: go run cmd/foundation-storage-engine/main.go -c examples/config-kms-docker.yaml"
     exit 1
 fi
 

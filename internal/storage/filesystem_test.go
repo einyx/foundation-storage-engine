@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/einyx/s3proxy-go/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
 func TestNewFileSystemBackend(t *testing.T) {
@@ -75,7 +75,7 @@ func TestNewFileSystemBackend(t *testing.T) {
 
 // setupFileSystemBackend creates a temporary filesystem backend for testing
 func setupFileSystemBackend(t *testing.T) (*FileSystemBackend, string) {
-	tempDir, err := os.MkdirTemp("", "s3proxy-test-*")
+	tempDir, err := os.MkdirTemp("", "foundation-storage-engine-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -409,7 +409,7 @@ func TestFileSystemBackend_DeleteBucket(t *testing.T) {
 func TestFileSystemBackend_Multipart(t *testing.T) {
 	ctx := context.Background()
 
-	tempDir, err := os.MkdirTemp("", "s3proxy-multipart-test-*")
+	tempDir, err := os.MkdirTemp("", "foundation-storage-engine-multipart-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}

@@ -32,7 +32,7 @@ linters-settings:
   gocyclo:
     min-complexity: 15
   goimports:
-    local-prefixes: github.com/einyx/s3proxy-go
+    local-prefixes: github.com/einyx/foundation-storage-engine
   mnd:
     checks: [argument, case, condition, return]
   govet:

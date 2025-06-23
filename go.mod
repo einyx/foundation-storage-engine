@@ -1,4 +1,4 @@
-module github.com/einyx/s3proxy-go
+module github.com/einyx/foundation-storage-engine
 
 go 1.23.0
 

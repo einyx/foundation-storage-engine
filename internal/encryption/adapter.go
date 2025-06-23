@@ -5,8 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"github.com/einyx/s3proxy-go/internal/encryption/types"
-	"github.com/einyx/s3proxy-go/internal/kms"
+	"github.com/einyx/foundation-storage-engine/internal/encryption/types"
+	"github.com/einyx/foundation-storage-engine/internal/kms"
 )
 
 // KMSKeyProviderAdapter adapts a KMS provider to the encryption key provider interface

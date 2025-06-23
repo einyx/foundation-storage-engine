@@ -25,7 +25,7 @@ func TestConfig(t *testing.T) {
 				KeySpec:      types.DataKeySpecAes256,
 				Region:       "us-east-1",
 				EncryptionContext: map[string]string{
-					"app": "s3proxy",
+					"app": "foundation-storage-engine",
 				},
 				DataKeyCacheTTL: 5 * time.Minute,
 			},
@@ -66,7 +66,7 @@ func TestGetEncryptionHeaders(t *testing.T) {
 			Enabled:      true,
 			DefaultKeyID: "alias/default-key",
 			EncryptionContext: map[string]string{
-				"app": "s3proxy",
+				"app": "foundation-storage-engine",
 			},
 		},
 		client: mockClient, // Set non-nil client to pass IsEnabled check
@@ -84,7 +84,7 @@ func TestGetEncryptionHeaders(t *testing.T) {
 			wantHeaders: map[string]string{
 				"x-amz-server-side-encryption":                "aws:kms",
 				"x-amz-server-side-encryption-aws-kms-key-id": "alias/default-key",
-				"x-amz-server-side-encryption-context":        "app=s3proxy",
+				"x-amz-server-side-encryption-context":        "app=foundation-storage-engine",
 			},
 		},
 		{

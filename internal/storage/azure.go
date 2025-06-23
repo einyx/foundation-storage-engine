@@ -16,7 +16,7 @@ import (
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/sirupsen/logrus"
 
-	"github.com/einyx/s3proxy-go/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
 type AzureBackend struct {
@@ -73,7 +73,7 @@ func NewAzureBackend(cfg *config.AzureStorageConfig) (*AzureBackend, error) {
 			MaxRetryDelay: 5 * time.Second,        // Reduced max delay
 		},
 		Telemetry: azblob.TelemetryOptions{
-			Value: "s3proxy-turbo/2.0",
+			Value: "foundation-storage-engine/2.0",
 		},
 		// Note: HTTPSender customization is not available in this SDK version
 		// The SDK will use default HTTP client settings

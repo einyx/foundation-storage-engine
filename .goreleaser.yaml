@@ -1,4 +1,4 @@
-project_name: s3proxy
+project_name: foundation-storage-engine
 
 before:
   hooks:
@@ -6,9 +6,9 @@ before:
     - go generate ./...
 
 builds:
-  - id: s3proxy
-    main: ./cmd/s3proxy
-    binary: s3proxy
+  - id: foundation-storage-engine
+    main: ./cmd/foundation-storage-engine
+    binary: foundation-storage-engine
     env:
       - CGO_ENABLED=0
     goos:
@@ -29,7 +29,7 @@ builds:
       - -X main.builtBy=goreleaser
 
 archives:
-  - id: s3proxy
+  - id: foundation-storage-engine
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -52,15 +52,15 @@ snapshot:
   name_template: "{{ incpatch .Version }}-next"
 
 nfpms:
-  - id: s3proxy
-    package_name: s3proxy
-    vendor: S3Proxy
+  - id: foundation-storage-engine
+    package_name: foundation-storage-engine
+    vendor: Foundation Storage Engine
     homepage: https://github.com/{{ .Env.GITHUB_REPOSITORY }}
-    maintainer: S3Proxy Team
+    maintainer: Foundation Storage Engine Team
     description: High-performance S3-compatible proxy with encryption support
     license: Apache 2.0
     builds:
-      - s3proxy
+      - foundation-storage-engine
     formats:
       - deb
       - rpm
@@ -69,10 +69,10 @@ nfpms:
     bindir: /usr/bin
     contents:
       - src: config-test.yaml
-        dst: /etc/s3proxy/config.yaml.example
+        dst: /etc/foundation-storage-engine/config.yaml.example
         type: config
-      - src: ./systemd/s3proxy.service
-        dst: /lib/systemd/system/s3proxy.service
+      - src: ./systemd/foundation-storage-engine.service
+        dst: /lib/systemd/system/foundation-storage-engine.service
     scripts:
       postinstall: ./scripts/postinstall.sh
       preremove: ./scripts/preremove.sh
@@ -110,7 +110,7 @@ release:
     name: "foundation-storage-engine"
   name_template: "{{.ProjectName}} v{{.Version}}"
   header: |
-    ## S3Proxy {{.Version}}
+    ## Foundation Storage Engine {{.Version}}
 
     High-performance S3-compatible proxy with support for multiple storage backends.
 
@@ -118,23 +118,23 @@ release:
     ## Installation
 
     ### Windows
-    Download and extract the Windows ZIP: `s3proxy_Windows_x86_64.zip`
+    Download and extract the Windows ZIP: `foundation-storage-engine_Windows_x86_64.zip`
     ```powershell
     # Extract and add to PATH
-    Expand-Archive s3proxy_Windows_x86_64.zip -DestinationPath C:\s3proxy
-    $env:Path += ";C:\s3proxy"
+    Expand-Archive foundation-storage-engine_Windows_x86_64.zip -DestinationPath C:\foundation-storage-engine
+    $env:Path += ";C:\foundation-storage-engine"
     ```
 
     ### Linux (Debian/Ubuntu)
     ```bash
-    dpkg -i s3proxy_{{ .Version }}_amd64.deb
-    systemctl start s3proxy
+    dpkg -i foundation-storage-engine_{{ .Version }}_amd64.deb
+    systemctl start foundation-storage-engine
     ```
 
     ### Linux (RHEL/CentOS)
     ```bash
-    rpm -i s3proxy_{{ .Version }}_amd64.rpm
-    systemctl start s3proxy
+    rpm -i foundation-storage-engine_{{ .Version }}_amd64.rpm
+    systemctl start foundation-storage-engine
     ```
 
     ## Docker Images
@@ -147,13 +147,13 @@ release:
     ## Helm Chart
 
     ```bash
-    helm repo add s3proxy https://{{ .Env.GITHUB_REPOSITORY_OWNER }}.github.io/{{ .ProjectName }}
-    helm install s3proxy s3proxy/s3proxy --version {{ .Version }}
+    helm repo add foundation-storage-engine https://{{ .Env.GITHUB_REPOSITORY_OWNER }}.github.io/{{ .ProjectName }}
+    helm install foundation-storage-engine foundation-storage-engine/foundation-storage-engine --version {{ .Version }}
     ```
 
 # Homebrew tap (optional - requires separate tap repository)
 # brews:
-#   - name: s3proxy
+#   - name: foundation-storage-engine
 #     homepage: https://github.com/{{ .Env.GITHUB_REPOSITORY }}
 #     description: "High-performance S3-compatible proxy"
 #     license: "Apache-2.0"

@@ -10,10 +10,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/einyx/s3proxy-go/internal/encryption"
-	"github.com/einyx/s3proxy-go/internal/encryption/keys"
-	"github.com/einyx/s3proxy-go/internal/encryption/stream"
-	"github.com/einyx/s3proxy-go/internal/encryption/types"
+	"github.com/einyx/foundation-storage-engine/internal/encryption"
+	"github.com/einyx/foundation-storage-engine/internal/encryption/keys"
+	"github.com/einyx/foundation-storage-engine/internal/encryption/stream"
+	"github.com/einyx/foundation-storage-engine/internal/encryption/types"
 )
 
 func TestEncryptionIntegration(t *testing.T) {

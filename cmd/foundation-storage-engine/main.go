@@ -14,8 +14,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"github.com/einyx/s3proxy-go/internal/config"
-	"github.com/einyx/s3proxy-go/internal/proxy"
+	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/proxy"
 )
 
 var (
@@ -26,9 +26,9 @@ var (
 
 func main() {
 	var rootCmd = &cobra.Command{
-		Use:   "s3proxy",
-		Short: "S3 proxy server",
-		Long:  `A high-performance S3 proxy server that can proxy requests to various storage backends including Azure Blob Storage`,
+		Use:   "foundation-storage-engine",
+		Short: "Foundation Storage Engine",
+		Long:  `A high-performance S3-compatible storage engine that can proxy requests to various storage backends including Azure Blob Storage`,
 		RunE:  run,
 	}
 

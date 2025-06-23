@@ -12,8 +12,8 @@ NC='\033[0m' # No Color
 
 # Default values
 AWS_REGION="${AWS_REGION:-us-east-1}"
-KEY_ALIAS="alias/s3proxy-test"
-KEY_DESCRIPTION="S3 Proxy test key for KMS encryption"
+KEY_ALIAS="alias/foundation-storage-engine-test"
+KEY_DESCRIPTION="Foundation Storage Engine test key for KMS encryption"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "")
 
 # Function to print colored output
@@ -135,7 +135,7 @@ create_test_bucket() {
 KEY_POLICY=$(cat <<EOF
 {
     "Version": "2012-10-17",
-    "Id": "s3proxy-test-key-policy",
+    "Id": "foundation-storage-engine-test-key-policy",
     "Statement": [
         {
             "Sid": "Enable IAM User Permissions",
@@ -147,7 +147,7 @@ KEY_POLICY=$(cat <<EOF
             "Resource": "*"
         },
         {
-            "Sid": "Allow S3 Proxy Operations",
+            "Sid": "Allow Foundation Storage Engine Operations",
             "Effect": "Allow",
             "Principal": {
                 "AWS": "*"
@@ -163,7 +163,7 @@ KEY_POLICY=$(cat <<EOF
             "Condition": {
                 "StringEquals": {
                     "kms:CallerAccount": "${ACCOUNT_ID}",
-                    "kms:EncryptionContext:application": "s3proxy"
+                    "kms:EncryptionContext:application": "foundation-storage-engine"
                 }
             }
         },
@@ -193,12 +193,12 @@ EOF
 print_info "Starting KMS test setup..."
 
 # Create multiple keys for different scenarios
-create_kms_key "alias/s3proxy-test" "S3 Proxy test key for general testing" "$KEY_POLICY"
-create_kms_key "alias/s3proxy-sensitive" "S3 Proxy test key for sensitive data" "$KEY_POLICY"
-create_kms_key "alias/s3proxy-financial" "S3 Proxy test key for financial data" "$KEY_POLICY"
+create_kms_key "alias/foundation-storage-engine-test" "Foundation Storage Engine test key for general testing" "$KEY_POLICY"
+create_kms_key "alias/foundation-storage-engine-sensitive" "Foundation Storage Engine test key for sensitive data" "$KEY_POLICY"
+create_kms_key "alias/foundation-storage-engine-financial" "Foundation Storage Engine test key for financial data" "$KEY_POLICY"
 
 # Create test buckets
-BUCKET_PREFIX="s3proxy-test-${ACCOUNT_ID}"
+BUCKET_PREFIX="foundation-storage-engine-test-${ACCOUNT_ID}"
 create_test_bucket "${BUCKET_PREFIX}-public"
 create_test_bucket "${BUCKET_PREFIX}-internal"
 create_test_bucket "${BUCKET_PREFIX}-sensitive"
@@ -210,7 +210,7 @@ echo ""
 print_info "Add the following to your S3 proxy configuration:"
 echo ""
 cat <<EOF
-# Test Configuration for S3 Proxy with KMS
+# Test Configuration for Foundation Storage Engine with KMS
 
 storage:
   provider: "s3"
@@ -224,36 +224,36 @@ storage:
       internal-data:
         real_name: "${BUCKET_PREFIX}-internal"
         region: "${AWS_REGION}"
-        kms_key_id: "alias/s3proxy-test"
+        kms_key_id: "alias/foundation-storage-engine-test"
         kms_encryption_context:
           bucket: "internal-data"
-          application: "s3proxy"
+          application: "foundation-storage-engine"
 
       sensitive-data:
         real_name: "${BUCKET_PREFIX}-sensitive"
         region: "${AWS_REGION}"
-        kms_key_id: "alias/s3proxy-sensitive"
+        kms_key_id: "alias/foundation-storage-engine-sensitive"
         kms_encryption_context:
           bucket: "sensitive-data"
-          application: "s3proxy"
+          application: "foundation-storage-engine"
           classification: "confidential"
 
       financial-data:
         real_name: "${BUCKET_PREFIX}-financial"
         region: "${AWS_REGION}"
-        kms_key_id: "alias/s3proxy-financial"
+        kms_key_id: "alias/foundation-storage-engine-financial"
         kms_encryption_context:
           bucket: "financial-data"
-          application: "s3proxy"
+          application: "foundation-storage-engine"
           compliance: "financial"
 
 encryption:
   kms:
     enabled: true
-    default_key_id: "alias/s3proxy-test"
+    default_key_id: "alias/foundation-storage-engine-test"
     region: "${AWS_REGION}"
     encryption_context:
-      application: "s3proxy"
+      application: "foundation-storage-engine"
       environment: "test"
     data_key_cache_ttl: "5m"
     validate_keys: true
@@ -263,14 +263,14 @@ EOF
 echo ""
 print_info "Test environment variables:"
 echo "export AWS_REGION=${AWS_REGION}"
-echo "export TEST_KMS_KEY_ID=alias/s3proxy-test"
+echo "export TEST_KMS_KEY_ID=alias/foundation-storage-engine-test"
 echo "export TEST_BUCKET_PREFIX=${BUCKET_PREFIX}"
 
 # Save test configuration
 CONFIG_FILE="test-config-kms.yaml"
 print_info "Saving test configuration to ${CONFIG_FILE}"
 cat > "${CONFIG_FILE}" <<EOF
-# Auto-generated test configuration for S3 Proxy with KMS
+# Auto-generated test configuration for Foundation Storage Engine with KMS
 # Generated on: $(date)
 # AWS Account: ${ACCOUNT_ID}
 # Region: ${AWS_REGION}
@@ -298,27 +298,27 @@ storage:
       internal-data:
         real_name: "${BUCKET_PREFIX}-internal"
         region: "${AWS_REGION}"
-        kms_key_id: "alias/s3proxy-test"
+        kms_key_id: "alias/foundation-storage-engine-test"
         kms_encryption_context:
           bucket: "internal-data"
-          application: "s3proxy"
+          application: "foundation-storage-engine"
 
       sensitive-data:
         real_name: "${BUCKET_PREFIX}-sensitive"
         region: "${AWS_REGION}"
-        kms_key_id: "alias/s3proxy-sensitive"
+        kms_key_id: "alias/foundation-storage-engine-sensitive"
         kms_encryption_context:
           bucket: "sensitive-data"
-          application: "s3proxy"
+          application: "foundation-storage-engine"
           classification: "confidential"
 
       financial-data:
         real_name: "${BUCKET_PREFIX}-financial"
         region: "${AWS_REGION}"
-        kms_key_id: "alias/s3proxy-financial"
+        kms_key_id: "alias/foundation-storage-engine-financial"
         kms_encryption_context:
           bucket: "financial-data"
-          application: "s3proxy"
+          application: "foundation-storage-engine"
           compliance: "financial"
 
 auth:
@@ -327,10 +327,10 @@ auth:
 encryption:
   kms:
     enabled: true
-    default_key_id: "alias/s3proxy-test"
+    default_key_id: "alias/foundation-storage-engine-test"
     region: "${AWS_REGION}"
     encryption_context:
-      application: "s3proxy"
+      application: "foundation-storage-engine"
       environment: "test"
     data_key_cache_ttl: "5m"
     validate_keys: true

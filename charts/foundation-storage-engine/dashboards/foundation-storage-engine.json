@@ -91,7 +91,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "sum by (bucket) (rate(s3proxy_requests_total[5m]))",
+          "expr": "sum by (bucket) (rate(foundation-storage-engine_requests_total[5m]))",
           "legendFormat": "{{bucket}}",
           "refId": "A"
         }
@@ -147,7 +147,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "sum(increase(s3proxy_requests_total[24h]))",
+          "expr": "sum(increase(foundation-storage-engine_requests_total[24h]))",
           "refId": "A"
         }
       ],
@@ -200,7 +200,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "sum by (operation) (increase(s3proxy_requests_total[1h]))",
+          "expr": "sum by (operation) (increase(foundation-storage-engine_requests_total[1h]))",
           "legendFormat": "{{operation}}",
           "refId": "A"
         }
@@ -281,12 +281,12 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(s3proxy_request_duration_seconds_bucket[5m])) by (le, bucket))",
+          "expr": "histogram_quantile(0.95, sum(rate(foundation-storage-engine_request_duration_seconds_bucket[5m])) by (le, bucket))",
           "legendFormat": "p95 - {{bucket}}",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.50, sum(rate(s3proxy_request_duration_seconds_bucket[5m])) by (le, bucket))",
+          "expr": "histogram_quantile(0.50, sum(rate(foundation-storage-engine_request_duration_seconds_bucket[5m])) by (le, bucket))",
           "legendFormat": "p50 - {{bucket}}",
           "refId": "B"
         }
@@ -367,7 +367,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "sum by (bucket) (rate(s3proxy_requests_total{status_code=~\"4..|5..\"}[5m])) / sum by (bucket) (rate(s3proxy_requests_total[5m])) * 100",
+          "expr": "sum by (bucket) (rate(foundation-storage-engine_requests_total{status_code=~\"4..|5..\"}[5m])) / sum by (bucket) (rate(foundation-storage-engine_requests_total[5m])) * 100",
           "legendFormat": "{{bucket}}",
           "refId": "A"
         }
@@ -448,7 +448,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "sum by (bucket) (rate(s3proxy_response_size_bytes_sum[5m]))",
+          "expr": "sum by (bucket) (rate(foundation-storage-engine_response_size_bytes_sum[5m]))",
           "legendFormat": "{{bucket}}",
           "refId": "A"
         }
@@ -573,26 +573,26 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "sum by (bucket) (rate(s3proxy_requests_total[5m]))",
+          "expr": "sum by (bucket) (rate(foundation-storage-engine_requests_total[5m]))",
           "format": "table",
           "instant": true,
           "legendFormat": "",
           "refId": "A"
         },
         {
-          "expr": "sum by (bucket) (rate(s3proxy_requests_total{status_code=~\"4..|5..\"}[5m])) / sum by (bucket) (rate(s3proxy_requests_total[5m])) * 100",
+          "expr": "sum by (bucket) (rate(foundation-storage-engine_requests_total{status_code=~\"4..|5..\"}[5m])) / sum by (bucket) (rate(foundation-storage-engine_requests_total[5m])) * 100",
           "format": "table",
           "instant": true,
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(s3proxy_request_duration_seconds_bucket[5m])) by (le, bucket))",
+          "expr": "histogram_quantile(0.95, sum(rate(foundation-storage-engine_request_duration_seconds_bucket[5m])) by (le, bucket))",
           "format": "table",
           "instant": true,
           "refId": "C"
         },
         {
-          "expr": "sum by (bucket) (increase(s3proxy_requests_total[1h]))",
+          "expr": "sum by (bucket) (increase(foundation-storage-engine_requests_total[1h]))",
           "format": "table",
           "instant": true,
           "refId": "D"
@@ -672,7 +672,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "s3proxy_requests_in_flight",
+          "expr": "foundation-storage-engine_requests_in_flight",
           "refId": "A"
         }
       ],
@@ -729,7 +729,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "s3proxy_goroutines_count",
+          "expr": "foundation-storage-engine_goroutines_count",
           "refId": "A"
         }
       ],
@@ -786,7 +786,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "s3proxy_memory_usage_bytes",
+          "expr": "foundation-storage-engine_memory_usage_bytes",
           "refId": "A"
         }
       ],
@@ -843,7 +843,7 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "s3proxy_cache_size_bytes",
+          "expr": "foundation-storage-engine_cache_size_bytes",
           "refId": "A"
         }
       ],
@@ -855,7 +855,7 @@
   "schemaVersion": 27,
   "style": "dark",
   "tags": [
-    "s3proxy",
+    "foundation-storage-engine",
     "storage"
   ],
   "templating": {
@@ -867,8 +867,8 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "S3 Proxy Performance",
-  "uid": "s3proxy-performance",
+  "title": "Foundation Storage Engine Performance",
+  "uid": "foundation-storage-engine-performance",
   "version": 0
 }
 

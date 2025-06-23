@@ -1,11 +1,11 @@
-# Default values for s3proxy.
+# Default values for foundation-storage-engine.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
 replicaCount: 1
 
 image:
-  repository: einyxx/s3proxy
+  repository: einyxx/foundation-storage-engine
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   tag: ""
@@ -17,7 +17,7 @@ fullnameOverride: ""
 # Service configuration
 service:
   # Service name - defaults to "minio" for compatibility
-  name: s3proxy-go
+  name: foundation-storage-engine
   type: ClusterIP
   port: 9000
   targetPort: 8080
@@ -154,7 +154,7 @@ externalSecrets:
         key: "azure/storage/sas-token"
         property: ""
     # Target secret name (will be created by ExternalSecrets)
-    targetSecretName: "s3proxy-azure-credentials"
+    targetSecretName: "foundation-storage-engine-azure-credentials"
 
   # AWS/S3 storage credentials from external secret
   aws:
@@ -168,7 +168,7 @@ externalSecrets:
         key: "aws/s3/secret-access-key"
         property: ""
     # Target secret name (will be created by ExternalSecrets)
-    targetSecretName: "s3proxy-aws-credentials"
+    targetSecretName: "foundation-storage-engine-aws-credentials"
 
   # Authentication credentials from external secret
   auth:
@@ -176,13 +176,13 @@ externalSecrets:
     # Remote references for auth credentials
     remoteRefs:
       identity:
-        key: "s3proxy/auth/identity"
+        key: "foundation-storage-engine/auth/identity"
         property: ""
       credential:
-        key: "s3proxy/auth/credential"
+        key: "foundation-storage-engine/auth/credential"
         property: ""
     # Target secret name (will be created by ExternalSecrets)
-    targetSecretName: "s3proxy-auth-credentials"
+    targetSecretName: "foundation-storage-engine-auth-credentials"
 
   # Encryption keys from external secret
   encryption:
@@ -190,10 +190,10 @@ externalSecrets:
     # Remote references for encryption keys
     remoteRefs:
       masterKey:
-        key: "s3proxy/encryption/master-key"
+        key: "foundation-storage-engine/encryption/master-key"
         property: ""
     # Target secret name (will be created by ExternalSecrets)
-    targetSecretName: "s3proxy-encryption-keys"
+    targetSecretName: "foundation-storage-engine-encryption-keys"
 
 serviceAccount:
   # Specifies whether a service account should be created
@@ -279,14 +279,14 @@ ingress:
   # kubernetes.io/ingress.class: nginx
   # kubernetes.io/tls-acme: "true"
   hosts:
-    - host: s3proxy.local
+    - host: foundation-storage-engine.local
       paths:
         - path: /
           pathType: Prefix
   tls: []
-  #  - secretName: s3proxy-tls
+  #  - secretName: foundation-storage-engine-tls
   #    hosts:
-  #      - s3proxy.local
+  #      - foundation-storage-engine.local
 
 # PodDisruptionBudget
 podDisruptionBudget:

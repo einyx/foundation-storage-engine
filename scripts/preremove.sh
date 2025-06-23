@@ -1,8 +1,8 @@
 #!/bin/bash
-# Pre-removal script for s3proxy
+# Pre-removal script for foundation-storage-engine
 
 # Stop and disable service
-systemctl stop s3proxy.service 2>/dev/null || true
-systemctl disable s3proxy.service 2>/dev/null || true
+systemctl stop foundation-storage-engine.service 2>/dev/null || true
+systemctl disable foundation-storage-engine.service 2>/dev/null || true
 
-echo "S3Proxy service stopped and disabled"
+echo "Foundation Storage Engine service stopped and disabled"
