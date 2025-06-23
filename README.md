@@ -11,6 +11,7 @@
 [![Vibes](https://img.shields.io/badge/vibes-immaculate%20✨-ff69b4?style=flat)](https://github.com/einyx/foundation-storage-engine)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat)](http://makeapullrequest.com)
 [![Update Debian Mirror](https://github.com/meshxdata/foundation-storage-engine/actions/workflows/debian-mirror.yml/badge.svg)](https://github.com/meshxdata/foundation-storage-engine/actions/workflows/debian-mirror.yml)
+[![Update Red Hat Mirror](https://github.com/meshxdata/foundation-storage-engine/actions/workflows/redhat-mirror.yml/badge.svg)](https://github.com/meshxdata/foundation-storage-engine/actions/workflows/redhat-mirror.yml)
 <p align="center">
   <img src="logo.png" width="20%"/>
 </p>
