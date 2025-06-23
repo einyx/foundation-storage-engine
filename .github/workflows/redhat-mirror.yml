@@ -57,7 +57,7 @@ jobs:
       - name: Install repository tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y createrepo-c rpm
+          sudo apt-get install -y createrepo rpm
           
       - name: Generate repository metadata
         run: |
@@ -87,7 +87,7 @@ jobs:
           for version in 8 9; do
             for arch in x86_64 aarch64; do
               if [ -d "$version/$arch/Packages" ] && [ "$(ls -A $version/$arch/Packages)" ]; then
-                createrepo_c "$version/$arch"
+                createrepo "$version/$arch"
               fi
             done
           done
