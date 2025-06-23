@@ -3,7 +3,7 @@
 [![Go Version](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/meshxdata/foundation-storage-engine)](https://goreportcard.com/report/github.com/meshxdata/foundation-storage-engine)
-[![Docker Pulls](https://img.shields.io/docker/pulls/meshxdata/foundation-storage-engine)](https://ghcr.io/meshxdata/foundation-storage-engine)
+[![Container Image](https://img.shields.io/badge/ghcr.io-meshxdata%2Ffoundation--storage--engine-blue?logo=docker&logoColor=white)](https://github.com/meshxdata/foundation-storage-engine/pkgs/container/foundation-storage-engine)
 [![CI Status](https://github.com/meshxdata/foundation-storage-engine/workflows/Release/badge.svg)](https://github.com/meshxdata/foundation-storage-engine/actions)
 [![codecov](https://codecov.io/gh/meshxdata/foundation-storage-engine/branch/main/graph/badge.svg?token=ABCDEFG)](https://codecov.io/gh/meshxdata/foundation-storage-engine)
 [![Release](https://img.shields.io/github/release/meshxdata/foundation-storage-engine.svg)](https://github.com/meshxdata/foundation-storage-engine/releases/latest)
