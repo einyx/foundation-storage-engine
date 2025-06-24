@@ -31,7 +31,7 @@ func TestKMSIntegration(t *testing.T) {
 	config := &Config{
 		Enabled:      true,
 		DefaultKeyID: keyID,
-		KeySpec:      types.KeySpecAes256,
+		KeySpec:      types.DataKeySpecAes256,
 		Region:       region,
 		EncryptionContext: map[string]string{
 			"application": "foundation-storage-engine-test",
@@ -137,8 +137,6 @@ func TestEnvelopeEncryption(t *testing.T) {
 		keyCache:     make(map[string]*KeyInfo),
 		dataKeyCache: NewDataKeyCache(5 * time.Minute),
 	}
-
-	encryptor := NewEnvelopeEncryptor(manager)
 
 	t.Run("EncryptDecrypt", func(t *testing.T) {
 		// Skip if not enabled

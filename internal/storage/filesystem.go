@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,106 @@ import (
 type FileSystemBackend struct {
 	baseDir    string
 	bufferPool sync.Pool
+}
+
+// validateBucketName ensures a bucket name doesn't contain directory traversal sequences
+func validateBucketName(bucket string) error {
+	if bucket == "" {
+		return errors.New("bucket name cannot be empty")
+	}
+	if strings.Contains(bucket, "..") {
+		return errors.New("bucket name cannot contain '..'")
+	}
+	if strings.Contains(bucket, "/") || strings.Contains(bucket, "\\") {
+		return errors.New("bucket name cannot contain path separators")
+	}
+	if bucket == "." {
+		return errors.New("bucket name cannot be '.'")
+	}
+	return nil
+}
+
+// validateObjectKey ensures an object key doesn't contain directory traversal sequences
+func validateObjectKey(key string) error {
+	if key == "" {
+		return errors.New("object key cannot be empty")
+	}
+	// Check for parent directory references
+	if strings.Contains(key, "..") {
+		return errors.New("object key cannot contain '..'")
+	}
+	// Check for absolute paths
+	if strings.HasPrefix(key, "/") {
+		return errors.New("object key cannot start with '/'")
+	}
+	// Check for Windows-style separators  
+	if strings.Contains(key, "\\") {
+		return errors.New("object key cannot contain backslashes")
+	}
+	return nil
+}
+
+// secureBucketPath safely constructs a bucket path
+func (fs *FileSystemBackend) secureBucketPath(bucket string) (string, error) {
+	if err := validateBucketName(bucket); err != nil {
+		return "", err
+	}
+	
+	fullPath := filepath.Join(fs.baseDir, bucket)
+	
+	// Ensure the resulting path is still within the base directory
+	cleanPath := filepath.Clean(fullPath)
+	cleanBase := filepath.Clean(fs.baseDir)
+	
+	if !strings.HasPrefix(cleanPath, cleanBase+string(filepath.Separator)) && cleanPath != cleanBase {
+		return "", errors.New("path traversal detected")
+	}
+	
+	return cleanPath, nil
+}
+
+// secureObjectPath safely constructs an object path
+func (fs *FileSystemBackend) secureObjectPath(bucket, key string) (string, error) {
+	if err := validateBucketName(bucket); err != nil {
+		return "", fmt.Errorf("invalid bucket name: %w", err)
+	}
+	if err := validateObjectKey(key); err != nil {
+		return "", fmt.Errorf("invalid object key: %w", err)
+	}
+	
+	fullPath := filepath.Join(fs.baseDir, bucket, key)
+	
+	// Ensure the resulting path is still within the base directory
+	cleanPath := filepath.Clean(fullPath)
+	cleanBase := filepath.Clean(fs.baseDir)
+	
+	if !strings.HasPrefix(cleanPath, cleanBase+string(filepath.Separator)) && cleanPath != cleanBase {
+		return "", errors.New("path traversal detected")
+	}
+	
+	return cleanPath, nil
+}
+
+// secureUploadPath safely constructs an upload directory path
+func (fs *FileSystemBackend) secureUploadPath(bucket, uploadID string) (string, error) {
+	if err := validateBucketName(bucket); err != nil {
+		return "", fmt.Errorf("invalid bucket name: %w", err)
+	}
+	if err := validateBucketName(uploadID); err != nil { // uploadID follows bucket naming rules
+		return "", fmt.Errorf("invalid upload ID: %w", err)
+	}
+	
+	fullPath := filepath.Join(fs.baseDir, bucket, ".uploads", uploadID)
+	
+	// Ensure the resulting path is still within the base directory
+	cleanPath := filepath.Clean(fullPath)
+	cleanBase := filepath.Clean(fs.baseDir)
+	
+	if !strings.HasPrefix(cleanPath, cleanBase+string(filepath.Separator)) && cleanPath != cleanBase {
+		return "", errors.New("path traversal detected")
+	}
+	
+	return cleanPath, nil
 }
 
 func NewFileSystemBackend(cfg *config.FileSystemConfig) (*FileSystemBackend, error) {
@@ -63,17 +164,26 @@ func (fs *FileSystemBackend) ListBuckets(ctx context.Context) ([]BucketInfo, err
 }
 
 func (fs *FileSystemBackend) CreateBucket(ctx context.Context, bucket string) error {
-	bucketPath := filepath.Join(fs.baseDir, bucket)
+	bucketPath, err := fs.secureBucketPath(bucket)
+	if err != nil {
+		return fmt.Errorf("invalid bucket name: %w", err)
+	}
 	return os.MkdirAll(bucketPath, 0750)
 }
 
 func (fs *FileSystemBackend) DeleteBucket(ctx context.Context, bucket string) error {
-	bucketPath := filepath.Join(fs.baseDir, bucket)
+	bucketPath, err := fs.secureBucketPath(bucket)
+	if err != nil {
+		return fmt.Errorf("invalid bucket name: %w", err)
+	}
 	return os.RemoveAll(bucketPath)
 }
 
 func (fs *FileSystemBackend) BucketExists(ctx context.Context, bucket string) (bool, error) {
-	bucketPath := filepath.Join(fs.baseDir, bucket)
+	bucketPath, err := fs.secureBucketPath(bucket)
+	if err != nil {
+		return false, fmt.Errorf("invalid bucket name: %w", err)
+	}
 	info, err := os.Stat(bucketPath)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -90,7 +200,10 @@ func (fs *FileSystemBackend) ListObjects(ctx context.Context, bucket, prefix, ma
 }
 
 func (fs *FileSystemBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (*ListObjectsResult, error) {
-	bucketPath := filepath.Join(fs.baseDir, bucket)
+	bucketPath, err := fs.secureBucketPath(bucket)
+	if err != nil {
+		return nil, fmt.Errorf("invalid bucket name: %w", err)
+	}
 
 	result := &ListObjectsResult{
 		Contents:       make([]ObjectInfo, 0),
@@ -101,7 +214,7 @@ func (fs *FileSystemBackend) ListObjectsWithDelimiter(ctx context.Context, bucke
 	prefixSet := make(map[string]bool)
 	count := 0
 
-	err := filepath.Walk(bucketPath, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(bucketPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil || count >= maxKeys {
 			return nil
 		}
@@ -201,7 +314,10 @@ func (fs *FileSystemBackend) ListObjectsWithDelimiter(ctx context.Context, bucke
 }
 
 func (fs *FileSystemBackend) GetObject(ctx context.Context, bucket, key string) (*Object, error) {
-	objectPath := filepath.Join(fs.baseDir, bucket, key)
+	objectPath, err := fs.secureObjectPath(bucket, key)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path parameters: %w", err)
+	}
 
 	info, err := os.Stat(objectPath)
 	if err != nil {
@@ -237,7 +353,10 @@ func (fs *FileSystemBackend) GetObject(ctx context.Context, bucket, key string) 
 }
 
 func (fs *FileSystemBackend) PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64, metadata map[string]string) error {
-	objectPath := filepath.Join(fs.baseDir, bucket, key)
+	objectPath, err := fs.secureObjectPath(bucket, key)
+	if err != nil {
+		return fmt.Errorf("invalid path parameters: %w", err)
+	}
 
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(objectPath), 0750); err != nil {
@@ -277,10 +396,13 @@ func (fs *FileSystemBackend) PutObject(ctx context.Context, bucket, key string, 
 }
 
 func (fs *FileSystemBackend) DeleteObject(ctx context.Context, bucket, key string) error {
-	objectPath := filepath.Join(fs.baseDir, bucket, key)
+	objectPath, err := fs.secureObjectPath(bucket, key)
+	if err != nil {
+		return fmt.Errorf("invalid path parameters: %w", err)
+	}
 
 	// Remove the object file
-	err := os.Remove(objectPath)
+	err = os.Remove(objectPath)
 	if os.IsNotExist(err) {
 		return nil // S3 behavior: deleting non-existent object succeeds
 	}
@@ -293,7 +415,10 @@ func (fs *FileSystemBackend) DeleteObject(ctx context.Context, bucket, key strin
 }
 
 func (fs *FileSystemBackend) HeadObject(ctx context.Context, bucket, key string) (*ObjectInfo, error) {
-	objectPath := filepath.Join(fs.baseDir, bucket, key)
+	objectPath, err := fs.secureObjectPath(bucket, key)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path parameters: %w", err)
+	}
 
 	info, err := os.Stat(objectPath)
 	if err != nil {
@@ -351,7 +476,10 @@ func (fs *FileSystemBackend) InitiateMultipartUpload(ctx context.Context, bucket
 	uploadID := fmt.Sprintf("%s-%d", key, time.Now().UnixNano())
 
 	// Create a temporary directory for multipart upload
-	uploadDir := filepath.Join(fs.baseDir, bucket, ".uploads", uploadID)
+	uploadDir, err := fs.secureUploadPath(bucket, uploadID)
+	if err != nil {
+		return "", fmt.Errorf("invalid path parameters: %w", err)
+	}
 	if err := os.MkdirAll(uploadDir, 0750); err != nil {
 		return "", fmt.Errorf("failed to create upload directory: %w", err)
 	}
@@ -360,7 +488,10 @@ func (fs *FileSystemBackend) InitiateMultipartUpload(ctx context.Context, bucket
 }
 
 func (fs *FileSystemBackend) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, reader io.Reader, size int64) (string, error) {
-	uploadDir := filepath.Join(fs.baseDir, bucket, ".uploads", uploadID)
+	uploadDir, err := fs.secureUploadPath(bucket, uploadID)
+	if err != nil {
+		return "", fmt.Errorf("invalid path parameters: %w", err)
+	}
 	partPath := filepath.Join(uploadDir, fmt.Sprintf("part-%d", partNumber))
 
 	file, err := os.Create(partPath) //nolint:gosec // partPath is controlled
@@ -382,8 +513,15 @@ func (fs *FileSystemBackend) UploadPart(ctx context.Context, bucket, key, upload
 }
 
 func (fs *FileSystemBackend) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []CompletedPart) error {
-	uploadDir := filepath.Join(fs.baseDir, bucket, ".uploads", uploadID)
-	objectPath := filepath.Join(fs.baseDir, bucket, key)
+	uploadDir, err := fs.secureUploadPath(bucket, uploadID)
+	if err != nil {
+		return fmt.Errorf("invalid upload path parameters: %w", err)
+	}
+	
+	objectPath, err := fs.secureObjectPath(bucket, key)
+	if err != nil {
+		return fmt.Errorf("invalid object path parameters: %w", err)
+	}
 
 	// Ensure object directory exists
 	if err := os.MkdirAll(filepath.Dir(objectPath), 0750); err != nil {
@@ -422,12 +560,18 @@ func (fs *FileSystemBackend) CompleteMultipartUpload(ctx context.Context, bucket
 }
 
 func (fs *FileSystemBackend) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
-	uploadDir := filepath.Join(fs.baseDir, bucket, ".uploads", uploadID)
+	uploadDir, err := fs.secureUploadPath(bucket, uploadID)
+	if err != nil {
+		return fmt.Errorf("invalid path parameters: %w", err)
+	}
 	return os.RemoveAll(uploadDir)
 }
 
 func (fs *FileSystemBackend) ListParts(ctx context.Context, bucket, key, uploadID string, maxParts int, partNumberMarker int) (*ListPartsResult, error) {
-	uploadDir := filepath.Join(fs.baseDir, bucket, ".uploads", uploadID)
+	uploadDir, err := fs.secureUploadPath(bucket, uploadID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path parameters: %w", err)
+	}
 
 	entries, err := os.ReadDir(uploadDir)
 	if err != nil {
