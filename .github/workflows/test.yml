@@ -261,10 +261,27 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add benchmark-trends.png README.md benchmark-history/
-          git diff --quiet && git diff --staged --quiet || \
+          
+          # Only add files that exist
+          if [ -f benchmark-trends.png ]; then
+            git add benchmark-trends.png
+          fi
+          
+          if [ -f README.md ]; then
+            git add README.md
+          fi
+          
+          if [ -d benchmark-history/ ]; then
+            git add benchmark-history/
+          fi
+          
+          # Only commit if there are changes
+          if ! git diff --quiet || ! git diff --staged --quiet; then
             git commit -m "Update benchmark trends [skip ci]"
-          git push
+            git push
+          else
+            echo "No changes to commit"
+          fi
       
       # Upload benchmark history
       - name: Upload benchmark history

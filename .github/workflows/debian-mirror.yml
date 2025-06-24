@@ -62,7 +62,7 @@ jobs:
       - name: Install repository tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev apt-utils
+          sudo apt-get install -y dpkg-dev apt-utils gnupg
           
       - name: Generate repository metadata
         run: |
@@ -104,6 +104,22 @@ jobs:
           # Generate checksums
           cd debian/dists/stable
           apt-ftparchive release . >> Release
+          
+      - name: Import GPG key and sign repository
+        if: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          # Import the GPG key
+          echo "$GPG_PRIVATE_KEY" | gpg --import --batch --yes
+          
+          # Sign the Release file
+          cd debian/dists/stable
+          gpg --default-key alessio@linux.com --batch --yes --armor --detach-sign -o Release.gpg Release
+          gpg --default-key alessio@linux.com --batch --yes --clearsign -o InRelease Release
+          
+          # Export public key for users
+          gpg --armor --export alessio@linux.com > ../../foundation-repo-signing.pub
           
       - name: Create repository index page
         run: |
@@ -151,13 +167,18 @@ jobs:
               
               <h3>Add the repository to your system:</h3>
               
-              <pre><code># Add the repository
-                echo "deb https://apt.mirror.s3.amazonaws.com/ stable main" | sudo tee /etc/apt/sources.list.d/foundation-storage-engine.list
-                sudo apt update
-                sudo apt install foundation-storage-engine</code></pre>
+              <pre><code># Import the GPG key (if repository is signed)
+curl -fsSL https://apt.mirror.s3.amazonaws.com/foundation-repo-signing.pub | sudo apt-key add -
+
+# Add the repository
+echo "deb https://apt.mirror.s3.amazonaws.com/ stable main" | sudo tee /etc/apt/sources.list.d/foundation-storage-engine.list
+
+# Update and install
+sudo apt update
+sudo apt install foundation-storage-engine</code></pre>
               
               <div class="warning">
-                  <strong>Note:</strong> This repository is unsigned. You may need to use <code>--allow-unauthenticated</code> flag or configure apt to allow unsigned repositories.
+                  <strong>Note:</strong> If the repository is not signed, you may need to use <code>--allow-unauthenticated</code> flag or configure apt to allow unsigned repositories.
               </div>
               
               <h3>Alternative: Direct download</h3>
@@ -218,6 +239,11 @@ jobs:
         run: |
           # Copy index.html to the root
           cp index.html debian/
+          
+          # Copy GPG public key if it exists
+          if [ -f foundation-repo-signing.pub ]; then
+            cp foundation-repo-signing.pub debian/
+          fi
           
           # Sync the entire debian directory to S3
           aws s3 sync debian/ s3://apt.mirror/ \
