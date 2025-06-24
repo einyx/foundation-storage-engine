@@ -240,15 +240,20 @@ jobs:
       # Update README with trends
       - name: Update README with benchmark trends
         run: |
-          # Check if performance section exists
-          if ! grep -q "## Performance" README.md; then
-            echo -e "\n## Performance\n\n![Benchmark Trends](benchmark-trends.png)\n" >> README.md
-            cat benchmark-summary.md >> README.md
+          # Check if benchmark-summary.md was created
+          if [ -f benchmark-summary.md ]; then
+            # Check if performance section exists
+            if ! grep -q "## Performance" README.md; then
+              echo -e "\n## Performance\n\n![Benchmark Trends](benchmark-trends.png)\n" >> README.md
+              cat benchmark-summary.md >> README.md
+            else
+              # Update existing section
+              sed -i '/## Performance/,/##[^#]/{/##[^#]/!d}' README.md
+              echo -e "## Performance\n\n![Benchmark Trends](benchmark-trends.png)\n" >> README.md
+              cat benchmark-summary.md >> README.md
+            fi
           else
-            # Update existing section
-            sed -i '/## Performance/,/##[^#]/{/##[^#]/!d}' README.md
-            echo -e "## Performance\n\n![Benchmark Trends](benchmark-trends.png)\n" >> README.md
-            cat benchmark-summary.md >> README.md
+            echo "No benchmark data found, skipping README update"
           fi
       
       # Commit and push updates
