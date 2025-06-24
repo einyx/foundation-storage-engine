@@ -72,8 +72,8 @@ sudo apt install foundation-storage-engine</code></pre>
     
     <h2>More Information</h2>
     <ul>
-        <li><a href="https://github.com/meshxdata/foundation-storage-engine">GitHub Repository</a></li>
-        <li><a href="https://github.com/meshxdata/foundation-storage-engine/releases">All Releases</a></li>
+        <li><a href="https://github.com/einyx/foundation-storage-engine">GitHub Repository</a></li>
+        <li><a href="https://github.com/einyx/foundation-storage-engine/releases">All Releases</a></li>
     </ul>
 </body>
 </html>

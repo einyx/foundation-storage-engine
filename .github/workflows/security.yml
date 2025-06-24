@@ -163,7 +163,7 @@ jobs:
           # Download dependencies first
           go mod download
           # Run go-licenses with proper module context
-          go-licenses check ./... --disallowed_types=forbidden,restricted --ignore github.com/meshxdata/foundation-storage-engine || true
+          go-licenses check ./... --disallowed_types=forbidden,restricted --ignore github.com/einyx/foundation-storage-engine || true
 
   sbom:
     name: Generate SBOM

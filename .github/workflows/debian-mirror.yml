@@ -168,14 +168,11 @@ jobs:
               <h3>Add the repository to your system:</h3>
               
               <pre><code># Import the GPG key (if repository is signed)
-curl -fsSL https://apt.mirror.s3.amazonaws.com/foundation-repo-signing.pub | sudo apt-key add -
+                curl -fsSL https://apt.mirror.s3.amazonaws.com/foundation-repo-signing.pub | sudo apt-key add -
 
-# Add the repository
-echo "deb https://apt.mirror.s3.amazonaws.com/ stable main" | sudo tee /etc/apt/sources.list.d/foundation-storage-engine.list
-
-# Update and install
-sudo apt update
-sudo apt install foundation-storage-engine</code></pre>
+                echo "deb https://apt.mirror.s3.amazonaws.com/ stable main" | sudo tee /etc/apt/sources.list.d/foundation-storage-engine.list"
+                sudo apt update
+                sudo apt install foundation-storage-engine</code></pre>
               
               <div class="warning">
                   <strong>Note:</strong> If the repository is not signed, you may need to use <code>--allow-unauthenticated</code> flag or configure apt to allow unsigned repositories.
@@ -196,8 +193,8 @@ sudo apt install foundation-storage-engine</code></pre>
               
               <h2>More Information</h2>
               <ul>
-                  <li><a href="https://github.com/meshxdata/foundation-storage-engine">GitHub Repository</a></li>
-                  <li><a href="https://github.com/meshxdata/foundation-storage-engine/releases">All Releases</a></li>
+                  <li><a href="https://github.com/einyx/foundation-storage-engine">GitHub Repository</a></li>
+                  <li><a href="https://github.com/einyx/foundation-storage-engine/releases">All Releases</a></li>
               </ul>
           </body>
           </html>

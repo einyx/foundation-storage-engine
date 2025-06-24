@@ -3,7 +3,7 @@
 
 # Use the official image
 image:
-  repository: ghcr.io/meshxdata/foundation-storage-engine
+  repository: ghcr.io/einyx/foundation-storage-engine
   tag: encryption
   pullPolicy: Always
 
