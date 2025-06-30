@@ -54,7 +54,7 @@
         "startPeriod": 60,
         "timeout": 5
       },
-      "image": "ghcr.io/meshxdata/foundation-storage-engine:latest",
+      "image": "ghcr.io/einyx/foundation-storage-engine:latest",
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {

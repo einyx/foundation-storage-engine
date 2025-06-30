@@ -1,4 +1,4 @@
-module github.com/meshxdata/foundation-storage-engine
+module github.com/einyx/foundation-storage-engine
 
 go 1.23.0
 

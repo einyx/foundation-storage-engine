@@ -2,16 +2,16 @@
 
 [![Go Version](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/meshxdata/foundation-storage-engine)](https://goreportcard.com/report/github.com/meshxdata/foundation-storage-engine)
-[![Container Image](https://img.shields.io/badge/ghcr.io-meshxdata%2Ffoundation--storage--engine-blue?logo=docker&logoColor=white)](https://github.com/meshxdata/foundation-storage-engine/pkgs/container/foundation-storage-engine)
-[![CI Status](https://github.com/meshxdata/foundation-storage-engine/workflows/Release/badge.svg)](https://github.com/meshxdata/foundation-storage-engine/actions)
-[![codecov](https://codecov.io/gh/meshxdata/foundation-storage-engine/branch/main/graph/badge.svg?token=ABCDEFG)](https://codecov.io/gh/meshxdata/foundation-storage-engine)
-[![Release](https://img.shields.io/github/v/release/meshxdata/foundation-storage-engine)](https://github.com/meshxdata/foundation-storage-engine/releases/latest)
-[![GoDoc](https://pkg.go.dev/badge/github.com/meshxdata/foundation-storage-engine?status.svg)](https://pkg.go.dev/github.com/meshxdata/foundation-storage-engine)
-[![Vibes](https://img.shields.io/badge/vibes-immaculate%20✨-ff69b4?style=flat)](https://github.com/meshxdata/foundation-storage-engine)
+[![Go Report Card](https://goreportcard.com/badge/github.com/einyx/foundation-storage-engine)](https://goreportcard.com/report/github.com/einyx/foundation-storage-engine)
+[![Container Image](https://img.shields.io/badge/ghcr.io-einyx%2Ffoundation--storage--engine-blue?logo=docker&logoColor=white)](https://github.com/einyx/foundation-storage-engine/pkgs/container/foundation-storage-engine)
+[![CI Status](https://github.com/einyx/foundation-storage-engine/workflows/Release/badge.svg)](https://github.com/einyx/foundation-storage-engine/actions)
+[![codecov](https://codecov.io/gh/einyx/foundation-storage-engine/branch/main/graph/badge.svg?token=ABCDEFG)](https://codecov.io/gh/einyx/foundation-storage-engine)
+[![Release](https://img.shields.io/github/v/release/einyx/foundation-storage-engine)](https://github.com/einyx/foundation-storage-engine/releases/latest)
+[![GoDoc](https://pkg.go.dev/badge/github.com/einyx/foundation-storage-engine?status.svg)](https://pkg.go.dev/github.com/einyx/foundation-storage-engine)
+[![Vibes](https://img.shields.io/badge/vibes-immaculate%20✨-ff69b4?style=flat)](https://github.com/einyx/foundation-storage-engine)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat)](http://makeapullrequest.com)
-[![Update Debian Mirror](https://github.com/meshxdata/foundation-storage-engine/actions/workflows/debian-mirror.yml/badge.svg)](https://github.com/meshxdata/foundation-storage-engine/actions/workflows/debian-mirror.yml)
-[![Update Red Hat Mirror](https://github.com/meshxdata/foundation-storage-engine/actions/workflows/redhat-mirror.yml/badge.svg)](https://github.com/meshxdata/foundation-storage-engine/actions/workflows/redhat-mirror.yml)
+[![Update Debian Mirror](https://github.com/einyx/foundation-storage-engine/actions/workflows/debian-mirror.yml/badge.svg)](https://github.com/einyx/foundation-storage-engine/actions/workflows/debian-mirror.yml)
+[![Update Red Hat Mirror](https://github.com/einyx/foundation-storage-engine/actions/workflows/redhat-mirror.yml/badge.svg)](https://github.com/einyx/foundation-storage-engine/actions/workflows/redhat-mirror.yml)
 <p align="center">
   <img src="logo.png" width="20%"/>
 </p>
@@ -170,7 +170,7 @@ helm install my-foundation-storage-engine foundation-storage-engine/foundation-s
 
 ```bash
 # Clone the repository
-git clone https://github.com/meshxdata/foundation-storage-engine.git
+git clone https://github.com/einyx/foundation-storage-engine.git
 cd foundation-storage-engine
 
 # Build the binary
@@ -752,17 +752,17 @@ see the [LICENSE](LICENSE) file for details.
 
 ## 💬 Support
 
-- 🐛 [GitHub Issues](https://github.com/meshxdata/foundation-storage-engine/issues)
-- 💬 [Discussions](https://github.com/meshxdata/foundation-storage-engine/discussions)
+- 🐛 [GitHub Issues](https://github.com/einyx/foundation-storage-engine/issues)
+- 💬 [Discussions](https://github.com/einyx/foundation-storage-engine/discussions)
 - 📧 [Email Support](mailto:support@foundation-storage-engine.io)
 - 💼 [Professional Support](https://foundation-storage-engine.io/support)
 
 ---
 
 <p align="center">
-  <a href="https://github.com/meshxdata/foundation-storage-engine/stargazers"><img src="https://img.shields.io/github/stars/meshxdata/foundation-storage-engine?style=social" alt="GitHub stars"></a>
-  <a href="https://github.com/meshxdata/foundation-storage-engine/network/members"><img src="https://img.shields.io/github/forks/meshxdata/foundation-storage-engine?style=social" alt="GitHub forks"></a>
-  <a href="https://twitter.com/intent/tweet?text=Check%20out%20Foundation Storage Engine%20-%20A%20high-performance%20S3-compatible%20proxy%20server!&url=https://github.com/meshxdata/foundation-storage-engine"><img src="https://img.shields.io/twitter/url?style=social&url=https%3A%2F%2Fgithub.com%2Fmeshxdata%2Ffoundation-storage-engine" alt="Tweet"></a>
+  <a href="https://github.com/einyx/foundation-storage-engine/stargazers"><img src="https://img.shields.io/github/stars/einyx/foundation-storage-engine?style=social" alt="GitHub stars"></a>
+  <a href="https://github.com/einyx/foundation-storage-engine/network/members"><img src="https://img.shields.io/github/forks/einyx/foundation-storage-engine?style=social" alt="GitHub forks"></a>
+  <a href="https://twitter.com/intent/tweet?text=Check%20out%20Foundation Storage Engine%20-%20A%20high-performance%20S3-compatible%20proxy%20server!&url=https://github.com/einyx/foundation-storage-engine"><img src="https://img.shields.io/twitter/url?style=social&url=https%3A%2F%2Fgithub.com%2Feinyx%2Ffoundation-storage-engine" alt="Tweet"></a>
 </p>
 
 Made with ❤️ by the Foundation Storage Engine community

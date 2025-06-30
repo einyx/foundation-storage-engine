@@ -5,7 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/kms/types"
 
-	"github.com/meshxdata/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
 // ConfigFromAppConfig converts application config to KMS config

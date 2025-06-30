@@ -3,10 +3,10 @@ package s3
 import (
 	"context"
 
-	"github.com/meshxdata/foundation-storage-engine/internal/auth"
-	"github.com/meshxdata/foundation-storage-engine/internal/config"
-	"github.com/meshxdata/foundation-storage-engine/internal/kms"
-	"github.com/meshxdata/foundation-storage-engine/internal/storage"
+	"github.com/einyx/foundation-storage-engine/internal/auth"
+	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/kms"
+	"github.com/einyx/foundation-storage-engine/internal/storage"
 )
 
 // HandlerWithKMS extends the base Handler with KMS encryption support

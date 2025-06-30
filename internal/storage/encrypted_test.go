@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/meshxdata/foundation-storage-engine/internal/config"
-	"github.com/meshxdata/foundation-storage-engine/internal/encryption"
-	"github.com/meshxdata/foundation-storage-engine/internal/storage"
+	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/encryption"
+	"github.com/einyx/foundation-storage-engine/internal/storage"
 )
 
 func TestEncryptedBackendIntegration(t *testing.T) {

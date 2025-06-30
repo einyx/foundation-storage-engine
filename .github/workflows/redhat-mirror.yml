@@ -269,8 +269,8 @@ jobs:
               
               <h2>More Information</h2>
               <ul>
-                  <li><a href="https://github.com/meshxdata/foundation-storage-engine">GitHub Repository</a></li>
-                  <li><a href="https://github.com/meshxdata/foundation-storage-engine/releases">All Releases</a></li>
+                  <li><a href="https://github.com/einyx/foundation-storage-engine">GitHub Repository</a></li>
+                  <li><a href="https://github.com/einyx/foundation-storage-engine/releases">All Releases</a></li>
                   <li><a href="https://apt.mirror.s3.amazonaws.com/">Debian/Ubuntu Repository</a></li>
               </ul>
           </body>
