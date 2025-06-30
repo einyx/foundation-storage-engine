@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/meshxdata/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
 func TestNewFileSystemBackend(t *testing.T) {

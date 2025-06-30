@@ -11,12 +11,12 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 
-	"github.com/meshxdata/foundation-storage-engine/internal/auth"
-	"github.com/meshxdata/foundation-storage-engine/internal/cache"
-	"github.com/meshxdata/foundation-storage-engine/internal/config"
-	"github.com/meshxdata/foundation-storage-engine/internal/metrics"
-	"github.com/meshxdata/foundation-storage-engine/internal/storage"
-	"github.com/meshxdata/foundation-storage-engine/pkg/s3"
+	"github.com/einyx/foundation-storage-engine/internal/auth"
+	"github.com/einyx/foundation-storage-engine/internal/cache"
+	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/metrics"
+	"github.com/einyx/foundation-storage-engine/internal/storage"
+	"github.com/einyx/foundation-storage-engine/pkg/s3"
 )
 
 type Server struct {

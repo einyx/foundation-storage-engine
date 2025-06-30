@@ -5,7 +5,7 @@
 replicaCount: 1
 
 image:
-  repository: meshxdata/foundation-storage-engine
+  repository: einyx/foundation-storage-engine
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   tag: ""

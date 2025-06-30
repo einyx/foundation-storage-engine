@@ -8,7 +8,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/meshxdata/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
 // MultiProvider supports multiple authentication methods simultaneously

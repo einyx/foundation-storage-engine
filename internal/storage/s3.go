@@ -15,7 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/sirupsen/logrus"
 
-	"github.com/meshxdata/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
 const (
