@@ -2,7 +2,7 @@ apiVersion: v2
 name: foundation-storage-engine
 description: A high-performance S3-compatible proxy server for multiple storage backends
 type: application
-version: 0.1.0
+version: 0.0.3
 appVersion: "1.0.0"
 keywords:
   - s3

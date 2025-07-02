@@ -279,11 +279,26 @@ spec:
             - name: data
               mountPath: {{ .Values.config.storage.filesystem.baseDir }}
           {{- end }}
+          {{- if .Values.configFile.enabled }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/foundation-storage-engine/
+              readOnly: true
+          args:
+            - "--config"
+            - "/etc/foundation-storage-engine/{{ .Values.configFile.filename }}"
+          {{- end }}
       {{- if .Values.persistence.enabled }}
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: {{ .Values.persistence.existingClaim | default (include "foundation-storage-engine.fullname" .) }}
+      {{- end }}
+      {{- if .Values.configFile.enabled }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "foundation-storage-engine.fullname" . }}-config
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

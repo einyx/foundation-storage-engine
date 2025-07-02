@@ -321,3 +321,38 @@ monitoring:
     labels: {}
     # Additional labels for ServiceMonitor
     # release: prometheus
+
+configFile:
+  enabled: true
+  filename: "foundation-storage-engine.yaml"
+  content: |
+    # Application config file content (only what is loaded from file)
+    server:
+      listen: ":8080"
+      read_timeout: 60s
+      write_timeout: 60s
+      idle_timeout: 120s
+      max_body_size: 5368709120
+    storage:
+      provider: "s3"
+      s3:
+        endpoint: "https://s3.amazonaws.com"
+        region: "us-east-1"
+        access_key: "your-access-key"
+        secret_key: "your-secret-key"
+        bucket_mapping:
+          virtual-bucket1: real-bucket-1
+        bucket_configs:
+          mybucket:
+            real_name: "real-bucket-1"
+            prefix: "some/prefix"
+            region: "us-west-2"
+            endpoint: "https://custom-s3-endpoint.com"
+            access_key: "bucket-access-key"
+            secret_key: "bucket-secret-key"
+            kms_key_id: "arn:aws:kms:us-west-2:123456789012:key/abcd-efgh"
+            kms_encryption_context:
+              key1: value1
+              key2: value2
+    auth:
+      type: "none"
