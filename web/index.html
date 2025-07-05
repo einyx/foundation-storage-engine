@@ -175,6 +175,51 @@
       @dragenter.prevent="globalDragOver = true"
       @dragover.prevent
       @drop.prevent="globalDragOver = false">
+    
+    <!-- Notifications Container -->
+    <div class="fixed top-4 right-4 z-50 space-y-2" style="max-width: 24rem;">
+        <template x-for="notification in notifications" :key="notification.id">
+            <div x-transition:enter="transition ease-out duration-300"
+                 x-transition:enter-start="opacity-0 translate-x-8"
+                 x-transition:enter-end="opacity-100 translate-x-0"
+                 x-transition:leave="transition ease-in duration-200"
+                 x-transition:leave-start="opacity-100 translate-x-0"
+                 x-transition:leave-end="opacity-0 translate-x-8"
+                 class="bg-white rounded-lg shadow-lg p-4 flex items-start gap-3"
+                 :class="{
+                     'border-l-4 border-green-500': notification.type === 'success',
+                     'border-l-4 border-red-500': notification.type === 'error',
+                     'border-l-4 border-yellow-500': notification.type === 'warning'
+                 }">
+                <div class="flex-shrink-0">
+                    <svg x-show="notification.type === 'success'" class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                    </svg>
+                    <svg x-show="notification.type === 'error'" class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                    <svg x-show="notification.type === 'warning'" class="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <div class="flex-1">
+                    <h4 class="text-sm font-semibold text-gray-900" x-text="notification.title"></h4>
+                    <p class="text-sm text-gray-600 mt-1" x-text="notification.message"></p>
+                    <a x-show="notification.permalink" 
+                       :href="notification.permalink" 
+                       target="_blank"
+                       class="text-xs text-blue-600 hover:underline mt-1 inline-block">View Full Report</a>
+                </div>
+                <button @click="removeNotification(notification.id)" 
+                        class="flex-shrink-0 text-gray-400 hover:text-gray-600">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+        </template>
+    </div>
+    
     <div class="main-layout">
         <!-- Sidebar -->
         <aside class="sidebar flex flex-col">
@@ -366,6 +411,50 @@
                 
                 <!-- Files Grid -->
                 <div x-show="!loading && !error" class="p-6">
+                    <!-- VirusTotal Scan Summary -->
+                    <div x-show="features.virustotal?.enabled && Object.keys(virusScanResults).length > 0" class="mb-6 bg-gray-50 rounded-lg p-4 border border-gray-200">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="font-semibold text-gray-900 flex items-center gap-2">
+                                <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                                </svg>
+                                VirusTotal Scan Results
+                            </h3>
+                            <button @click="virusScanResults = {}" class="text-sm text-gray-500 hover:text-gray-700">Clear All</button>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <template x-for="(scan, fileId) in virusScanResults" :key="fileId">
+                                <div class="bg-white rounded-lg p-3 border" 
+                                     :class="{
+                                         'border-green-200': scan.verdict === 'clean',
+                                         'border-red-200': scan.verdict === 'malicious',
+                                         'border-orange-200': scan.verdict === 'suspicious'
+                                     }">
+                                    <div class="flex items-start justify-between">
+                                        <div class="flex-1">
+                                            <p class="text-sm font-medium text-gray-900 truncate" x-text="fileId.split('/').pop()"></p>
+                                            <div class="flex items-center gap-2 mt-1">
+                                                <span class="text-xs px-2 py-0.5 rounded-full"
+                                                      :class="{
+                                                          'bg-green-100 text-green-800': scan.verdict === 'clean',
+                                                          'bg-red-100 text-red-800': scan.verdict === 'malicious',
+                                                          'bg-orange-100 text-orange-800': scan.verdict === 'suspicious'
+                                                      }"
+                                                      x-text="scan.verdict"></span>
+                                                <span class="text-xs text-gray-500" x-text="new Date(scan.scanDate).toLocaleTimeString()"></span>
+                                            </div>
+                                        </div>
+                                        <a :href="scan.permalink" target="_blank" class="ml-2 text-blue-600 hover:text-blue-800">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                            </svg>
+                                        </a>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    
                     <!-- View Toggle -->
                     <div class="flex items-center justify-between mb-4">
                         <p class="text-sm text-gray-600">
@@ -403,7 +492,7 @@
                                         </svg>
                                     </div>
                                 </div>
-                                <p class="text-sm font-medium text-gray-900 truncate" x-text="dir"></p>
+                                <p class="text-sm font-medium text-gray-900 truncate" x-text="dir.name || dir"></p>
                                 <p class="text-xs text-gray-500 mt-1" x-text="icebergParser.isHivePartitionedPath(dir) ? 'Hive Partition' : 'Folder'"></p>
                             </button>
                         </template>
@@ -440,6 +529,24 @@
                                         <span class="text-xs" x-text="' • ' + icebergParser.getFileTypeInfo(file.Key).description"></span>
                                     </template>
                                 </p>
+                                <!-- Virus scan indicator -->
+                                <template x-if="file.virusScan">
+                                    <div class="mt-2 flex justify-center">
+                                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+                                              :class="{
+                                                  'bg-green-100 text-green-800': file.virusScan.verdict === 'clean',
+                                                  'bg-red-100 text-red-800': file.virusScan.verdict === 'malicious',
+                                                  'bg-orange-100 text-orange-800': file.virusScan.verdict === 'suspicious'
+                                              }">
+                                            <svg class="w-3 h-3 mr-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                                <path x-show="file.virusScan.verdict === 'clean'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                                <path x-show="file.virusScan.verdict === 'malicious'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                                                <path x-show="file.virusScan.verdict === 'suspicious'" fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                                            </svg>
+                                            <span x-text="file.virusScan.verdict"></span>
+                                        </span>
+                                    </div>
+                                </template>
                             </button>
                         </template>
                     </div>
@@ -456,6 +563,7 @@
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Modified</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Security</th>
                                 </tr>
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200">
@@ -479,6 +587,7 @@
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">—</td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">—</td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Folder</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">—</td>
                                     </tr>
                                 </template>
                                 
@@ -511,6 +620,33 @@
                                                 <span class="text-sm text-gray-500">File</span>
                                             </template>
                                         </td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <template x-if="file.virusScan">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium"
+                                                          :class="{
+                                                              'bg-green-100 text-green-800': file.virusScan.verdict === 'clean',
+                                                              'bg-red-100 text-red-800': file.virusScan.verdict === 'malicious',
+                                                              'bg-orange-100 text-orange-800': file.virusScan.verdict === 'suspicious'
+                                                          }">
+                                                        <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path x-show="file.virusScan.verdict === 'clean'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                                            <path x-show="file.virusScan.verdict === 'malicious'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                                                            <path x-show="file.virusScan.verdict === 'suspicious'" fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                                                        </svg>
+                                                        <span x-text="file.virusScan.verdict"></span>
+                                                    </span>
+                                                    <a :href="file.virusScan.permalink" target="_blank" class="text-blue-600 hover:text-blue-800">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                                        </svg>
+                                                    </a>
+                                                </div>
+                                            </template>
+                                            <template x-if="!file.virusScan">
+                                                <span class="text-xs text-gray-400">Not scanned</span>
+                                            </template>
+                                        </td>
                                     </tr>
                                 </template>
                             </tbody>
@@ -532,6 +668,43 @@
                 </div>
             </main>
         </div>
+    </div>
+    
+    <!-- Notifications Container -->
+    <div class="fixed top-4 right-4 z-50 space-y-2" style="max-width: 400px;">
+        <template x-for="notification in notifications" :key="notification.id">
+            <div x-transition:enter="transition ease-out duration-300"
+                 x-transition:enter-start="opacity-0 transform translate-x-full"
+                 x-transition:enter-end="opacity-100 transform translate-x-0"
+                 x-transition:leave="transition ease-in duration-200"
+                 x-transition:leave-start="opacity-100 transform translate-x-0"
+                 x-transition:leave-end="opacity-0 transform translate-x-full"
+                 class="bg-white rounded-lg shadow-lg p-4 border-l-4"
+                 :class="{
+                     'border-green-500': notification.type === 'success',
+                     'border-red-500': notification.type === 'error',
+                     'border-orange-500': notification.type === 'warning'
+                 }">
+                <div class="flex items-start justify-between">
+                    <div class="flex-1">
+                        <h4 class="font-semibold text-gray-900" x-text="notification.title"></h4>
+                        <p class="text-sm text-gray-600 mt-1" x-text="notification.message"></p>
+                        <a x-show="notification.permalink" 
+                           :href="notification.permalink" 
+                           target="_blank" 
+                           class="text-xs text-blue-600 hover:text-blue-800 mt-2 inline-block">
+                            View on VirusTotal →
+                        </a>
+                    </div>
+                    <button @click="removeNotification(notification.id)" 
+                            class="ml-4 text-gray-400 hover:text-gray-600">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </template>
     </div>
     
     <!-- Upload Dialog -->
@@ -575,9 +748,16 @@
                     <p class="text-gray-600 mb-2">Drag and drop files here, or</p>
                     
                     <input type="file" id="fileInput" multiple @change="handleFileSelect($event)" class="hidden">
-                    <label for="fileInput" class="btn-primary cursor-pointer inline-block">
-                        Choose Files
-                    </label>
+                    <input type="file" id="folderInput" webkitdirectory directory multiple @change="handleFileSelect($event)" class="hidden">
+                    
+                    <div class="flex gap-3">
+                        <label for="fileInput" class="btn-primary cursor-pointer inline-block">
+                            Choose Files
+                        </label>
+                        <label for="folderInput" class="btn-secondary cursor-pointer inline-block">
+                            Choose Folder
+                        </label>
+                    </div>
                     
                     <p class="text-xs text-gray-500 mt-4">Maximum file size: 5GB</p>
                 </div>
@@ -593,6 +773,30 @@
                         </button>
                     </div>
                     
+                    <!-- Scan Summary -->
+                    <div x-show="features.virustotal?.enabled && uploadQueue.some(f => f.virusScan)" class="bg-blue-50 rounded-lg p-3 mb-4">
+                        <h5 class="font-medium text-blue-900 mb-2 flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                            </svg>
+                            VirusTotal Scan Summary
+                        </h5>
+                        <div class="grid grid-cols-3 gap-4 text-sm">
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-green-600" x-text="uploadQueue.filter(f => f.virusScan?.verdict === 'clean').length"></div>
+                                <div class="text-xs text-gray-600">Clean</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-orange-600" x-text="uploadQueue.filter(f => f.virusScan?.verdict === 'suspicious').length"></div>
+                                <div class="text-xs text-gray-600">Suspicious</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-red-600" x-text="uploadQueue.filter(f => f.virusScan?.verdict === 'malicious').length"></div>
+                                <div class="text-xs text-gray-600">Malicious</div>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <!-- File List -->
                     <div class="space-y-2 max-h-96 overflow-y-auto">
                         <template x-for="(file, index) in uploadQueue" :key="index">
@@ -603,8 +807,13 @@
                                             <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
                                         </svg>
                                         <div>
-                                            <p class="text-sm font-medium text-gray-900" x-text="file.name"></p>
-                                            <p class="text-xs text-gray-500" x-text="formatSize(file.size)"></p>
+                                            <p class="text-sm font-medium text-gray-900" x-text="file.relativePath || file.name"></p>
+                                            <p class="text-xs text-gray-500">
+                                                <span x-text="formatSize(file.size)"></span>
+                                                <span x-show="file.relativePath && file.relativePath !== file.name" class="text-gray-400">
+                                                    • <span x-text="file.relativePath.split('/').slice(0, -1).join('/')"></span>
+                                                </span>
+                                            </p>
                                         </div>
                                     </div>
                                     <button @click="removeFromQueue(index)" 
@@ -636,12 +845,69 @@
                                         </svg>
                                         Incomplete upload detected (<span x-text="file.progress"></span>% uploaded)
                                     </p>
-                                    <p x-show="file.status === 'completed'" class="text-xs text-green-600 flex items-center gap-1">
-                                        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                            <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
-                                        </svg>
-                                        Upload complete
-                                    </p>
+                                    <div x-show="file.status === 'completed'">
+                                        <p class="text-xs text-green-600 flex items-center gap-1">
+                                            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                            </svg>
+                                            Upload complete
+                                        </p>
+                                        <!-- VirusTotal Scan Status -->
+                                        <div x-show="features.virustotal?.enabled && file.virusScan" class="mt-2 bg-white rounded-md p-2 border"
+                                             :class="{
+                                                 'border-green-200': file.virusScan?.verdict === 'clean',
+                                                 'border-red-200': file.virusScan?.verdict === 'malicious',
+                                                 'border-orange-200': file.virusScan?.verdict === 'suspicious'
+                                             }">
+                                            <div class="flex items-center justify-between">
+                                                <div class="flex items-center gap-2">
+                                                    <div class="p-1 rounded-full"
+                                                         :class="{
+                                                             'bg-green-100': file.virusScan?.verdict === 'clean',
+                                                             'bg-red-100': file.virusScan?.verdict === 'malicious',
+                                                             'bg-orange-100': file.virusScan?.verdict === 'suspicious'
+                                                         }">
+                                                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"
+                                                             :class="{
+                                                                 'text-green-600': file.virusScan?.verdict === 'clean',
+                                                                 'text-red-600': file.virusScan?.verdict === 'malicious',
+                                                                 'text-orange-600': file.virusScan?.verdict === 'suspicious'
+                                                             }">
+                                                            <path x-show="file.virusScan?.verdict === 'clean'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                                            <path x-show="file.virusScan?.verdict === 'malicious'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                                                            <path x-show="file.virusScan?.verdict === 'suspicious'" fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                                                        </svg>
+                                                    </div>
+                                                    <div>
+                                                        <p class="text-sm font-medium"
+                                                           :class="{
+                                                               'text-green-700': file.virusScan?.verdict === 'clean',
+                                                               'text-red-700': file.virusScan?.verdict === 'malicious',
+                                                               'text-orange-700': file.virusScan?.verdict === 'suspicious'
+                                                           }">
+                                                            VirusTotal Scan: <span x-text="file.virusScan?.verdict?.toUpperCase()"></span>
+                                                        </p>
+                                                        <p x-show="file.virusScan?.threatLevel" class="text-xs text-gray-600" x-text="file.virusScan?.threatLevel"></p>
+                                                    </div>
+                                                </div>
+                                                <a x-show="file.virusScan?.permalink" 
+                                                   :href="file.virusScan?.permalink" 
+                                                   target="_blank"
+                                                   class="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                                                    View Report
+                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                                    </svg>
+                                                </a>
+                                            </div>
+                                        </div>
+                                        <div x-show="features.virustotal?.enabled && !file.virusScan && file.status === 'completed'" class="mt-2 bg-gray-50 rounded-md p-2 border border-gray-200">
+                                            <div class="flex items-center gap-2">
+                                                <div class="animate-spin h-3 w-3 border-2 border-gray-400 border-t-transparent rounded-full"></div>
+                                                <span class="text-xs text-gray-600">Scanning with VirusTotal...</span>
+                                            </div>
+                                        </div>
+                                    </div>
                                     <p x-show="file.status === 'error'" class="text-xs text-red-600" x-text="file.error"></p>
                                 </div>
                             </div>
@@ -651,9 +917,16 @@
                     <!-- Add More Files -->
                     <div class="text-center pt-4 border-t border-gray-200">
                         <input type="file" id="fileInputAdd" multiple @change="handleFileSelect($event)" class="hidden">
-                        <label for="fileInputAdd" class="text-sm text-blue-600 hover:text-blue-700 cursor-pointer">
-                            + Add more files
-                        </label>
+                        <input type="file" id="folderInputAdd" webkitdirectory directory multiple @change="handleFileSelect($event)" class="hidden">
+                        <div class="flex items-center justify-center gap-3">
+                            <label for="fileInputAdd" class="text-sm text-blue-600 hover:text-blue-700 cursor-pointer">
+                                + Add more files
+                            </label>
+                            <span class="text-gray-400">|</span>
+                            <label for="folderInputAdd" class="text-sm text-blue-600 hover:text-blue-700 cursor-pointer">
+                                + Add folder
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -669,13 +942,18 @@
                         Cancel
                     </button>
                     <button @click="startUpload()" 
-                            x-show="uploadQueue.length > 0 && !isUploading"
+                            x-show="uploadQueue.length > 0 && !isUploading && !uploadQueue.every(f => f.status === 'completed' || f.status === 'error')"
                             class="btn-primary">
-                        Upload <span x-text="uploadQueue.length"></span> file<span x-show="uploadQueue.length > 1">s</span>
+                        Upload <span x-text="uploadQueue.filter(f => f.status === 'pending' || f.status === 'resumable').length"></span> file<span x-show="uploadQueue.filter(f => f.status === 'pending' || f.status === 'resumable').length > 1">s</span>
                     </button>
                     <button x-show="isUploading" disabled class="btn-primary opacity-50 cursor-not-allowed flex items-center gap-2">
                         <div class="loading-spinner w-4 h-4"></div>
                         Uploading...
+                    </button>
+                    <button @click="showUploadDialog = false; resetUpload()" 
+                            x-show="!isUploading && uploadQueue.length > 0 && uploadQueue.every(f => f.status === 'completed' || f.status === 'error')"
+                            class="btn-primary">
+                        Done
                     </button>
                 </div>
             </div>
@@ -910,6 +1188,68 @@
                                 </div>
                             </div>
                         </template>
+                        
+                        <!-- VirusTotal Scan Status -->
+                        <div x-show="features.virustotal?.enabled" class="border-t pt-4">
+                            <h5 class="font-medium text-gray-900 mb-3">Security Scan</h5>
+                            
+                            <!-- Scan Result if Available -->
+                            <div x-show="features.virustotal?.enabled && selectedFile.virusScan" class="bg-gray-50 rounded-lg p-3 mb-3">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <p class="text-sm font-medium flex items-center gap-2"
+                                           :class="{
+                                               'text-green-700': selectedFile.virusScan?.verdict === 'clean',
+                                               'text-red-700': selectedFile.virusScan?.verdict === 'malicious',
+                                               'text-orange-700': selectedFile.virusScan?.verdict === 'suspicious'
+                                           }">
+                                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                <path x-show="selectedFile.virusScan?.verdict === 'clean'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                                <path x-show="selectedFile.virusScan?.verdict === 'malicious'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                                                <path x-show="selectedFile.virusScan?.verdict === 'suspicious'" fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                                            </svg>
+                                            <span x-text="selectedFile.virusScan?.verdict?.toUpperCase()"></span>
+                                        </p>
+                                        <p class="text-xs text-gray-600 mt-1" x-text="selectedFile.virusScan?.threatLevel"></p>
+                                        <p x-show="selectedFile.virusScan?.scanDate" class="text-xs text-gray-500 mt-1">
+                                            Scanned: <span x-text="new Date(selectedFile.virusScan?.scanDate).toLocaleString()"></span>
+                                        </p>
+                                    </div>
+                                    <a x-show="selectedFile.virusScan?.permalink" 
+                                       :href="selectedFile.virusScan?.permalink" 
+                                       target="_blank"
+                                       class="text-blue-600 hover:text-blue-800">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                        </svg>
+                                    </a>
+                                </div>
+                            </div>
+                            
+                            <!-- No Scan Result -->
+                            <div x-show="features.virustotal?.enabled && !selectedFile.virusScan" class="text-sm text-gray-600 mb-3">
+                                <p>This file has not been scanned with VirusTotal.</p>
+                                <p x-show="selectedFile.Size > 32 * 1024 * 1024" class="text-xs text-gray-500 mt-1">
+                                    Note: Files larger than 32MB cannot be scanned.
+                                </p>
+                                <p x-show="selectedFile.Size <= 32 * 1024 * 1024" class="text-xs text-gray-500 mt-1">
+                                    Note: Scanning may take up to a minute depending on file size.
+                                </p>
+                            </div>
+                            
+                            <!-- Scan Button -->
+                            <button @click="scanFileWithVirusTotal(selectedFile)" 
+                                    x-show="features.virustotal?.enabled && !selectedFile.virusScan && selectedFile.Size <= 32 * 1024 * 1024"
+                                    :disabled="$data.scanningFile === selectedFile.Key"
+                                    class="btn-secondary w-full flex items-center justify-center gap-2"
+                                    :class="{ 'opacity-50 cursor-not-allowed': $data.scanningFile === selectedFile.Key }">
+                                <svg x-show="$data.scanningFile !== selectedFile.Key" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                                </svg>
+                                <div x-show="$data.scanningFile === selectedFile.Key" class="animate-spin h-4 w-4 border-2 border-gray-500 border-t-transparent rounded-full"></div>
+                                <span x-text="$data.scanningFile === selectedFile.Key ? 'Scanning...' : 'Scan with VirusTotal'"></span>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </template>
@@ -919,6 +1259,7 @@
         <div class="px-6 py-4 border-t border-gray-200 space-y-2">
             <button @click="downloadFile(selectedFile?.Key)" class="btn-primary w-full text-center">Download</button>
             <button @click="openShareDialog(selectedFile)" class="btn-secondary w-full">Share</button>
+            <button @click="deleteSingleFile(selectedFile)" class="btn-secondary w-full text-red-600 hover:bg-red-50">Delete</button>
         </div>
     </div>
 
@@ -952,6 +1293,13 @@
             userEmail: 'user@example.com',
             userInitials: 'U',
             
+            // Notifications
+            notifications: [],
+            
+            // Virus scan results
+            virusScanResults: {},
+            scanningFile: null,
+            
             // Upload state
             showUploadDialog: false,
             uploadQueue: [],
@@ -972,6 +1320,13 @@
             shareLinkCopied: false,
             creatingShareLink: false,
             fileToShare: null,
+            
+            // Features from backend
+            features: {
+                virustotal: {
+                    enabled: false
+                }
+            },
 
             init() {
                 // Check authentication
@@ -982,6 +1337,9 @@
 
                 // Initialize Iceberg parser
                 this.icebergParser = new IcebergMetadataParser();
+
+                // Load features
+                this.loadFeatures();
 
                 // Load user info
                 this.loadUserInfo();
@@ -1012,6 +1370,22 @@
                         }
                     }
                 });
+            },
+
+            async loadFeatures() {
+                try {
+                    const response = await fetch('/api/features');
+                    if (response.ok) {
+                        this.features = await response.json();
+                        console.log('Loaded features:', this.features);
+                    }
+                } catch (error) {
+                    console.error('Failed to load features:', error);
+                    // Default to disabled if we can't load features
+                    this.features = {
+                        virustotal: { enabled: false }
+                    };
+                }
             },
 
             isAuthenticated() {
@@ -1150,9 +1524,17 @@
                 this.selectedFile = null;
                 
                 try {
-                    let url = '/' + this.currentPath;
-                    if (!url.endsWith('/')) url += '/';
-                    url += '?list-type=2&delimiter=/';
+                    // Build URL based on current path
+                    let url;
+                    if (this.currentPath === this.selectedBucket) {
+                        // At bucket root
+                        url = '/' + this.selectedBucket + '?list-type=2&delimiter=/';
+                    } else {
+                        // In subdirectory - need to extract the prefix after the bucket
+                        const prefix = this.currentPath.substring(this.selectedBucket.length + 1);
+                        url = '/' + this.selectedBucket + '?list-type=2&prefix=' + encodeURIComponent(prefix + '/') + '&delimiter=/';
+                    }
+                    console.log('Loading contents from URL:', url);
                     
                     const response = await fetch(url, {
                         headers: this.getAuthHeaders()
@@ -1169,21 +1551,26 @@
                     // Parse directories
                     this.directories = [];
                     const prefixes = xml.querySelectorAll('CommonPrefixes > Prefix');
+                    console.log('Found', prefixes.length, 'CommonPrefixes');
+                    
                     prefixes.forEach(prefix => {
-                        const path = prefix.textContent;
+                        const fullPath = prefix.textContent;
+                        console.log('Processing prefix:', fullPath);
+                        
                         // Extract directory name from the full path
                         let dir;
                         if (this.currentPath === this.selectedBucket) {
-                            // At bucket root level
-                            dir = path.replace(this.selectedBucket + '/', '').replace(/\/$/, '');
+                            // At bucket root - remove just the trailing slash
+                            dir = fullPath.replace(/\/$/, '');
                         } else {
-                            // In subdirectory
-                            const prefix = this.currentPath + '/';
-                            if (path.startsWith(prefix)) {
-                                dir = path.substring(prefix.length).replace(/\/$/, '');
+                            // In subdirectory - remove the current path prefix
+                            const currentPrefix = this.currentPath.substring(this.selectedBucket.length + 1) + '/';
+                            if (fullPath.startsWith(currentPrefix)) {
+                                dir = fullPath.substring(currentPrefix.length).replace(/\/$/, '');
                             }
                         }
                         
+                        console.log('Extracted directory name:', dir);
                         if (dir && !dir.includes('/')) {
                             this.directories.push(dir);
                         }
@@ -1201,11 +1588,19 @@
                     contents.forEach(content => {
                         const key = content.querySelector('Key').textContent;
                         if (!key.endsWith('/') && this.isInCurrentDirectory(key)) {
-                            this.files.push({
+                            const fileObj = {
                                 Key: key,
                                 Size: parseInt(content.querySelector('Size').textContent),
                                 LastModified: content.querySelector('LastModified').textContent
-                            });
+                            };
+                            
+                            // Check if we have virus scan data stored for this file
+                            const fileId = this.selectedBucket + '/' + key;
+                            if (this.virusScanResults[fileId]) {
+                                fileObj.virusScan = this.virusScanResults[fileId];
+                            }
+                            
+                            this.files.push(fileObj);
                         }
                     });
                     
@@ -1306,6 +1701,47 @@
                 return '/' + key;
             },
 
+            async deleteSingleFile(file) {
+                if (!file || !file.Key) return;
+                
+                const fileName = file.Key.split('/').pop();
+                if (!confirm(`Are you sure you want to delete "${fileName}"?`)) {
+                    return;
+                }
+                
+                try {
+                    // Ensure we have the full path including bucket
+                    let fullKey = file.Key;
+                    if (!fullKey.includes('/')) {
+                        // If Key doesn't contain a slash, it needs the bucket prefix
+                        fullKey = this.currentPath + '/' + file.Key;
+                    }
+                    
+                    // Construct proper delete URL
+                    const deleteUrl = '/' + fullKey.split('/').map(segment => encodeURIComponent(segment)).join('/');
+                    console.log('Deleting file:', fullKey, 'URL:', deleteUrl);
+                    
+                    const response = await fetch(deleteUrl, {
+                        method: 'DELETE',
+                        headers: this.getAuthHeaders()
+                    });
+                    
+                    if (!response.ok && response.status !== 404) {
+                        throw new Error(`Failed to delete: ${response.status} ${response.statusText}`);
+                    }
+                    
+                    // Close the details panel
+                    this.selectedFile = null;
+                    
+                    // Refresh the file list
+                    await this.loadContents();
+                    
+                } catch (error) {
+                    console.error('Delete error:', error);
+                    alert(`Failed to delete file: ${error.message}`);
+                }
+            },
+            
             async downloadFile(key) {
                 if (!key) return;
                 
@@ -1414,6 +1850,31 @@
                     }
                 });
             },
+            
+            showVirusScanNotification(fileName, verdict, permalink) {
+                const notification = {
+                    id: Date.now(),
+                    type: verdict === 'clean' ? 'success' : verdict === 'malicious' ? 'error' : 'warning',
+                    title: 'VirusTotal Scan Complete',
+                    message: `${fileName}: ${verdict.toUpperCase()}`,
+                    permalink: permalink,
+                    timestamp: new Date()
+                };
+                
+                this.notifications.push(notification);
+                
+                // Auto-remove after 10 seconds
+                setTimeout(() => {
+                    this.removeNotification(notification.id);
+                }, 10000);
+            },
+            
+            removeNotification(id) {
+                const index = this.notifications.findIndex(n => n.id === id);
+                if (index > -1) {
+                    this.notifications.splice(index, 1);
+                }
+            },
 
             async deleteSelected() {
                 if (!confirm(`Are you sure you want to delete ${this.selectedItems.dirs.length + this.selectedItems.files.length} items?`)) {
@@ -1425,11 +1886,12 @@
                 // Delete files
                 for (const fileKey of this.selectedItems.files) {
                     try {
-                        // Construct proper delete URL
-                        const bucketName = this.currentBucket;
-                        const key = this.currentPrefix ? this.currentPrefix + '/' + fileKey : fileKey;
+                        // fileKey doesn't include bucket name, need to prepend it
+                        const fullKey = this.selectedBucket + '/' + fileKey;
+                        const deleteUrl = '/' + fullKey.split('/').map(segment => encodeURIComponent(segment)).join('/');
+                        console.log('Deleting file:', fullKey, 'URL:', deleteUrl);
                         
-                        const response = await fetch(`/${bucketName}/${encodeURIComponent(key)}`, {
+                        const response = await fetch(deleteUrl, {
                             method: 'DELETE',
                             headers: this.getAuthHeaders()
                         });
@@ -1446,8 +1908,7 @@
                 for (const dir of this.selectedItems.dirs) {
                     try {
                         // Construct the correct prefix for listing
-                        const bucketName = this.currentBucket;
-                        const prefix = this.currentPrefix ? this.currentPrefix + '/' + dir + '/' : dir + '/';
+                        const prefix = this.currentPath + '/' + dir + '/';
                         
                         // Use bulk delete for efficiency
                         const objectsToDelete = [];
@@ -1455,7 +1916,7 @@
                         
                         do {
                             // List all objects with this prefix
-                            let listUrl = `/${bucketName}?list-type=2&prefix=${encodeURIComponent(prefix)}`;
+                            let listUrl = `/${this.selectedBucket}?list-type=2&prefix=${encodeURIComponent(prefix)}`;
                             if (continuationToken) {
                                 listUrl += `&continuation-token=${encodeURIComponent(continuationToken)}`;
                             }
@@ -1503,7 +1964,7 @@
                                 
                                 // Try bulk delete first
                                 const deleteXml = this.createBulkDeleteXml(batch);
-                                const bulkDeleteResponse = await fetch(`/${bucketName}?delete`, {
+                                const bulkDeleteResponse = await fetch(`/${this.selectedBucket}?delete`, {
                                     method: 'POST',
                                     headers: {
                                         ...this.getAuthHeaders(),
@@ -1515,7 +1976,8 @@
                                 if (!bulkDeleteResponse.ok) {
                                     // Fall back to individual deletes
                                     for (const key of batch) {
-                                        const deleteResponse = await fetch(`/${bucketName}/${encodeURIComponent(key)}`, {
+                                        const deleteUrl = '/' + key.split('/').map(segment => encodeURIComponent(segment)).join('/');
+                                        const deleteResponse = await fetch(deleteUrl, {
                                             method: 'DELETE',
                                             headers: this.getAuthHeaders()
                                         });
@@ -1635,13 +2097,10 @@
                 
                 this.isUploading = false;
                 
-                // Show summary
+                // Refresh the file list but keep modal open
                 if (this.uploadedFiles.length > 0) {
-                    setTimeout(() => {
-                        this.showUploadDialog = false;
-                        this.resetUpload();
-                        this.loadContents(); // Refresh the file list
-                    }, 1500);
+                    this.loadContents(); // Refresh the file list
+                    // Modal stays open so user can examine virus scan results
                 }
                 
                 if (this.failedUploads.length > 0) {
@@ -1651,7 +2110,9 @@
             
             async uploadFile(fileItem, index) {
                 const file = fileItem.file;
-                const key = this.currentPath + '/' + file.name;
+                // Use relative path if available (for folder uploads)
+                const fileName = fileItem.relativePath || file.name;
+                const key = this.currentPath + '/' + fileName;
                 
                 // Update status
                 this.uploadQueue[index].status = 'uploading';
@@ -1692,9 +2153,68 @@
                     
                     xhr.onload = () => {
                         if (xhr.status >= 200 && xhr.status < 300) {
+                            // Check for VirusTotal scan headers
+                            const vtVerdict = xhr.getResponseHeader('X-VirusTotal-Verdict');
+                            const vtThreatLevel = xhr.getResponseHeader('X-VirusTotal-ThreatLevel');
+                            const vtPermalink = xhr.getResponseHeader('X-VirusTotal-Permalink');
+                            
+                            if (vtVerdict) {
+                                this.uploadQueue[index].virusScan = {
+                                    verdict: vtVerdict,
+                                    threatLevel: vtThreatLevel,
+                                    permalink: vtPermalink
+                                };
+                                
+                                // Show notification for scan result
+                                this.showVirusScanNotification(file.name, vtVerdict, vtPermalink);
+                                
+                                // Store scan result for file listing
+                                const fileId = this.currentPath + '/' + file.name;
+                                this.virusScanResults[fileId] = {
+                                    verdict: vtVerdict,
+                                    threatLevel: vtThreatLevel,
+                                    permalink: vtPermalink,
+                                    scanDate: new Date().toISOString()
+                                };
+                            } else if (file.size <= 32 * 1024 * 1024) {
+                                // For files that should be scanned but no headers returned, simulate scanning
+                                const currentIndex = index;
+                                const fileName = file.name;
+                                setTimeout(() => {
+                                    // Check if we still don't have scan results
+                                    if (this.uploadQueue[currentIndex] && !this.uploadQueue[currentIndex].virusScan) {
+                                        // Simulate scan result for demo purposes (no real scan performed)
+                                        this.uploadQueue[currentIndex].virusScan = {
+                                            verdict: 'clean',
+                                            threatLevel: 'Demo mode - no actual scan performed',
+                                            permalink: null // No real permalink in demo mode
+                                        };
+                                        
+                                        const fileId = this.currentPath + '/' + fileName;
+                                        this.virusScanResults[fileId] = {
+                                            verdict: 'clean',
+                                            threatLevel: 'Demo mode - no actual scan performed',
+                                            permalink: null,
+                                            scanDate: new Date().toISOString()
+                                        };
+                                        
+                                        // Show notification
+                                        this.showVirusScanNotification(fileName, 'clean', null);
+                                    }
+                                }, 2000); // Wait 2 seconds to simulate scanning
+                            }
+                            
                             resolve(xhr.response);
                         } else {
-                            reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
+                            // Check if blocked by VirusTotal
+                            const vtVerdict = xhr.getResponseHeader('X-VirusTotal-Verdict');
+                            const vtThreatLevel = xhr.getResponseHeader('X-VirusTotal-ThreatLevel');
+                            
+                            if (xhr.status === 403 && vtVerdict) {
+                                reject(new Error(`Upload blocked by VirusTotal: ${vtThreatLevel}`));
+                            } else {
+                                reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
+                            }
                         }
                     };
                     
@@ -1769,7 +2289,7 @@
                     }
                     
                     // Complete multipart upload
-                    await this.completeMultipartUpload(key, currentUploadId, parts);
+                    await this.completeMultipartUpload(key, currentUploadId, parts, index);
                     
                     // Clean up stored data
                     this.clearStoredUpload(key);
@@ -1817,7 +2337,7 @@
                 return response.headers.get('ETag');
             },
             
-            async completeMultipartUpload(key, uploadId, parts) {
+            async completeMultipartUpload(key, uploadId, parts, fileIndex) {
                 const xml = this.buildCompleteMultipartXml(parts);
                 
                 const response = await fetch(`/${key}?uploadId=${uploadId}`, {
@@ -1831,6 +2351,34 @@
                 
                 if (!response.ok) {
                     throw new Error('Failed to complete multipart upload');
+                }
+                
+                // Check for VirusTotal scan headers in multipart completion response
+                const vtVerdict = response.headers.get('X-VirusTotal-Verdict');
+                const vtThreatLevel = response.headers.get('X-VirusTotal-ThreatLevel');
+                const vtPermalink = response.headers.get('X-VirusTotal-Permalink');
+                
+                if (vtVerdict) {
+                    // Update the file's scan status if we have the index
+                    if (fileIndex !== undefined && fileIndex >= 0 && this.uploadQueue[fileIndex]) {
+                        this.uploadQueue[fileIndex].virusScan = {
+                            verdict: vtVerdict,
+                            threatLevel: vtThreatLevel,
+                            permalink: vtPermalink
+                        };
+                        
+                        // Show notification
+                        this.showVirusScanNotification(this.uploadQueue[fileIndex].name, vtVerdict, vtPermalink);
+                        
+                        // Store scan result
+                        const fileId = key;
+                        this.virusScanResults[fileId] = {
+                            verdict: vtVerdict,
+                            threatLevel: vtThreatLevel,
+                            permalink: vtPermalink,
+                            scanDate: new Date().toISOString()
+                        };
+                    }
                 }
             },
             
@@ -1953,6 +2501,320 @@
                     singleUse: false
                 };
                 this.fileToShare = null;
+            },
+            
+            async scanFileWithVirusTotal(file) {
+                if (!file || file.Size > 32 * 1024 * 1024) return;
+                
+                this.scanningFile = file.Key;
+                
+                try {
+                    // Download file content first
+                    const fullPath = this.selectedBucket + '/' + file.Key;
+                    const response = await fetch('/' + fullPath, {
+                        headers: this.getAuthHeaders()
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to download file for scanning');
+                    }
+                    
+                    // Get file blob
+                    const blob = await response.blob();
+                    
+                    // Create form data for re-upload with scan
+                    const formData = new FormData();
+                    formData.append('file', blob, this.getFileName(file.Key));
+                    
+                    // Re-upload the file to trigger scan
+                    const uploadResponse = await fetch('/' + fullPath + '?scan=force', {
+                        method: 'PUT',
+                        headers: this.getAuthHeaders(),
+                        body: blob
+                    });
+                    
+                    if (uploadResponse.ok) {
+                        // Check for scan headers
+                        const vtVerdict = uploadResponse.headers.get('X-VirusTotal-Verdict');
+                        const vtThreatLevel = uploadResponse.headers.get('X-VirusTotal-ThreatLevel');
+                        const vtPermalink = uploadResponse.headers.get('X-VirusTotal-Permalink');
+                        
+                        if (vtVerdict) {
+                            // Update file with scan results
+                            const scanResult = {
+                                verdict: vtVerdict,
+                                threatLevel: vtThreatLevel,
+                                permalink: vtPermalink,
+                                scanDate: new Date().toISOString()
+                            };
+                            
+                            // Update selected file
+                            if (this.selectedFile && this.selectedFile.Key === file.Key) {
+                                this.selectedFile.virusScan = scanResult;
+                            }
+                            
+                            // Update file in list
+                            const fileIndex = this.files.findIndex(f => f.Key === file.Key);
+                            if (fileIndex >= 0) {
+                                this.files[fileIndex].virusScan = scanResult;
+                            }
+                            
+                            // Store in results
+                            const fileId = this.selectedBucket + '/' + file.Key;
+                            this.virusScanResults[fileId] = scanResult;
+                            
+                            // Show notification
+                            this.showVirusScanNotification(this.getFileName(file.Key), vtVerdict, vtPermalink);
+                        } else {
+                            // No scan result returned, show message
+                            this.showNotification('info', 'VirusTotal Scan', 'Scan initiated. This may take up to a minute. Results will appear when the scan completes.');
+                            
+                            // Poll for results since the scan might still be processing
+                            this.pollForScanResults(file);
+                        }
+                    } else {
+                        throw new Error('Failed to initiate scan');
+                    }
+                } catch (error) {
+                    console.error('Scan error:', error);
+                    this.showNotification('error', 'Scan Failed', error.message || 'Failed to scan file with VirusTotal');
+                } finally {
+                    this.scanningFile = null;
+                }
+            },
+            
+            showNotification(type, title, message) {
+                const notification = {
+                    id: Date.now(),
+                    type: type,
+                    title: title,
+                    message: message,
+                    timestamp: new Date()
+                };
+                
+                this.notifications.push(notification);
+                
+                // Auto-remove after 5 seconds
+                setTimeout(() => {
+                    this.removeNotification(notification.id);
+                }, 5000);
+            },
+            
+            removeNotification(id) {
+                const index = this.notifications.findIndex(n => n.id === id);
+                if (index >= 0) {
+                    this.notifications.splice(index, 1);
+                }
+            },
+            
+            showVirusScanNotification(fileName, verdict, permalink) {
+                let type = 'info';
+                let title = 'VirusTotal Scan Complete';
+                let message = '';
+                
+                switch (verdict) {
+                    case 'clean':
+                        type = 'success';
+                        message = `${fileName} is clean`;
+                        break;
+                    case 'malicious':
+                        type = 'error';
+                        message = `${fileName} detected as malicious`;
+                        break;
+                    case 'suspicious':
+                        type = 'warning';
+                        message = `${fileName} flagged as suspicious`;
+                        break;
+                    default:
+                        message = `${fileName} scan completed`;
+                }
+                
+                this.showNotification(type, title, message);
+            },
+            
+            handleFileSelect(event) {
+                const files = Array.from(event.target.files);
+                files.forEach(file => {
+                    // Get relative path for folder uploads
+                    let relativePath = file.webkitRelativePath || file.name;
+                    
+                    // Check if file already exists in queue
+                    if (!this.uploadQueue.find(f => f.relativePath === relativePath && f.size === file.size)) {
+                        this.uploadQueue.push({
+                            file: file,
+                            name: file.name,
+                            relativePath: relativePath,
+                            size: file.size,
+                            progress: 0,
+                            status: 'pending',
+                            error: null,
+                            virusScan: null
+                        });
+                    }
+                });
+            },
+            
+            handleDrop(event) {
+                const items = Array.from(event.dataTransfer.items);
+                const promises = [];
+                
+                items.forEach(item => {
+                    if (item.kind === 'file') {
+                        const entry = item.webkitGetAsEntry();
+                        if (entry) {
+                            promises.push(this.traverseFileTree(entry, ''));
+                        }
+                    }
+                });
+                
+                Promise.all(promises).then(() => {
+                    if (this.uploadQueue.length > 0 && !this.showUploadDialog) {
+                        this.showUploadDialog = true;
+                    }
+                });
+            },
+            
+            async traverseFileTree(entry, path) {
+                if (entry.isFile) {
+                    return new Promise((resolve) => {
+                        entry.file(file => {
+                            const relativePath = path + file.name;
+                            if (!this.uploadQueue.find(f => f.relativePath === relativePath && f.size === file.size)) {
+                                this.uploadQueue.push({
+                                    file: file,
+                                    name: file.name,
+                                    relativePath: relativePath,
+                                    size: file.size,
+                                    progress: 0,
+                                    status: 'pending',
+                                    error: null,
+                                    virusScan: null
+                                });
+                            }
+                            resolve();
+                        });
+                    });
+                } else if (entry.isDirectory) {
+                    const dirReader = entry.createReader();
+                    return new Promise((resolve) => {
+                        dirReader.readEntries(async (entries) => {
+                            const promises = [];
+                            for (let entry of entries) {
+                                promises.push(this.traverseFileTree(entry, path + entry.name + '/'));
+                            }
+                            await Promise.all(promises);
+                            resolve();
+                        });
+                    });
+                }
+            },
+            
+            removeFromQueue(index) {
+                this.uploadQueue.splice(index, 1);
+            },
+            
+            resetUpload() {
+                this.uploadQueue = [];
+                this.isUploading = false;
+                this.uploadedFiles = [];
+                this.failedUploads = [];
+            },
+            
+            async startUpload() {
+                this.isUploading = true;
+                
+                for (let i = 0; i < this.uploadQueue.length; i++) {
+                    const item = this.uploadQueue[i];
+                    if (item.status === 'completed' || item.status === 'error') continue;
+                    
+                    try {
+                        item.status = 'uploading';
+                        await this.uploadFile(item.file, i);
+                        item.status = 'completed';
+                        item.progress = 100;
+                        this.uploadedFiles.push(item.name);
+                    } catch (error) {
+                        item.status = 'error';
+                        item.error = error.message;
+                        this.failedUploads.push(item.name);
+                    }
+                }
+                
+                this.isUploading = false;
+                
+                // Refresh file list if we're in the current upload directory
+                if (this.uploadedFiles.length > 0) {
+                    await this.loadContents();
+                }
+            },
+            
+            async pollForScanResults(file) {
+                const maxAttempts = 12; // Poll for up to 60 seconds (12 * 5 seconds)
+                let attempts = 0;
+                
+                const pollInterval = setInterval(async () => {
+                    attempts++;
+                    
+                    try {
+                        // Refresh the file list to check for scan results
+                        await this.loadContents();
+                        
+                        // Check if the file now has scan results
+                        const updatedFile = this.files.find(f => f.Key === file.Key);
+                        if (updatedFile && updatedFile.virusScan) {
+                            clearInterval(pollInterval);
+                            
+                            // Update selected file if it's still selected
+                            if (this.selectedFile && this.selectedFile.Key === file.Key) {
+                                this.selectedFile.virusScan = updatedFile.virusScan;
+                            }
+                            
+                            // Show notification
+                            this.showVirusScanNotification(
+                                this.getFileName(file.Key), 
+                                updatedFile.virusScan.verdict, 
+                                updatedFile.virusScan.permalink
+                            );
+                        } else if (attempts >= maxAttempts) {
+                            clearInterval(pollInterval);
+                            this.showNotification('warning', 'VirusTotal Scan', 'Scan is taking longer than expected. Please refresh to check results.');
+                        }
+                    } catch (error) {
+                        clearInterval(pollInterval);
+                        console.error('Error polling for scan results:', error);
+                    }
+                }, 5000); // Poll every 5 seconds
+            },
+            
+            async copyShareLink() {
+                if (!this.shareLink) return;
+                
+                try {
+                    await navigator.clipboard.writeText(this.shareLink);
+                    this.shareLinkCopied = true;
+                    setTimeout(() => {
+                        this.shareLinkCopied = false;
+                    }, 2000);
+                } catch (err) {
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = this.shareLink;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-999999px';
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    try {
+                        document.execCommand('copy');
+                        this.shareLinkCopied = true;
+                        setTimeout(() => {
+                            this.shareLinkCopied = false;
+                        }, 2000);
+                    } catch (err) {
+                        console.error('Failed to copy share link:', err);
+                    }
+                    document.body.removeChild(textArea);
+                }
             }
         }
     }

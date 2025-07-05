@@ -7,6 +7,7 @@ services:
     build: .
     ports:
       - "8080:8080"
+      - "80:8080"  # Also expose on port 80 for S3 clients
     env_file:
       - .env.local
     environment:
@@ -27,6 +28,8 @@ services:
       - UI_ENABLED=${UI_ENABLED:-true}
       - UI_STATIC_PATH=${UI_STATIC_PATH:-/web}
       - UI_BASE_PATH=${UI_BASE_PATH:-/ui}
+      - VIRUSTOTAL_ENABLED=${VIRUSTOTAL_ENABLED:-true}
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
     volumes:
       - ./config.local.yaml:/etc/foundation-storage-engine/foundation-storage-engine.yaml:ro
       - ~/.aws:/root/.aws:rw  # Mount AWS credentials with write access for SSO token refresh

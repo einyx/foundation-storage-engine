@@ -261,16 +261,78 @@
             const secretKey = document.getElementById('secretKey').value;
             
             if (accessKey && secretKey) {
-                // Store S3 credentials
-                const credentials = {
-                    accessKey: accessKey,
-                    secretKey: secretKey,
-                    type: 's3'
-                };
-                localStorage.setItem('s3_auth_token', btoa(JSON.stringify(credentials)));
+                // Show loading state
+                const submitButton = e.target.querySelector('button[type="submit"]');
+                const originalText = submitButton.textContent;
+                submitButton.disabled = true;
+                submitButton.textContent = 'Validating...';
                 
-                // Redirect to main UI
-                window.location.href = '/ui/';
+                try {
+                    // Validate credentials with backend
+                    const response = await fetch('/api/auth/validate', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            accessKey: accessKey,
+                            secretKey: secretKey
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok && result.valid) {
+                        // Store S3 credentials
+                        const credentials = {
+                            accessKey: accessKey,
+                            secretKey: secretKey,
+                            type: 's3'
+                        };
+                        localStorage.setItem('s3_auth_token', btoa(JSON.stringify(credentials)));
+                        
+                        // Redirect to main UI
+                        window.location.href = '/ui/';
+                    } else {
+                        // Show error
+                        const errorDiv = document.createElement('div');
+                        errorDiv.className = 'text-red-600 text-sm mt-2';
+                        errorDiv.textContent = result.message || 'Invalid credentials';
+                        
+                        // Remove any existing error
+                        const existingError = e.target.querySelector('.text-red-600');
+                        if (existingError) {
+                            existingError.remove();
+                        }
+                        
+                        // Add new error
+                        e.target.querySelector('.flex.gap-3').before(errorDiv);
+                        
+                        // Reset button
+                        submitButton.disabled = false;
+                        submitButton.textContent = originalText;
+                    }
+                } catch (error) {
+                    console.error('Validation error:', error);
+                    
+                    // Show error
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'text-red-600 text-sm mt-2';
+                    errorDiv.textContent = 'Failed to validate credentials. Please try again.';
+                    
+                    // Remove any existing error
+                    const existingError = e.target.querySelector('.text-red-600');
+                    if (existingError) {
+                        existingError.remove();
+                    }
+                    
+                    // Add new error
+                    e.target.querySelector('.flex.gap-3').before(errorDiv);
+                    
+                    // Reset button
+                    submitButton.disabled = false;
+                    submitButton.textContent = originalText;
+                }
             }
         });
 

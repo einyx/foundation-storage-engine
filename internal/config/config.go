@@ -20,6 +20,8 @@ type Config struct {
 	Chunking   ChunkingConfig   `mapstructure:"chunking"`
 	UI         UIConfig         `mapstructure:"ui"`
 	Auth0      Auth0Config      `mapstructure:"auth0"`
+	VirusTotal VirusTotalConfig `mapstructure:"virustotal"`
+	ShareLinks ShareLinksConfig `mapstructure:"share_links"`
 }
 
 // ServerConfig contains HTTP server configuration settings
@@ -293,4 +295,18 @@ func validate(cfg *Config) error {
 	}
 
 	return nil
+}
+
+// VirusTotalConfig contains VirusTotal malware scanning configuration
+type VirusTotalConfig struct {
+	Enabled      bool   `mapstructure:"enabled" envconfig:"VIRUSTOTAL_ENABLED" default:"false"`
+	APIKey       string `mapstructure:"api_key" envconfig:"VIRUSTOTAL_API_KEY"`
+	ScanUploads  bool   `mapstructure:"scan_uploads" envconfig:"VIRUSTOTAL_SCAN_UPLOADS" default:"true"`
+	BlockThreats bool   `mapstructure:"block_threats" envconfig:"VIRUSTOTAL_BLOCK_THREATS" default:"true"`
+	MaxFileSize  string `mapstructure:"max_file_size" envconfig:"VIRUSTOTAL_MAX_FILE_SIZE" default:"32MB"`
+}
+
+// ShareLinksConfig contains share link configuration
+type ShareLinksConfig struct {
+	Enabled bool `mapstructure:"enabled" envconfig:"SHARE_LINKS_ENABLED" default:"true"`
 }

@@ -361,6 +361,17 @@
                 
                 <!-- Actions -->
                 <div class="flex items-center gap-2">
+                    <!-- Recursive toggle -->
+                    <button @click="recursiveMode = !recursiveMode; loadContents()" 
+                            :class="recursiveMode ? 'bg-blue-100 text-blue-700' : 'text-gray-600'"
+                            class="p-2 hover:bg-gray-100 rounded-lg flex items-center gap-1 text-sm"
+                            title="Toggle recursive view">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                        <span x-show="recursiveMode" class="text-xs">Recursive</span>
+                    </button>
+                    
                     <button class="p-2 hover:bg-gray-100 rounded-lg">
                         <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
@@ -373,12 +384,36 @@
                         </svg>
                     </button>
                     <div class="h-6 w-px bg-gray-300 mx-2"></div>
-                    <button class="btn-primary flex items-center gap-2">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
-                        </svg>
-                        Upload
-                    </button>
+                    
+                    <!-- Upload dropdown -->
+                    <div class="relative" x-data="{ uploadOpen: false }">
+                        <button @click="uploadOpen = !uploadOpen" class="btn-primary flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                            </svg>
+                            Upload
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </button>
+                        <div x-show="uploadOpen" @click.away="uploadOpen = false" x-transition
+                             class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
+                            <button @click="uploadFiles(); uploadOpen = false" 
+                                    class="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                </svg>
+                                Upload Files
+                            </button>
+                            <button @click="uploadDirectory(); uploadOpen = false"
+                                    class="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                                </svg>
+                                Upload Folder
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </header>
             
@@ -441,7 +476,8 @@
                     <!-- Directories -->
                     <template x-for="dir in directories" :key="dir.name">
                         <div @click="navigateTo(currentPath ? currentPath + '/' + dir.name : dir.name)" 
-                             class="file-item hover-lift">
+                             @contextmenu.prevent="showContextMenu($event, 'directory', dir)"
+                             class="file-item hover-lift relative group">
                             <div class="w-16 h-16 mx-auto mb-3 flex items-center justify-center">
                                 <svg class="w-12 h-12 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
@@ -457,14 +493,22 @@
                                   }"
                                   class="backend-badge" 
                                   x-text="dir.backend === 's3' ? 'AWS' : dir.backend === 'azure' ? 'Azure' : 'Multi'"></span>
+                            <!-- More Options Button -->
+                            <button @click.stop="showContextMenu($event, 'directory', dir)" 
+                                    class="absolute top-2 right-2 p-1 rounded hover:bg-gray-200 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"></path>
+                                </svg>
+                            </button>
                         </div>
                     </template>
                     
                     <!-- Files -->
                     <template x-for="file in files" :key="file.name">
                         <div @click="selectedFile = file; showDetails = true" 
+                             @contextmenu.prevent="showContextMenu($event, 'file', file)"
                              :class="selectedFile && selectedFile.name === file.name ? 'selected' : ''"
-                             class="file-item hover-lift">
+                             class="file-item hover-lift relative group">
                             <div class="w-16 h-16 mx-auto mb-3 flex items-center justify-center">
                                 <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
@@ -480,6 +524,13 @@
                                   }"
                                   class="backend-badge" 
                                   x-text="file.backend === 's3' ? 'AWS' : file.backend === 'azure' ? 'Azure' : 'Multi'"></span>
+                            <!-- More Options Button -->
+                            <button @click.stop="showContextMenu($event, 'file', file)" 
+                                    class="absolute top-2 right-2 p-1 rounded hover:bg-gray-200 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"></path>
+                                </svg>
+                            </button>
                         </div>
                     </template>
                 </div>
@@ -541,12 +592,36 @@
                     
                     <!-- Actions -->
                     <div class="flex gap-3">
-                        <button class="btn-primary flex-1">Download</button>
+                        <button @click="downloadFile(selectedFile)" class="btn-primary flex-1">Download</button>
                         <button class="btn-secondary flex-1">Share</button>
+                        <button @click="deleteItem('file', selectedFile)" class="btn-secondary flex-1 text-red-600 hover:bg-red-50">Delete</button>
                     </div>
                 </div>
             </div>
         </div>
+    </div>
+    
+    <!-- Context Menu -->
+    <div x-show="contextMenu.show" 
+         @click.away="contextMenu.show = false"
+         :style="{top: contextMenu.y + 'px', left: contextMenu.x + 'px'}"
+         class="fixed z-50 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[160px]"
+         x-transition>
+        <button @click="downloadItem()" 
+                x-show="contextMenu.type === 'file'"
+                class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"></path>
+            </svg>
+            Download
+        </button>
+        <button @click="deleteContextItem()" 
+                class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+            Delete
+        </button>
     </div>
     
     <script>
@@ -563,7 +638,15 @@
                 showDetails: false,
                 selectedFile: null,
                 isIcebergTable: false,
+                recursiveMode: false,
                 userEmail: localStorage.getItem('userEmail') || null,
+                contextMenu: {
+                    show: false,
+                    x: 0,
+                    y: 0,
+                    type: null,
+                    item: null
+                },
                 
                 async init() {
                     // Check authentication
@@ -646,53 +729,126 @@
                     this.loading = true;
                     this.error = null;
                     
+                    console.log('loadContents called - currentPath:', this.currentPath, 'selectedBucket:', this.selectedBucket);
+                    
                     try {
                         const prefix = this.currentPath ? this.currentPath + '/' : '';
-                        const url = `/${this.selectedBucket}?list-type=2&prefix=${encodeURIComponent(prefix)}&delimiter=/`;
+                        // Don't use delimiter in recursive mode
+                        const delimiter = this.recursiveMode ? '' : '&delimiter=/';
+                        const url = `/${this.selectedBucket}?list-type=2&prefix=${encodeURIComponent(prefix)}${delimiter}`;
                         
+                        console.log('Fetching URL:', url);
                         const response = await fetch(url);
+                        
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        
                         const text = await response.text();
+                        console.log('S3 ListObjects response for', url, ':', text);
+                        if (this.currentPath === 'foundation') {
+                            console.log('DEBUG: Foundation listing response:', text);
+                        }
                         const parser = new DOMParser();
                         const xml = parser.parseFromString(text, 'text/xml');
+                        
+                        // Check for XML parsing errors
+                        const parseError = xml.querySelector('parsererror');
+                        if (parseError) {
+                            console.error('XML parsing error:', parseError.textContent);
+                            throw new Error('Failed to parse server response');
+                        }
+                        
+                        // Log the raw XML content nodes
+                        console.log('CommonPrefixes found:', xml.querySelectorAll('CommonPrefixes').length);
+                        console.log('Contents found:', xml.querySelectorAll('Contents').length);
                         
                         // Check for Iceberg table
                         this.checkForIcebergTable();
                         
-                        // Parse directories (CommonPrefixes)
-                        const prefixes = xml.querySelectorAll('CommonPrefixes');
-                        this.directories = Array.from(prefixes).map(p => {
-                            const fullPrefix = p.querySelector('Prefix').textContent;
-                            const name = fullPrefix.replace(prefix, '').replace('/', '');
+                        // Parse directories (CommonPrefixes) - only in non-recursive mode
+                        if (!this.recursiveMode) {
+                            const prefixes = xml.querySelectorAll('CommonPrefixes');
+                            this.directories = Array.from(prefixes).map(p => {
+                                const fullPrefix = p.querySelector('Prefix').textContent;
+                                console.log('Processing CommonPrefix:', fullPrefix, 'Current prefix:', prefix);
+                                // Remove the current prefix and trailing slash
+                                let name = fullPrefix;
+                                if (name.startsWith(prefix)) {
+                                    name = name.substring(prefix.length);
+                                }
+                                if (name.endsWith('/')) {
+                                    name = name.substring(0, name.length - 1);
+                                }
+                                console.log('Directory parsed:', fullPrefix, '->', name);
+                                return {
+                                    name: name,
+                                    backend: this.selectedBucket.startsWith('azure-') ? 'azure' : 's3'
+                                };
+                            });
+                        } else {
+                            this.directories = [];
+                        }
+                        
+                        // Parse files - handle both files and directory objects
+                        const contents = xml.querySelectorAll('Contents');
+                        const allObjects = Array.from(contents).map(c => {
+                            const key = c.querySelector('Key').textContent;
+                            const name = key.replace(prefix, '');
+                            const size = parseInt(c.querySelector('Size').textContent);
+                            const backend = c.querySelector('Backend')?.textContent || 
+                                           response.headers.get(`X-Object-Backend-${name}`) || 
+                                           (this.selectedBucket.startsWith('azure-') ? 'azure' : 's3');
+                            
                             return {
+                                key: key,
                                 name: name,
-                                backend: 'multi' // Will be determined by contents
+                                size: size,
+                                lastModified: c.querySelector('LastModified').textContent,
+                                etag: c.querySelector('ETag').textContent,
+                                backend: backend,
+                                isDirectory: key.endsWith('/') || size === 0
                             };
                         });
                         
-                        // Parse files
-                        const contents = xml.querySelectorAll('Contents');
-                        this.files = Array.from(contents)
-                            .filter(c => {
-                                const key = c.querySelector('Key').textContent;
-                                return key !== prefix && !key.endsWith('/');
-                            })
-                            .map(c => {
-                                const key = c.querySelector('Key').textContent;
-                                const name = key.replace(prefix, '');
-                                const backend = c.querySelector('Backend')?.textContent || 
-                                               response.headers.get(`X-Object-Backend-${name}`) || 
-                                               's3'; // Default fallback
-                                
-                                return {
-                                    name: name,
-                                    size: parseInt(c.querySelector('Size').textContent),
-                                    lastModified: c.querySelector('LastModified').textContent,
-                                    etag: c.querySelector('ETag').textContent,
-                                    backend: backend
-                                };
+                        // Separate files and directories
+                        const filesAndDirs = allObjects.filter(obj => obj.key !== prefix);
+                        
+                        // Add directories that appear as objects (size 0 or ending with /)
+                        if (!this.recursiveMode) {
+                            const dirObjects = filesAndDirs.filter(obj => obj.isDirectory);
+                            dirObjects.forEach(dir => {
+                                let dirName = dir.name;
+                                if (dirName.endsWith('/')) {
+                                    dirName = dirName.substring(0, dirName.length - 1);
+                                }
+                                // Check if we already have this directory from CommonPrefixes
+                                if (!this.directories.some(d => d.name === dirName)) {
+                                    console.log('Directory object found:', dir.key, '->', dirName);
+                                    this.directories.push({
+                                        name: dirName,
+                                        backend: dir.backend
+                                    });
+                                }
                             });
+                        }
+                        
+                        // Files are objects that don't end with / and have size > 0
+                        this.files = filesAndDirs
+                            .filter(obj => !obj.isDirectory)
+                            .map(obj => ({
+                                name: obj.name,
+                                size: obj.size,
+                                lastModified: obj.lastModified,
+                                etag: obj.etag,
+                                backend: obj.backend
+                            }));
+                        
+                        console.log('Final state - directories:', this.directories.length, this.directories);
+                        console.log('Final state - files:', this.files.length, this.files);
                             
                     } catch (error) {
+                        console.error('Error in loadContents:', error);
                         this.error = error.message || 'Failed to load contents';
                     } finally {
                         this.loading = false;
@@ -725,6 +881,184 @@
                     localStorage.removeItem('token');
                     localStorage.removeItem('userEmail');
                     window.location.href = '/ui/login';
+                },
+                
+                uploadFiles() {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.multiple = true;
+                    input.onchange = async (e) => {
+                        const files = e.target.files;
+                        for (const file of files) {
+                            await this.uploadFile(file, file.name);
+                        }
+                        this.loadContents();
+                    };
+                    input.click();
+                },
+                
+                uploadDirectory() {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.multiple = true;
+                    
+                    // Set directory attributes for different browsers
+                    input.setAttribute('webkitdirectory', '');
+                    input.setAttribute('directory', '');
+                    input.setAttribute('mozdirectory', '');
+                    
+                    input.onchange = async (e) => {
+                        const files = e.target.files;
+                        if (files.length === 0) return;
+                        
+                        // Check if directory upload is supported
+                        const firstFile = files[0];
+                        const hasPath = firstFile.webkitRelativePath || firstFile.relativePath;
+                        
+                        if (!hasPath) {
+                            alert('Directory upload is not supported in your browser. Please use Chrome, Edge, or Firefox.');
+                            return;
+                        }
+                        
+                        console.log(`Uploading ${files.length} files from directory...`);
+                        
+                        for (const file of files) {
+                            // Preserve directory structure
+                            const path = file.webkitRelativePath || file.relativePath || file.name;
+                            await this.uploadFile(file, path);
+                        }
+                        this.loadContents();
+                    };
+                    input.click();
+                },
+                
+                async uploadFile(file, path) {
+                    try {
+                        const fullPath = this.currentPath ? this.currentPath + '/' + path : path;
+                        const url = `/${this.selectedBucket}/${fullPath}`;
+                        
+                        const response = await fetch(url, {
+                            method: 'PUT',
+                            body: file,
+                            headers: {
+                                'Content-Type': file.type || 'application/octet-stream'
+                            }
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error(`Upload failed: ${response.statusText}`);
+                        }
+                    } catch (error) {
+                        console.error('Upload error:', error);
+                        this.error = `Failed to upload ${file.name}: ${error.message}`;
+                    }
+                },
+                
+                showContextMenu(event, type, item) {
+                    this.contextMenu.show = true;
+                    this.contextMenu.x = event.clientX;
+                    this.contextMenu.y = event.clientY;
+                    this.contextMenu.type = type;
+                    this.contextMenu.item = item;
+                },
+                
+                async deleteContextItem() {
+                    this.contextMenu.show = false;
+                    await this.deleteItem(this.contextMenu.type, this.contextMenu.item);
+                },
+                
+                async deleteItem(type, item) {
+                    const itemName = type === 'directory' ? `folder "${item.name}"` : `file "${item.name}"`;
+                    if (!confirm(`Are you sure you want to delete ${itemName}?`)) {
+                        return;
+                    }
+                    
+                    try {
+                        let path = this.currentPath ? this.currentPath + '/' + item.name : item.name;
+                        
+                        if (type === 'directory') {
+                            // For directories, we need to delete all contents recursively
+                            await this.deleteDirectory(path);
+                        } else {
+                            // For files, simple DELETE request
+                            const url = `/${this.selectedBucket}/${path}`;
+                            const response = await fetch(url, {
+                                method: 'DELETE'
+                            });
+                            
+                            if (!response.ok) {
+                                throw new Error(`Delete failed: ${response.statusText}`);
+                            }
+                        }
+                        
+                        // Refresh the listing
+                        await this.loadContents();
+                        
+                        // Close details panel if we deleted the selected file
+                        if (this.selectedFile && this.selectedFile.name === item.name) {
+                            this.showDetails = false;
+                            this.selectedFile = null;
+                        }
+                    } catch (error) {
+                        console.error('Delete error:', error);
+                        this.error = `Failed to delete ${itemName}: ${error.message}`;
+                    }
+                },
+                
+                async deleteDirectory(dirPath) {
+                    // List all objects with the directory prefix
+                    const prefix = dirPath.endsWith('/') ? dirPath : dirPath + '/';
+                    const url = `/${this.selectedBucket}?list-type=2&prefix=${encodeURIComponent(prefix)}`;
+                    
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        throw new Error(`Failed to list directory contents: ${response.statusText}`);
+                    }
+                    
+                    const text = await response.text();
+                    const parser = new DOMParser();
+                    const xml = parser.parseFromString(text, 'text/xml');
+                    
+                    // Get all objects to delete
+                    const contents = xml.querySelectorAll('Contents');
+                    const keysToDelete = Array.from(contents).map(c => c.querySelector('Key').textContent);
+                    
+                    // Add the directory itself if it exists as an object
+                    if (!keysToDelete.includes(prefix)) {
+                        keysToDelete.push(prefix);
+                    }
+                    
+                    // Delete all objects
+                    for (const key of keysToDelete) {
+                        const deleteUrl = `/${this.selectedBucket}/${key}`;
+                        const deleteResponse = await fetch(deleteUrl, {
+                            method: 'DELETE'
+                        });
+                        
+                        if (!deleteResponse.ok && deleteResponse.status !== 404) {
+                            console.warn(`Failed to delete ${key}: ${deleteResponse.statusText}`);
+                        }
+                    }
+                },
+                
+                downloadFile(file) {
+                    const path = this.currentPath ? this.currentPath + '/' + file.name : file.name;
+                    const url = `/${this.selectedBucket}/${path}`;
+                    
+                    // Create a temporary link and click it
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = file.name;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                },
+                
+                downloadItem() {
+                    this.contextMenu.show = false;
+                    if (this.contextMenu.type === 'file') {
+                        this.downloadFile(this.contextMenu.item);
+                    }
                 }
             }
         }

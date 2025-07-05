@@ -21,6 +21,7 @@ import (
 	"github.com/einyx/foundation-storage-engine/internal/auth"
 	"github.com/einyx/foundation-storage-engine/internal/config"
 	"github.com/einyx/foundation-storage-engine/internal/storage"
+	"github.com/einyx/foundation-storage-engine/internal/virustotal"
 )
 
 const (
@@ -50,6 +51,7 @@ type Handler struct {
 	config   config.S3Config
 	router   *mux.Router
 	chunking config.ChunkingConfig
+	scanner  *virustotal.Scanner
 }
 
 func NewHandler(storage storage.Backend, auth auth.Provider, cfg config.S3Config, chunking config.ChunkingConfig) *Handler {
@@ -59,10 +61,16 @@ func NewHandler(storage storage.Backend, auth auth.Provider, cfg config.S3Config
 		config:   cfg,
 		router:   mux.NewRouter(),
 		chunking: chunking,
+		scanner:  nil, // Scanner is optional, set with SetScanner
 	}
 
 	h.setupRoutes()
 	return h
+}
+
+// SetScanner sets the VirusTotal scanner for the handler
+func (h *Handler) SetScanner(scanner *virustotal.Scanner) {
+	h.scanner = scanner
 }
 
 // isListOperation checks if a GET request should be treated as a list operation
@@ -328,6 +336,10 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket string) {
 	ctx := r.Context()
 
+	// Check if this is a V2 list request
+	listType := r.URL.Query().Get("list-type")
+	isV2 := listType == "2"
+	
 	prefix := r.URL.Query().Get("prefix")
 	marker := r.URL.Query().Get("marker")
 	delimiter := r.URL.Query().Get("delimiter")
@@ -397,7 +409,66 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 			Prefix string `xml:"Prefix"`
 		} `xml:"CommonPrefixes,omitempty"`
 	}
+	
+	type listBucketResultV2 struct {
+		XMLName               xml.Name   `xml:"ListBucketResult"`
+		Name                  string     `xml:"Name"`
+		Prefix                string     `xml:"Prefix"`
+		MaxKeys               int        `xml:"MaxKeys"`
+		IsTruncated           bool       `xml:"IsTruncated"`
+		Contents              []contents `xml:"Contents"`
+		CommonPrefixes        []struct {
+			Prefix string `xml:"Prefix"`
+		} `xml:"CommonPrefixes,omitempty"`
+		ContinuationToken     string `xml:"ContinuationToken,omitempty"`
+		NextContinuationToken string `xml:"NextContinuationToken,omitempty"`
+		KeyCount              int    `xml:"KeyCount"`
+	}
 
+	// Handle V2 format if requested
+	if isV2 {
+		responseV2 := listBucketResultV2{
+			Name:        bucket,
+			Prefix:      prefix,
+			MaxKeys:     maxKeys,
+			IsTruncated: result.IsTruncated,
+			KeyCount:    len(result.Contents),
+		}
+		
+		// Use continuation tokens for V2
+		if marker != "" {
+			responseV2.ContinuationToken = marker
+		}
+		if result.NextMarker != "" {
+			responseV2.NextContinuationToken = result.NextMarker
+		}
+
+		for _, obj := range result.Contents {
+			responseV2.Contents = append(responseV2.Contents, contents{
+				Key:          obj.Key,
+				LastModified: obj.LastModified.Format(time.RFC3339),
+				ETag:         obj.ETag,
+				Size:         obj.Size,
+				StorageClass: "STANDARD",
+			})
+		}
+
+		for _, prefix := range result.CommonPrefixes {
+			responseV2.CommonPrefixes = append(responseV2.CommonPrefixes, struct {
+				Prefix string `xml:"Prefix"`
+			}{Prefix: prefix})
+		}
+
+		w.Header().Set("Content-Type", "application/xml")
+		enc := xml.NewEncoder(w)
+		enc.Indent("", "  ")
+		if err := enc.Encode(responseV2); err != nil {
+			logrus.WithError(err).Error("Failed to encode response")
+		}
+		return
+	}
+	
+	// V1 format (default)
 	response := listBucketResult{
 		Name:        bucket,
 		Prefix:      prefix,
@@ -880,6 +951,56 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		}
 	}
 
+	// Scan file with VirusTotal if enabled (only for reasonably sized files)
+	var scanResult *virustotal.ScanResult
+	if h.scanner != nil && h.scanner.IsEnabled() && size > 0 && size <= 32*1024*1024 {
+		// For small files, buffer and scan
+		var buf bytes.Buffer
+		teeReader := io.TeeReader(body, &buf)
+		
+		// Scan the file
+		result, err := h.scanner.ScanReader(ctx, teeReader, key, size)
+		if err != nil {
+			logger.WithError(err).Warn("VirusTotal scan failed, continuing with upload")
+		} else if result != nil {
+			scanResult = result
+			logger.WithFields(logrus.Fields{
+				"verdict":    scanResult.Verdict,
+				"malicious":  scanResult.Malicious,
+				"suspicious": scanResult.Suspicious,
+				"harmless":   scanResult.Harmless,
+				"permalink":  scanResult.Permalink,
+			}).Info("VirusTotal scan completed")
+			
+			// Check if we should block the upload
+			if h.scanner.ShouldBlockUpload(scanResult) {
+				logger.WithFields(logrus.Fields{
+					"threat_level": scanResult.GetThreatLevel(),
+					"permalink":    scanResult.Permalink,
+				}).Error("Upload blocked due to threat detection")
+				
+				// Add scan info to response headers
+				w.Header().Set("X-VirusTotal-Verdict", scanResult.Verdict)
+				w.Header().Set("X-VirusTotal-ThreatLevel", scanResult.GetThreatLevel())
+				w.Header().Set("X-VirusTotal-Permalink", scanResult.Permalink)
+				
+				h.sendError(w, fmt.Errorf("upload blocked: %s", scanResult.GetThreatLevel()), http.StatusForbidden)
+				return
+			}
+			
+			// Add scan info to metadata
+			if metadata == nil {
+				metadata = make(map[string]string)
+			}
+			metadata["x-virustotal-verdict"] = scanResult.Verdict
+			metadata["x-virustotal-scan-date"] = scanResult.ScanDate.Format(time.RFC3339)
+			metadata["x-virustotal-permalink"] = scanResult.Permalink
+		}
+		
+		// Use the buffered content for storage
+		body = &buf
+	}
+
 	err := h.storage.PutObject(ctx, bucket, key, body, size, metadata)
 	if err != nil {
 		// Check if it's a signature error
@@ -901,11 +1022,11 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			"size":   size,
 		}).Info("Successfully processed AWS V4 chunked upload")
 	}
-
+	
 	if etag == "" {
 		etag = fmt.Sprintf("\"%x\"", time.Now().UnixNano())
 	}
-
+	
 	// For chunked uploads, we need special handling to prevent SDK checksum validation
 	if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
 		// The AWS SDK v2 validates checksums on PUT responses
@@ -922,6 +1043,14 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		// 2. Send minimal response headers
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Content-Length", "0")
+		
+		// Add VirusTotal scan info to response headers if available
+		if scanResult != nil {
+			w.Header().Set("X-VirusTotal-Verdict", scanResult.Verdict)
+			w.Header().Set("X-VirusTotal-Permalink", scanResult.Permalink)
+			w.Header().Set("X-VirusTotal-ScanDate", scanResult.ScanDate.Format(time.RFC3339))
+			w.Header().Set("X-VirusTotal-ThreatLevel", scanResult.GetThreatLevel())
+		}
 
 		// 3. Send 200 OK with no body
 		w.WriteHeader(http.StatusOK)
@@ -950,6 +1079,15 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		// Send minimal response
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Content-Length", "0")
+		
+		// Add VirusTotal scan info to response headers if available
+		if scanResult != nil {
+			w.Header().Set("X-VirusTotal-Verdict", scanResult.Verdict)
+			w.Header().Set("X-VirusTotal-Permalink", scanResult.Permalink)
+			w.Header().Set("X-VirusTotal-ScanDate", scanResult.ScanDate.Format(time.RFC3339))
+			w.Header().Set("X-VirusTotal-ThreatLevel", scanResult.GetThreatLevel())
+		}
+		
 		w.WriteHeader(http.StatusOK)
 
 		logger.WithFields(logrus.Fields{
@@ -964,6 +1102,15 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 	// Normal upload response (no checksums to validate)
 	w.Header().Set("ETag", etag)
+	
+	// Add VirusTotal scan info to response headers if available
+	if scanResult != nil {
+		w.Header().Set("X-VirusTotal-Verdict", scanResult.Verdict)
+		w.Header().Set("X-VirusTotal-Permalink", scanResult.Permalink)
+		w.Header().Set("X-VirusTotal-ScanDate", scanResult.ScanDate.Format(time.RFC3339))
+		w.Header().Set("X-VirusTotal-ThreatLevel", scanResult.GetThreatLevel())
+	}
+	
 	w.WriteHeader(http.StatusOK)
 
 	// if logrus.GetLevel() >= logrus.DebugLevel {

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/einyx/foundation-storage-engine/internal/database"
 	"github.com/einyx/foundation-storage-engine/internal/metrics"
 	"github.com/einyx/foundation-storage-engine/internal/storage"
+	"github.com/einyx/foundation-storage-engine/internal/virustotal"
 	"github.com/einyx/foundation-storage-engine/pkg/s3"
 )
 
@@ -30,6 +32,7 @@ type Server struct {
 	auth0            *Auth0Handler
 	shareLinkHandler *ShareLinkHandler
 	db               *database.DB // Database connection for auth
+	scanner          *virustotal.Scanner
 }
 
 // NewServer creates a new proxy server instance
@@ -120,8 +123,20 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	if cfg.Auth0.Enabled {
 		s.auth0 = NewAuth0Handler(&cfg.Auth0)
 	}
+	
+	// Initialize VirusTotal scanner
+	scanner, err := virustotal.NewScanner(&cfg.VirusTotal)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create VirusTotal scanner: %w", err)
+	}
+	s.scanner = scanner
+	
+	if scanner.IsEnabled() {
+		logrus.Info("VirusTotal scanning enabled")
+	}
 
 	s.s3Handler = s3.NewHandler(s.storage, s.auth, cfg.S3, cfg.Chunking)
+	s.s3Handler.SetScanner(s.scanner)
 	
 	// Initialize share link handler
 	s.shareLinkHandler = NewShareLinkHandler(s.s3Handler)
@@ -189,6 +204,12 @@ func (s *Server) setupRoutes() {
 		s.router.HandleFunc("/api/auth/userinfo", s.auth0.UserInfoHandler).Methods("GET")
 	}
 	
+	// Register auth validation endpoint
+	s.router.HandleFunc("/api/auth/validate", s.validateCredentials).Methods("POST")
+	
+	// Register feature flags endpoint
+	s.router.HandleFunc("/api/features", s.getFeatures).Methods("GET")
+	
 	// Register share link routes
 	s.router.HandleFunc("/api/share/create", s.shareLinkHandler.CreateShareLinkHandler).Methods("POST")
 	s.router.HandleFunc("/api/share/{shareID}", s.shareLinkHandler.ServeSharedFile).Methods("GET", "HEAD")
@@ -220,6 +241,35 @@ func (s *Server) setupRoutes() {
 }
 
 func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
+	// Handle virtual-hosted-style requests
+	// Extract bucket from Host header if it matches pattern: bucket.s3.domain
+	host := r.Host
+	if strings.Contains(host, ".s3.") {
+		parts := strings.Split(host, ".")
+		if len(parts) >= 3 && parts[1] == "s3" {
+			bucket := parts[0]
+			// Rewrite the request to path-style
+			if r.URL.Path == "/" {
+				r.URL.Path = "/" + bucket + "/"
+			} else {
+				r.URL.Path = "/" + bucket + r.URL.Path
+			}
+			// Update mux vars
+			vars := mux.Vars(r)
+			if vars == nil {
+				vars = make(map[string]string)
+			}
+			vars["bucket"] = bucket
+			r = mux.SetURLVars(r, vars)
+			
+			logrus.WithFields(logrus.Fields{
+				"host": host,
+				"bucket": bucket,
+				"rewrittenPath": r.URL.Path,
+			}).Debug("Converted virtual-hosted-style to path-style")
+		}
+	}
+	
 	logrus.WithFields(logrus.Fields{
 		"path": r.URL.Path,
 		"authType": s.config.Auth.Type,
@@ -227,27 +277,34 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 	}).Debug("handleS3Request called")
 	
 	if s.config.Auth.Type != "none" {
-		userAgent := r.Header.Get("User-Agent")
-		if strings.Contains(strings.ToLower(userAgent), "minio") || strings.Contains(strings.ToLower(userAgent), "mc") {
-			authHeader := r.Header.Get("Authorization")
+		// Allow unauthenticated access from UI
+		referer := r.Header.Get("Referer")
+		if strings.Contains(referer, "/ui/") {
+			// Skip auth for UI requests
+			logrus.WithField("referer", referer).Debug("Skipping auth for UI request")
+		} else {
+			userAgent := r.Header.Get("User-Agent")
+			if strings.Contains(strings.ToLower(userAgent), "minio") || strings.Contains(strings.ToLower(userAgent), "mc") {
+				authHeader := r.Header.Get("Authorization")
 
-			if strings.Contains(authHeader, "\n") || strings.Contains(authHeader, "\r") {
-				cleanedHeader := strings.ReplaceAll(authHeader, "\n", "")
-				cleanedHeader = strings.ReplaceAll(cleanedHeader, "\r", "")
-				r.Header.Set("Authorization", cleanedHeader)
+				if strings.Contains(authHeader, "\n") || strings.Contains(authHeader, "\r") {
+					cleanedHeader := strings.ReplaceAll(authHeader, "\n", "")
+					cleanedHeader = strings.ReplaceAll(cleanedHeader, "\r", "")
+					r.Header.Set("Authorization", cleanedHeader)
 
-				// logrus.WithFields(logrus.Fields{
-				// 	"originalLen": len(authHeader),
-				// 	"cleanedLen":  len(cleanedHeader),
-				// 	"path":        r.URL.Path,
-				// }).Debug("Cleaned MC client auth header")
+					// logrus.WithFields(logrus.Fields{
+					// 	"originalLen": len(authHeader),
+					// 	"cleanedLen":  len(cleanedHeader),
+					// 	"path":        r.URL.Path,
+					// }).Debug("Cleaned MC client auth header")
+				}
 			}
-		}
 
-		if err := s.auth.Authenticate(r); err != nil {
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
-			return
+			if err := s.auth.Authenticate(r); err != nil {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
+				return
+			}
 		}
 		
 		// Remove Authorization header after successful authentication
@@ -287,6 +344,91 @@ func (s *Server) healthCheck(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"healthy"}`))
+}
+
+// validateCredentials validates S3-compatible credentials
+func (s *Server) validateCredentials(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	// Parse JSON request body
+	var creds struct {
+		AccessKey string `json:"accessKey"`
+		SecretKey string `json:"secretKey"`
+	}
+	
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"Invalid request body"}`))
+		return
+	}
+	
+	// Validate credentials based on auth type
+	switch s.config.Auth.Type {
+	case "awsv4", "awsv2":
+		// Check if credentials match configured values
+		if creds.AccessKey == s.config.Auth.Identity && creds.SecretKey == s.config.Auth.Credential {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"valid":true,"message":"Credentials valid"}`))
+		} else {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"valid":false,"message":"Invalid credentials"}`))
+		}
+	case "database":
+		// For database auth, check against database
+		if dbProvider, ok := s.auth.(*auth.DatabaseProvider); ok {
+			secretKey, err := dbProvider.GetSecretKey(creds.AccessKey)
+			if err != nil || secretKey != creds.SecretKey {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"valid":false,"message":"Invalid credentials"}`))
+			} else {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"valid":true,"message":"Credentials valid"}`))
+			}
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"Database auth not properly configured"}`))
+		}
+	case "none":
+		// No auth required
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"valid":true,"message":"No authentication required"}`))
+	default:
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Unknown auth type"}`))
+	}
+}
+
+// getFeatures returns the enabled features/modules
+func (s *Server) getFeatures(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	features := map[string]interface{}{
+		"virustotal": map[string]interface{}{
+			"enabled": s.config.VirusTotal.Enabled,
+			"scanUploads": s.config.VirusTotal.ScanUploads,
+			"blockThreats": s.config.VirusTotal.BlockThreats,
+			"maxFileSize": s.config.VirusTotal.MaxFileSize,
+		},
+		"auth0": map[string]interface{}{
+			"enabled": s.config.Auth0.Enabled,
+		},
+		"ui": map[string]interface{}{
+			"enabled": s.config.UI.Enabled,
+		},
+		"shareLinks": map[string]interface{}{
+			"enabled": s.config.ShareLinks.Enabled,
+		},
+	}
+	
+	jsonData, err := json.Marshal(features)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"Failed to marshal features"}`))
+		return
+	}
+	
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(jsonData)
 }
 
 // loggingMiddleware is currently unused but kept for future use
