@@ -152,11 +152,33 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
 }
 
+func (s *Server) setupAPIDocumentation() {
+	// Read the OpenAPI spec
+	openAPISpec, err := os.ReadFile("api/openapi.yaml")
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to load OpenAPI specification, API documentation will not be available")
+		return
+	}
+
+	// Serve Swagger UI
+	s.router.PathPrefix("/docs/").HandlerFunc(ServeSwaggerUI(openAPISpec)).Methods("GET")
+	
+	// Redirect /docs to /docs/
+	s.router.HandleFunc("/docs", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
+	}).Methods("GET")
+
+	logrus.Info("API documentation available at /docs/")
+}
+
 func (s *Server) setupRoutes() {
 	// Register monitoring endpoints first (highest priority)
 	s.router.HandleFunc("/health", s.healthCheck).Methods("GET")
 	s.router.Handle("/metrics", s.metrics.Handler()).Methods("GET")
 	s.router.Handle("/stats", s.metrics.StatsHandler()).Methods("GET")
+
+	// Register API documentation endpoint
+	s.setupAPIDocumentation()
 
 	// Register Auth0 routes if enabled
 	if s.config.Auth0.Enabled && s.auth0 != nil {
