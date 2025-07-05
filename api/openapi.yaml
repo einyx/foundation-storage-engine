@@ -1,0 +1,589 @@
+openapi: 3.0.3
+info:
+  title: Foundation Storage Engine API
+  description: |
+    S3-compatible storage proxy with additional features for authentication, sharing, and monitoring.
+    
+    This API is mostly compatible with AWS S3 REST API. For S3 operations, refer to the 
+    [AWS S3 API documentation](https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html).
+    
+    This documentation covers the custom endpoints specific to Foundation Storage Engine.
+  version: 1.0.0
+  contact:
+    name: Foundation Storage Engine
+    url: https://github.com/einyx/foundation-storage-engine
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://api.example.com
+    description: Production server
+
+security:
+  - BasicAuth: []
+  - AWSSignatureV2: []
+  - AWSSignatureV4: []
+  - DatabaseAuth: []
+
+tags:
+  - name: Health
+    description: Health check and monitoring endpoints
+  - name: Authentication
+    description: Auth0 authentication endpoints
+  - name: Sharing
+    description: File sharing endpoints
+  - name: S3 Operations
+    description: S3-compatible storage operations
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check endpoint
+      description: Returns the health status of the service
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "OK"
+
+  /metrics:
+    get:
+      tags:
+        - Health
+      summary: Prometheus metrics
+      description: Returns Prometheus-formatted metrics for monitoring
+      operationId: getMetrics
+      security: []
+      responses:
+        '200':
+          description: Metrics in Prometheus format
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: |
+                  # HELP foundation_storage_requests_total Total number of requests
+                  # TYPE foundation_storage_requests_total counter
+                  foundation_storage_requests_total{method="GET",status="200"} 1234
+
+  /stats:
+    get:
+      tags:
+        - Health
+      summary: Service statistics
+      description: Returns detailed statistics about the service
+      operationId: getStats
+      responses:
+        '200':
+          description: Service statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uptime:
+                    type: integer
+                    description: Uptime in seconds
+                  requests:
+                    type: integer
+                    description: Total number of requests
+                  bytesTransferred:
+                    type: integer
+                    description: Total bytes transferred
+
+  /api/auth/login:
+    get:
+      tags:
+        - Authentication
+      summary: Initiate Auth0 login
+      description: Redirects to Auth0 for authentication
+      operationId: authLogin
+      security: []
+      responses:
+        '302':
+          description: Redirect to Auth0 login page
+          headers:
+            Location:
+              schema:
+                type: string
+                example: https://your-domain.auth0.com/authorize?...
+
+  /api/auth/callback:
+    get:
+      tags:
+        - Authentication
+      summary: Auth0 callback
+      description: Handles the OAuth2 callback from Auth0
+      operationId: authCallback
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Authorization code from Auth0
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+          description: State parameter for CSRF protection
+      responses:
+        '302':
+          description: Redirect to UI after successful authentication
+          headers:
+            Location:
+              schema:
+                type: string
+                example: /ui/
+
+  /api/auth/logout:
+    get:
+      tags:
+        - Authentication
+      summary: Logout from Auth0
+      description: Clears the session and redirects to Auth0 logout
+      operationId: authLogout
+      security: []
+      responses:
+        '302':
+          description: Redirect to Auth0 logout
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /api/auth/userinfo:
+    get:
+      tags:
+        - Authentication
+      summary: Get user information
+      description: Returns the authenticated user's information
+      operationId: getUserInfo
+      security: []
+      responses:
+        '200':
+          description: User information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sub:
+                    type: string
+                    description: User ID
+                  name:
+                    type: string
+                    description: User's name
+                  email:
+                    type: string
+                    description: User's email
+                  picture:
+                    type: string
+                    description: URL to user's profile picture
+        '401':
+          description: User not authenticated
+
+  /api/share:
+    post:
+      tags:
+        - Sharing
+      summary: Create a share link
+      description: Creates a shareable link for a file
+      operationId: createShareLink
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - bucket
+                - key
+              properties:
+                bucket:
+                  type: string
+                  description: S3 bucket name
+                key:
+                  type: string
+                  description: Object key
+                expiresIn:
+                  type: string
+                  description: Expiration duration (e.g., "24h", "7d")
+                  default: "24h"
+                maxDownloads:
+                  type: integer
+                  description: Maximum number of downloads allowed
+                  minimum: 1
+                password:
+                  type: string
+                  description: Optional password protection
+      responses:
+        '200':
+          description: Share link created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: Unique share ID
+                  url:
+                    type: string
+                    description: Complete shareable URL
+                  expiresAt:
+                    type: string
+                    format: date-time
+                    description: Expiration timestamp
+        '400':
+          description: Invalid request
+        '401':
+          description: Unauthorized
+        '404':
+          description: Object not found
+
+  /api/share/{shareId}:
+    get:
+      tags:
+        - Sharing
+      summary: Access shared file
+      description: Downloads a file using a share link
+      operationId: getSharedFile
+      security: []
+      parameters:
+        - name: shareId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Share link ID
+        - name: password
+          in: query
+          schema:
+            type: string
+          description: Password if the share is password-protected
+      responses:
+        '200':
+          description: File content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Invalid password
+        '404':
+          description: Share link not found or expired
+        '429':
+          description: Download limit exceeded
+
+  /api/share/{shareId}/info:
+    get:
+      tags:
+        - Sharing
+      summary: Get share link information
+      description: Returns metadata about a share link
+      operationId: getShareInfo
+      security: []
+      parameters:
+        - name: shareId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Share link ID
+      responses:
+        '200':
+          description: Share link information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fileName:
+                    type: string
+                  fileSize:
+                    type: integer
+                  createdAt:
+                    type: string
+                    format: date-time
+                  expiresAt:
+                    type: string
+                    format: date-time
+                  downloadCount:
+                    type: integer
+                  maxDownloads:
+                    type: integer
+                  passwordProtected:
+                    type: boolean
+        '404':
+          description: Share link not found
+
+  /{bucket}:
+    get:
+      tags:
+        - S3 Operations
+      summary: List objects in bucket
+      description: |
+        Lists objects in a bucket. Compatible with S3 ListObjectsV2 API.
+        
+        For detailed documentation, see [AWS S3 ListObjectsV2](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html)
+      operationId: listObjects
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Bucket name
+        - name: list-type
+          in: query
+          schema:
+            type: string
+            enum: ["2"]
+          description: Use "2" for ListObjectsV2
+        - name: prefix
+          in: query
+          schema:
+            type: string
+          description: Limits response to keys that begin with the specified prefix
+        - name: delimiter
+          in: query
+          schema:
+            type: string
+          description: Character used to group keys
+        - name: max-keys
+          in: query
+          schema:
+            type: integer
+            default: 1000
+          description: Maximum number of keys returned
+        - name: continuation-token
+          in: query
+          schema:
+            type: string
+          description: Token for pagination
+      responses:
+        '200':
+          description: List of objects
+          content:
+            application/xml:
+              schema:
+                type: string
+                example: |
+                  <?xml version="1.0" encoding="UTF-8"?>
+                  <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+                    <Name>bucket-name</Name>
+                    <Prefix/>
+                    <MaxKeys>1000</MaxKeys>
+                    <IsTruncated>false</IsTruncated>
+                    <Contents>
+                      <Key>file.txt</Key>
+                      <LastModified>2023-01-01T00:00:00.000Z</LastModified>
+                      <Size>1024</Size>
+                      <StorageClass>STANDARD</StorageClass>
+                    </Contents>
+                  </ListBucketResult>
+        '403':
+          description: Access denied
+        '404':
+          description: Bucket not found
+
+    put:
+      tags:
+        - S3 Operations
+      summary: Create bucket
+      description: Creates a new S3 bucket
+      operationId: createBucket
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Bucket name
+      responses:
+        '200':
+          description: Bucket created successfully
+        '409':
+          description: Bucket already exists
+
+    delete:
+      tags:
+        - S3 Operations
+      summary: Delete bucket
+      description: Deletes an empty S3 bucket
+      operationId: deleteBucket
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Bucket name
+      responses:
+        '204':
+          description: Bucket deleted successfully
+        '409':
+          description: Bucket not empty
+
+  /{bucket}/{key}:
+    get:
+      tags:
+        - S3 Operations
+      summary: Get object
+      description: Downloads an object from S3
+      operationId: getObject
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Bucket name
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Object key
+      responses:
+        '200':
+          description: Object content
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Object not found
+
+    put:
+      tags:
+        - S3 Operations
+      summary: Put object
+      description: Uploads an object to S3
+      operationId: putObject
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Bucket name
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Object key
+      requestBody:
+        required: true
+        content:
+          '*/*':
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Object uploaded successfully
+        '413':
+          description: Request entity too large
+
+    delete:
+      tags:
+        - S3 Operations
+      summary: Delete object
+      description: Deletes an object from S3
+      operationId: deleteObject
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Bucket name
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Object key
+      responses:
+        '204':
+          description: Object deleted successfully
+
+    head:
+      tags:
+        - S3 Operations
+      summary: Head object
+      description: Retrieves metadata about an object without downloading it
+      operationId: headObject
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Bucket name
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Object key
+      responses:
+        '200':
+          description: Object metadata
+          headers:
+            Content-Length:
+              schema:
+                type: integer
+            Content-Type:
+              schema:
+                type: string
+            Last-Modified:
+              schema:
+                type: string
+        '404':
+          description: Object not found
+
+components:
+  securitySchemes:
+    BasicAuth:
+      type: http
+      scheme: basic
+      description: Basic authentication using username and password
+
+    AWSSignatureV2:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        AWS Signature Version 2 authentication.
+        Format: `AWS AccessKeyId:Signature`
+
+    AWSSignatureV4:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        AWS Signature Version 4 authentication.
+        Format: `AWS4-HMAC-SHA256 Credential=AccessKeyId/Date/Region/Service/aws4_request, SignedHeaders=Headers, Signature=Signature`
+
+    DatabaseAuth:
+      type: http
+      scheme: basic
+      description: |
+        Database-backed authentication. Can be used with Basic Auth or AWS Signatures.
+        When using Basic Auth, the username is the access key and password is checked against the database.
+        When using AWS Signatures, credentials are validated against the database.
