@@ -62,6 +62,7 @@ type ObjectInfo struct {
 	StorageClass string
 	ContentType  string
 	Metadata     map[string]string
+	Backend      string // Source backend (s3, azure, filesystem)
 }
 
 type ACL struct {
@@ -120,6 +121,8 @@ func NewBackend(cfg config.StorageConfig) (Backend, error) {
 			return nil, fmt.Errorf("filesystem configuration required")
 		}
 		return NewFileSystemBackend(cfg.FileSystem)
+	case "multi":
+		return NewMultiBackendSimple(&cfg)
 	default:
 		return nil, fmt.Errorf("unsupported storage provider: %s", cfg.Provider)
 	}

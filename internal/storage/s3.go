@@ -299,7 +299,19 @@ func (s *S3Backend) getOrCreateClient(bucketCfg *config.BucketConfig) (*s3.S3, e
 		awsConfig.Credentials = credentials.NewStaticCredentials(s.config.AccessKey, s.config.SecretKey, "")
 	}
 
-	sess, err := session.NewSession(awsConfig)
+	var sess *session.Session
+	var err error
+
+	if s.config.Profile != "" {
+		sess, err = session.NewSessionWithOptions(session.Options{
+			Config:            *awsConfig,
+			Profile:           s.config.Profile,
+			SharedConfigState: session.SharedConfigEnable,
+		})
+	} else {
+		sess, err = session.NewSession(awsConfig)
+	}
+	
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AWS session for region %s: %w", bucketCfg.Region, err)
 	}

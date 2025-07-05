@@ -68,12 +68,19 @@ type StorageConfig struct {
 
 // AzureStorageConfig contains Azure Blob Storage specific settings
 type AzureStorageConfig struct {
-	AccountName   string `mapstructure:"account_name" envconfig:"AZURE_ACCOUNT_NAME"`
-	AccountKey    string `mapstructure:"account_key" envconfig:"AZURE_ACCOUNT_KEY"`
-	ContainerName string `mapstructure:"container_name" envconfig:"AZURE_CONTAINER_NAME"`
-	Endpoint      string `mapstructure:"endpoint" envconfig:"AZURE_ENDPOINT"`
-	UseSAS        bool   `mapstructure:"use_sas" envconfig:"AZURE_USE_SAS" default:"false"`
-	SASToken      string `mapstructure:"sas_token" envconfig:"AZURE_SAS_TOKEN"`
+	AccountName      string                      `mapstructure:"account_name" envconfig:"AZURE_ACCOUNT_NAME"`
+	AccountKey       string                      `mapstructure:"account_key" envconfig:"AZURE_ACCOUNT_KEY"`
+	ContainerName    string                      `mapstructure:"container_name" envconfig:"AZURE_CONTAINER_NAME"`
+	Endpoint         string                      `mapstructure:"endpoint" envconfig:"AZURE_ENDPOINT"`
+	UseSAS           bool                        `mapstructure:"use_sas" envconfig:"AZURE_USE_SAS" default:"false"`
+	SASToken         string                      `mapstructure:"sas_token" envconfig:"AZURE_SAS_TOKEN"`
+	ContainerConfigs map[string]*ContainerConfig `mapstructure:"container_configs"` // Per-container configuration
+}
+
+// ContainerConfig contains per-container configuration settings for Azure
+type ContainerConfig struct {
+	ContainerName string `mapstructure:"container_name"` // Real container name in Azure
+	Prefix        string `mapstructure:"prefix"`         // Optional prefix (subdirectory) within the container
 }
 
 // S3StorageConfig contains S3 storage backend specific settings
@@ -253,6 +260,33 @@ func validate(cfg *Config) error {
 	case "filesystem":
 		if cfg.Storage.FileSystem == nil {
 			return fmt.Errorf("filesystem storage config is required")
+		}
+	case "multi":
+		// For multi-provider, at least one backend must be configured
+		hasBackend := false
+		if cfg.Storage.S3 != nil {
+			hasBackend = true
+			// Validate S3 config if present
+			if cfg.Storage.S3.Endpoint != "" {
+				if cfg.Storage.S3.Profile == "" && cfg.Storage.S3.AccessKey == "" && cfg.Storage.S3.SecretKey == "" {
+					return fmt.Errorf("s3 credentials are required for custom endpoint in multi-provider mode")
+				}
+			}
+		}
+		if cfg.Storage.Azure != nil {
+			hasBackend = true
+			// Validate Azure config if present
+			if cfg.Storage.Azure.AccountName == "" || cfg.Storage.Azure.AccountKey == "" {
+				if !cfg.Storage.Azure.UseSAS || cfg.Storage.Azure.SASToken == "" {
+					return fmt.Errorf("azure account name and key or SAS token are required in multi-provider mode")
+				}
+			}
+		}
+		if cfg.Storage.FileSystem != nil {
+			hasBackend = true
+		}
+		if !hasBackend {
+			return fmt.Errorf("at least one storage backend must be configured for multi-provider mode")
 		}
 	default:
 		return fmt.Errorf("unsupported storage provider: %s", cfg.Storage.Provider)
