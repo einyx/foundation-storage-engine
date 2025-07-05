@@ -20,6 +20,9 @@ RUN apk --no-cache add wget ca-certificates
 
 COPY --from=builder /app/foundation-storage-engine /foundation-storage-engine
 
+# Copy web UI files
+COPY web /web
+
 EXPOSE 8080
 
 # Health check

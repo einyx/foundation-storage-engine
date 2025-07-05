@@ -15,8 +15,11 @@ type Config struct {
 	S3         S3Config         `mapstructure:"s3"`
 	Storage    StorageConfig    `mapstructure:"storage"`
 	Auth       AuthConfig       `mapstructure:"auth"`
+	Database   DatabaseConfig   `mapstructure:"database"`
 	Encryption EncryptionConfig `mapstructure:"encryption"`
 	Chunking   ChunkingConfig   `mapstructure:"chunking"`
+	UI         UIConfig         `mapstructure:"ui"`
+	Auth0      Auth0Config      `mapstructure:"auth0"`
 }
 
 // ServerConfig contains HTTP server configuration settings
@@ -35,6 +38,24 @@ type S3Config struct {
 	PathStyle            bool   `mapstructure:"path_style" envconfig:"S3_PATH_STYLE" default:"true"`
 	ServicePath          string `mapstructure:"service_path" envconfig:"S3_SERVICE_PATH" default:""`
 	IgnoreUnknownHeaders bool   `mapstructure:"ignore_unknown_headers" envconfig:"S3_IGNORE_UNKNOWN_HEADERS" default:"true"`
+}
+
+// UIConfig contains web UI configuration settings
+type UIConfig struct {
+	Enabled    bool   `mapstructure:"enabled" envconfig:"UI_ENABLED" default:"false"`
+	StaticPath string `mapstructure:"static_path" envconfig:"UI_STATIC_PATH" default:"./web"`
+	BasePath   string `mapstructure:"base_path" envconfig:"UI_BASE_PATH" default:"/ui"`
+}
+
+// Auth0Config contains Auth0 configuration settings
+type Auth0Config struct {
+	Enabled      bool   `mapstructure:"enabled" envconfig:"AUTH0_ENABLED" default:"false"`
+	Domain       string `mapstructure:"domain" envconfig:"AUTH0_DOMAIN"`
+	ClientID     string `mapstructure:"client_id" envconfig:"AUTH0_CLIENT_ID"`
+	ClientSecret string `mapstructure:"client_secret" envconfig:"AUTH0_CLIENT_SECRET"`
+	RedirectURI  string `mapstructure:"redirect_uri" envconfig:"AUTH0_REDIRECT_URI" default:"/api/auth/callback"`
+	LogoutURI    string `mapstructure:"logout_uri" envconfig:"AUTH0_LOGOUT_URI" default:"/ui/login.html"`
+	SessionKey   string `mapstructure:"session_key" envconfig:"AUTH0_SESSION_KEY"`
 }
 
 // StorageConfig specifies the storage backend configuration
@@ -87,12 +108,22 @@ type FileSystemConfig struct {
 
 // AuthConfig specifies authentication configuration
 type AuthConfig struct {
-	Type       string `mapstructure:"type" envconfig:"AUTH_TYPE" default:"none"` // none, basic, awsv2, awsv4
+	Type       string `mapstructure:"type" envconfig:"AUTH_TYPE" default:"none"` // none, basic, awsv2, awsv4, database
 	Identity   string `mapstructure:"identity" envconfig:"AUTH_IDENTITY"`
 	Credential string `mapstructure:"credential" envconfig:"AUTH_CREDENTIAL"`
 	// AWS-style environment variables (take precedence if set)
 	AWSAccessKeyID     string `mapstructure:"-" envconfig:"AWS_ACCESS_KEY_ID"`
 	AWSSecretAccessKey string `mapstructure:"-" envconfig:"AWS_SECRET_ACCESS_KEY"`
+}
+
+// DatabaseConfig specifies database configuration for authentication
+type DatabaseConfig struct {
+	Enabled          bool          `mapstructure:"enabled" envconfig:"DB_ENABLED" default:"false"`
+	Driver           string        `mapstructure:"driver" envconfig:"DB_DRIVER" default:"postgres"`
+	ConnectionString string        `mapstructure:"connection_string" envconfig:"DB_CONNECTION_STRING"`
+	MaxOpenConns     int           `mapstructure:"max_open_conns" envconfig:"DB_MAX_OPEN_CONNS" default:"25"`
+	MaxIdleConns     int           `mapstructure:"max_idle_conns" envconfig:"DB_MAX_IDLE_CONNS" default:"5"`
+	ConnMaxLifetime  time.Duration `mapstructure:"conn_max_lifetime" envconfig:"DB_CONN_MAX_LIFETIME" default:"5m"`
 }
 
 // EncryptionConfig specifies encryption settings
