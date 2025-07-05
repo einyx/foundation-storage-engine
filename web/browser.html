@@ -3,642 +3,731 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Foundation Storage Browser</title>
+    <title>Foundation Storage - Multi-Provider</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
     <script src="/ui/js/iceberg-parser.js"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        'surface-layer': '#ffffff',
-                        'surface-layer-2': '#f9fafb',
-                        'line-5': '#e5e7eb',
-                        'text-primary': '#111827',
-                        'text-secondary': '#6b7280',
-                        'primary': '#3b82f6',
-                        'primary-hover': '#2563eb',
-                    },
-                }
-            }
-        }
-    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        :root {
-            --sidebar-width: 280px;
-            --right-panel-width: 320px;
+        * {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
         
-        .layout-container {
+        :root {
+            --sidebar-width: 240px;
+            --header-height: 52px;
+        }
+        
+        /* Smooth animations */
+        * {
+            transition: all 0.2s ease;
+        }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #e5e7eb;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #d1d5db;
+        }
+        
+        /* Backdrop blur effect */
+        .backdrop-blur-xl {
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        
+        /* Glass morphism */
+        .glass {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+        
+        /* Smooth hover effects */
+        .hover-lift {
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .hover-lift:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* Apple-style focus */
+        input:focus, button:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
+        /* Sidebar */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: rgba(249, 250, 251, 0.8);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(0, 0, 0, 0.05);
+        }
+        
+        /* Header */
+        .header {
+            height: var(--header-height);
+            background: rgba(255, 255, 255, 0.72);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        }
+        
+        /* Main layout */
+        .main-layout {
             display: grid;
-            grid-template-columns: var(--sidebar-width) 1fr var(--right-panel-width);
+            grid-template-columns: var(--sidebar-width) 1fr;
             height: 100vh;
         }
         
-        @media (max-width: 1280px) {
-            .layout-container {
-                grid-template-columns: var(--sidebar-width) 1fr;
-            }
-            .right-panel {
-                display: none;
-            }
+        .content-area {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
         
+        /* Loading spinner */
+        .loading-spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 0.8s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Buttons */
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+            font-size: 0.875rem;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            transition: all 0.2s;
+        }
+        
+        .btn-primary:hover {
+            background: #2563eb;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        
+        .btn-secondary {
+            background: white;
+            color: #374151;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+            font-size: 0.875rem;
+            border: 1px solid #e5e7eb;
+            transition: all 0.2s;
+        }
+        
+        .btn-secondary:hover {
+            background: #f9fafb;
+            border-color: #d1d5db;
+        }
+        
+        /* File grid */
+        .file-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 1rem;
+            padding: 1.5rem;
+        }
+        
+        .file-item {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.75rem;
+            padding: 1rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+        
+        .file-item:hover {
+            border-color: #3b82f6;
+            box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+        
+        .file-item.selected {
+            border-color: #3b82f6;
+            background: #eff6ff;
+        }
+        
+        /* Backend badges */
+        .backend-badge {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            font-size: 0.625rem;
+            font-weight: 600;
+            padding: 0.125rem 0.375rem;
+            border-radius: 0.25rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .backend-badge.aws {
+            background: #ff9900;
+            color: white;
+        }
+        
+        .backend-badge.azure {
+            background: #0078d4;
+            color: white;
+        }
+        
+        .backend-badge.multi {
+            background: linear-gradient(90deg, #ff9900 50%, #0078d4 50%);
+            color: white;
+        }
+        
+        /* Slide panel */
+        .slide-panel {
+            position: fixed;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 400px;
+            background: white;
+            box-shadow: -4px 0 16px rgba(0, 0, 0, 0.1);
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+            z-index: 50;
+        }
+        
+        .slide-panel.open {
+            transform: translateX(0);
+        }
+        
+        /* Responsive */
         @media (max-width: 768px) {
-            .layout-container {
+            .main-layout {
                 grid-template-columns: 1fr;
             }
+            
             .sidebar {
-                position: fixed;
-                left: -100%;
-                z-index: 50;
-                width: var(--sidebar-width);
-                transition: left 0.3s ease;
+                display: none;
             }
-            .sidebar.mobile-open {
-                left: 0;
+            
+            .file-grid {
+                grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            }
+            
+            .slide-panel {
+                width: 100%;
             }
         }
     </style>
 </head>
-<body class="bg-surface-layer-2" x-data="s3Browser()" x-init="init()">
-    <div class="layout-container">
-        <!-- Left Sidebar - Buckets -->
-        <aside class="sidebar bg-surface-layer border-r border-line-5 flex flex-col h-full">
-            <!-- Header -->
-            <div class="p-4 border-b border-line-5">
+<body class="bg-gray-50" x-data="storageApp()">
+    <div class="main-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar flex flex-col">
+            <!-- Logo -->
+            <div class="px-6 py-4 border-b border-gray-200">
                 <div class="flex items-center gap-3">
-                    <svg class="w-8 h-8 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                              d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path>
-                    </svg>
-                    <h1 class="text-lg font-semibold text-text-primary">Storage Browser</h1>
+                    <img src="/ui/logo.png" alt="Logo" class="w-8 h-8">
+                    <h1 class="text-lg font-semibold text-gray-900">Foundation Storage</h1>
+                </div>
+            </div>
+            
+            <!-- Navigation -->
+            <nav class="flex-1 px-2 pb-4 overflow-y-auto">
+                <div class="mb-6">
+                    <h3 class="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Buckets</h3>
+                    <div class="space-y-1">
+                        <template x-for="bucket in bucketsWithBackends" :key="bucket.name">
+                            <button 
+                                @click="selectBucket(bucket.name)"
+                                :class="selectedBucket === bucket.name ? 'bg-blue-50 text-blue-600 border-blue-200' : 'text-gray-700 hover:bg-gray-100'"
+                                class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors relative"
+                            >
+                                <svg class="w-4 h-4" :class="selectedBucket === bucket.name ? 'text-blue-500' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                          d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                                </svg>
+                                <span class="truncate flex-1 text-left" x-text="bucket.name"></span>
+                                <div class="flex gap-1">
+                                    <span x-show="bucket.backends.includes('s3')" 
+                                          class="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-white text-xs font-bold" 
+                                          title="AWS S3">S</span>
+                                    <span x-show="bucket.backends.includes('azure')" 
+                                          class="w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold"
+                                          title="Azure Blob Storage">A</span>
+                                </div>
+                            </button>
+                        </template>
+                    </div>
                 </div>
                 
-                <!-- Mobile menu toggle -->
-                <button @click="mobileMenuOpen = false" class="md:hidden absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-lg">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <!-- Quick Access -->
+                <div>
+                    <h3 class="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Quick Access</h3>
+                    <div class="space-y-1">
+                        <button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100">
+                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            Recent
+                        </button>
+                        <button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100">
+                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path>
+                            </svg>
+                            Favorites
+                        </button>
+                    </div>
+                </div>
+            </nav>
+            
+            <!-- User Profile -->
+            <div class="p-4 border-t border-gray-200" x-data="{ showProfile: false }">
+                <button @click="showProfile = !showProfile" class="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100">
+                    <div class="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white text-sm font-semibold">
+                        <span x-text="userEmail ? userEmail.charAt(0).toUpperCase() : 'U'"></span>
+                    </div>
+                    <div class="flex-1 text-left">
+                        <div class="text-sm font-medium text-gray-900" x-text="userEmail || 'User'"></div>
+                        <div class="text-xs text-gray-500">Administrator</div>
+                    </div>
+                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                </button>
+                
+                <!-- Profile Menu -->
+                <div x-show="showProfile" @click.away="showProfile = false" x-transition class="absolute bottom-20 left-4 right-4 bg-white rounded-lg shadow-lg border border-gray-200 py-2">
+                    <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Settings</a>
+                    <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Help</a>
+                    <hr class="my-2 border-gray-200">
+                    <button @click="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sign Out</button>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main Content -->
+        <div class="content-area">
+            <!-- Header -->
+            <header class="header px-6 flex items-center justify-between">
+                <!-- Breadcrumb -->
+                <nav class="flex items-center space-x-2 text-sm">
+                    <button @click="navigateTo('')" class="text-gray-500 hover:text-gray-700">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                        </svg>
+                    </button>
+                    <template x-for="(part, index) in currentPath.split('/').filter(p => p)" :key="index">
+                        <div class="flex items-center">
+                            <svg class="w-4 h-4 text-gray-400 mx-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                            <button 
+                                @click="navigateTo(currentPath.split('/').slice(0, index + 1).join('/'))" 
+                                class="text-gray-700 hover:text-gray-900 font-medium"
+                                x-text="part"
+                            ></button>
+                        </div>
+                    </template>
+                </nav>
+                
+                <!-- Actions -->
+                <div class="flex items-center gap-2">
+                    <button class="p-2 hover:bg-gray-100 rounded-lg">
+                        <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                    </button>
+                    <button class="p-2 hover:bg-gray-100 rounded-lg">
+                        <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                    </button>
+                    <div class="h-6 w-px bg-gray-300 mx-2"></div>
+                    <button class="btn-primary flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                        </svg>
+                        Upload
+                    </button>
+                </div>
+            </header>
+            
+            <!-- Content -->
+            <main class="flex-1 overflow-auto bg-white">
+                <!-- Iceberg Table Banner -->
+                <div x-show="isIcebergTable" x-transition class="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-100">
+                    <div class="px-6 py-4 flex items-center gap-4">
+                        <div class="w-12 h-12 bg-white rounded-lg shadow-sm flex items-center justify-center">
+                            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
+                            </svg>
+                        </div>
+                        <div class="flex-1">
+                            <h3 class="font-semibold text-gray-900">Apache Iceberg Table</h3>
+                            <p class="text-sm text-gray-600 mt-0.5">This directory contains table data and metadata files</p>
+                        </div>
+                        <button class="btn-secondary text-sm">View Table Info</button>
+                    </div>
+                </div>
+                
+                <!-- Loading State -->
+                <div x-show="loading" class="flex items-center justify-center h-96">
+                    <div class="text-center">
+                        <div class="loading-spinner mx-auto mb-4"></div>
+                        <p class="text-sm text-gray-500">Loading files...</p>
+                    </div>
+                </div>
+                
+                <!-- Error State -->
+                <div x-show="error && !loading" class="flex items-center justify-center h-96">
+                    <div class="text-center max-w-md">
+                        <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900 mb-2">Unable to load files</h3>
+                        <p class="text-sm text-gray-600 mb-4" x-text="error"></p>
+                        <button @click="loadContents()" class="btn-secondary">Try Again</button>
+                    </div>
+                </div>
+                
+                <!-- Empty State -->
+                <div x-show="!loading && !error && files.length === 0 && directories.length === 0" class="flex items-center justify-center h-96">
+                    <div class="text-center max-w-md">
+                        <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                            </svg>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900 mb-2">This folder is empty</h3>
+                        <p class="text-sm text-gray-600 mb-4">Upload files or create folders to get started</p>
+                        <button class="btn-primary">Upload Files</button>
+                    </div>
+                </div>
+                
+                <!-- Files Grid -->
+                <div x-show="!loading && !error && (files.length > 0 || directories.length > 0)" class="file-grid">
+                    <!-- Directories -->
+                    <template x-for="dir in directories" :key="dir.name">
+                        <div @click="navigateTo(currentPath ? currentPath + '/' + dir.name : dir.name)" 
+                             class="file-item hover-lift">
+                            <div class="w-16 h-16 mx-auto mb-3 flex items-center justify-center">
+                                <svg class="w-12 h-12 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                                </svg>
+                            </div>
+                            <p class="text-sm font-medium text-gray-900 truncate" x-text="dir.name"></p>
+                            <p class="text-xs text-gray-500 mt-1">Folder</p>
+                            <span x-show="dir.backend" 
+                                  :class="{
+                                      'aws': dir.backend === 's3',
+                                      'azure': dir.backend === 'azure',
+                                      'multi': dir.backend === 'multi'
+                                  }"
+                                  class="backend-badge" 
+                                  x-text="dir.backend === 's3' ? 'AWS' : dir.backend === 'azure' ? 'Azure' : 'Multi'"></span>
+                        </div>
+                    </template>
+                    
+                    <!-- Files -->
+                    <template x-for="file in files" :key="file.name">
+                        <div @click="selectedFile = file; showDetails = true" 
+                             :class="selectedFile && selectedFile.name === file.name ? 'selected' : ''"
+                             class="file-item hover-lift">
+                            <div class="w-16 h-16 mx-auto mb-3 flex items-center justify-center">
+                                <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                </svg>
+                            </div>
+                            <p class="text-sm font-medium text-gray-900 truncate" x-text="file.name"></p>
+                            <p class="text-xs text-gray-500 mt-1" x-text="formatFileSize(file.size)"></p>
+                            <span x-show="file.backend" 
+                                  :class="{
+                                      'aws': file.backend === 's3',
+                                      'azure': file.backend === 'azure',
+                                      'multi': file.backend === 'multi'
+                                  }"
+                                  class="backend-badge" 
+                                  x-text="file.backend === 's3' ? 'AWS' : file.backend === 'azure' ? 'Azure' : 'Multi'"></span>
+                        </div>
+                    </template>
+                </div>
+            </main>
+        </div>
+    </div>
+    
+    <!-- Details Panel -->
+    <div :class="showDetails ? 'open' : ''" class="slide-panel">
+        <div class="h-full flex flex-col">
+            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h2 class="text-lg font-semibold text-gray-900">File Details</h2>
+                <button @click="showDetails = false" class="p-2 hover:bg-gray-100 rounded-lg">
+                    <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                     </svg>
                 </button>
             </div>
             
-            <!-- Buckets List -->
-            <div class="flex-1 overflow-y-auto">
-                <div class="p-4">
-                    <h2 class="text-sm font-medium text-text-secondary mb-3">Buckets</h2>
-                    <div class="space-y-1">
-                        <template x-for="bucket in buckets" :key="bucket">
-                            <button 
-                                @click="selectBucket(bucket)"
-                                :class="{'bg-primary bg-opacity-10 text-primary': selectedBucket === bucket}"
-                                class="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors text-left"
-                            >
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                                          d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
-                                </svg>
-                                <span class="truncate" x-text="bucket"></span>
-                            </button>
-                        </template>
-                    </div>
-                    
-                    <!-- Loading/Empty State -->
-                    <div x-show="bucketsLoading" class="text-center py-8">
-                        <div class="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
-                    </div>
-                    <div x-show="!bucketsLoading && buckets.length === 0" class="text-center py-8 text-text-secondary text-sm">
-                        No buckets found
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Footer -->
-            <div class="p-4 border-t border-line-5">
-                <button class="w-full px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors">
-                    Create New Bucket
-                </button>
-            </div>
-        </aside>
-        
-        <!-- Main Content Area -->
-        <main class="flex flex-col h-full overflow-hidden">
-            <!-- Header Bar -->
-            <header class="bg-surface-layer border-b border-line-5 px-6 py-4">
-                <div class="flex items-center justify-between">
-                    <!-- Mobile menu toggle -->
-                    <button @click="mobileMenuOpen = true" class="md:hidden p-2 hover:bg-gray-100 rounded-lg">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+            <div x-show="selectedFile" class="flex-1 overflow-y-auto p-6">
+                <div class="space-y-6">
+                    <!-- Preview -->
+                    <div class="bg-gray-100 rounded-lg p-8 flex items-center justify-center">
+                        <svg class="w-24 h-24 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                         </svg>
-                    </button>
+                    </div>
                     
-                    <!-- Breadcrumb -->
-                    <nav class="flex-1">
-                        <ol class="flex items-center space-x-2 text-sm">
-                            <li>
-                                <a href="#" @click="navigateTo('')" class="text-text-secondary hover:text-primary">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
-                                    </svg>
-                                </a>
-                            </li>
-                            <template x-for="(part, index) in currentPath.split('/').filter(p => p)" :key="index">
-                                <li class="flex items-center">
-                                    <span class="mx-2 text-text-secondary">/</span>
-                                    <a href="#" 
-                                       @click="navigateTo(currentPath.split('/').slice(0, index + 1).join('/'))" 
-                                       class="text-text-secondary hover:text-primary"
-                                       x-text="part"></a>
-                                </li>
-                            </template>
-                        </ol>
-                    </nav>
+                    <!-- Info -->
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-900 mb-3">Information</h3>
+                        <dl class="space-y-2">
+                            <div class="flex justify-between py-2 border-b border-gray-100">
+                                <dt class="text-sm text-gray-500">Name</dt>
+                                <dd class="text-sm font-medium text-gray-900" x-text="selectedFile?.name"></dd>
+                            </div>
+                            <div class="flex justify-between py-2 border-b border-gray-100">
+                                <dt class="text-sm text-gray-500">Size</dt>
+                                <dd class="text-sm font-medium text-gray-900" x-text="selectedFile ? formatFileSize(selectedFile.size) : ''"></dd>
+                            </div>
+                            <div class="flex justify-between py-2 border-b border-gray-100">
+                                <dt class="text-sm text-gray-500">Modified</dt>
+                                <dd class="text-sm font-medium text-gray-900" x-text="selectedFile ? formatDate(selectedFile.lastModified) : ''"></dd>
+                            </div>
+                            <div class="flex justify-between py-2 border-b border-gray-100">
+                                <dt class="text-sm text-gray-500">Storage Backend</dt>
+                                <dd class="text-sm font-medium">
+                                    <span x-show="selectedFile?.backend" 
+                                          :class="{
+                                              'aws': selectedFile?.backend === 's3',
+                                              'azure': selectedFile?.backend === 'azure'
+                                          }"
+                                          class="backend-badge" 
+                                          x-text="selectedFile?.backend === 's3' ? 'AWS S3' : selectedFile?.backend === 'azure' ? 'Azure Blob' : selectedFile?.backend"></span>
+                                </dd>
+                            </div>
+                        </dl>
+                    </div>
                     
                     <!-- Actions -->
-                    <div class="flex items-center gap-2">
-                        <button class="p-2 hover:bg-gray-100 rounded-lg">
-                            <svg class="w-5 h-5 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                            </svg>
-                        </button>
-                        <button class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors flex items-center gap-2">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
-                            </svg>
-                            Upload
-                        </button>
+                    <div class="flex gap-3">
+                        <button class="btn-primary flex-1">Download</button>
+                        <button class="btn-secondary flex-1">Share</button>
                     </div>
-                </div>
-            </header>
-            
-            <!-- Content Area -->
-            <div class="flex-1 overflow-auto p-6">
-                <!-- Iceberg Table Indicator -->
-                <div x-show="isIcebergTable" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 flex items-center gap-3">
-                    <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10a2 2 0 002 2h12a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H6a2 2 0 00-2 2z"></path>
-                    </svg>
-                    <div class="flex-1">
-                        <p class="font-medium text-blue-900">Iceberg Table</p>
-                        <p class="text-sm text-blue-700">This directory contains Apache Iceberg table data and metadata</p>
-                    </div>
-                </div>
-                
-                <!-- Loading State -->
-                <div x-show="loading" class="flex items-center justify-center h-64">
-                    <div class="text-center">
-                        <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4"></div>
-                        <p class="text-text-secondary">Loading...</p>
-                    </div>
-                </div>
-                
-                <!-- Error State -->
-                <div x-show="error" class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-                    <p class="font-semibold">Error</p>
-                    <p x-text="error"></p>
-                </div>
-                
-                <!-- Files Grid -->
-                <div x-show="!loading && !error" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-                    <!-- Directories -->
-                    <template x-for="dir in directories" :key="dir">
-                        <button 
-                            @click="navigateTo(currentPath ? currentPath + '/' + dir : dir)"
-                            class="bg-surface-layer border border-line-5 rounded-lg p-4 hover:border-primary transition-colors text-left group"
-                        >
-                            <div class="flex items-center gap-3 mb-2">
-                                <svg class="w-10 h-10 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                                          d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
-                                </svg>
-                            </div>
-                            <p class="font-medium text-text-primary truncate" x-text="dir"></p>
-                            <p class="text-sm text-text-secondary">Folder</p>
-                        </button>
-                    </template>
-                    
-                    <!-- Files -->
-                    <template x-for="file in files" :key="file.Key">
-                        <button 
-                            @click="selectFile(file)"
-                            :class="{'border-primary': selectedFile?.Key === file.Key}"
-                            class="bg-surface-layer border border-line-5 rounded-lg p-4 hover:border-primary transition-colors text-left group"
-                        >
-                            <div class="flex items-center gap-3 mb-2">
-                                <svg class="w-10 h-10 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                </svg>
-                            </div>
-                            <p class="font-medium text-text-primary truncate" x-text="getFileName(file.Key)"></p>
-                            <p class="text-sm text-text-secondary" x-text="formatSize(file.Size)"></p>
-                        </button>
-                    </template>
-                </div>
-                
-                <!-- Empty State -->
-                <div x-show="!loading && !error && directories.length === 0 && files.length === 0" 
-                     class="flex flex-col items-center justify-center h-64 text-center">
-                    <svg class="w-16 h-16 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                              d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
-                    </svg>
-                    <p class="text-text-secondary mb-4">No files in this location</p>
-                    <button class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors">
-                        Upload Files
-                    </button>
                 </div>
             </div>
-        </main>
-        
-        <!-- Right Panel - User Profile & File Details -->
-        <aside class="right-panel bg-surface-layer border-l border-line-5 flex flex-col h-full">
-            <!-- User Profile Section -->
-            <div class="p-4 border-b border-line-5">
-                <div class="flex items-center gap-3 mb-4">
-                    <div class="w-10 h-10 bg-primary bg-opacity-10 rounded-full flex items-center justify-center">
-                        <span class="text-primary font-medium" x-text="userInitials"></span>
-                    </div>
-                    <div class="flex-1 min-w-0">
-                        <p class="font-medium text-text-primary truncate" x-text="userName"></p>
-                        <p class="text-sm text-text-secondary truncate" x-text="userEmail"></p>
-                    </div>
-                    <button @click="logout()" class="p-2 hover:bg-gray-100 rounded-lg">
-                        <svg class="w-5 h-5 text-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                                  d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
-                        </svg>
-                    </button>
-                </div>
-            </div>
-            
-            <!-- File Details Section -->
-            <div class="flex-1 overflow-y-auto p-4">
-                <template x-if="selectedFile">
-                    <div>
-                        <h3 class="font-medium text-text-primary mb-4">File Details</h3>
-                        
-                        <!-- Iceberg Metadata Display -->
-                        <div x-show="selectedFileMetadata" class="mb-4">
-                            <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
-                                <div class="flex items-center gap-2 text-blue-700 text-sm font-medium">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                    </svg>
-                                    Iceberg Table Metadata
-                                </div>
-                            </div>
-                            <div x-html="selectedFileMetadata" class="text-sm"></div>
-                        </div>
-                        
-                        <!-- File Preview -->
-                        <div class="bg-surface-layer-2 rounded-lg p-4 mb-4">
-                            <svg class="w-16 h-16 text-text-secondary mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                            </svg>
-                            <p class="text-center font-medium text-text-primary truncate" x-text="getFileName(selectedFile.Key)"></p>
-                        </div>
-                        
-                        <!-- File Info -->
-                        <div class="space-y-3">
-                            <div>
-                                <p class="text-sm text-text-secondary">Size</p>
-                                <p class="font-medium text-text-primary" x-text="formatSize(selectedFile.Size)"></p>
-                            </div>
-                            <div>
-                                <p class="text-sm text-text-secondary">Modified</p>
-                                <p class="font-medium text-text-primary" x-text="formatDate(selectedFile.LastModified)"></p>
-                            </div>
-                            <div>
-                                <p class="text-sm text-text-secondary">Path</p>
-                                <p class="font-medium text-text-primary text-sm break-all" x-text="selectedFile.Key"></p>
-                            </div>
-                        </div>
-                        
-                        <!-- Actions -->
-                        <div class="mt-6 space-y-2">
-                            <a :href="getDownloadUrl(selectedFile.Key)" 
-                               class="block w-full px-4 py-2 bg-primary text-white text-center rounded-lg hover:bg-primary-hover transition-colors">
-                                Download
-                            </a>
-                            <button class="w-full px-4 py-2 border border-line-5 text-text-primary rounded-lg hover:bg-gray-50 transition-colors">
-                                Share
-                            </button>
-                            <button class="w-full px-4 py-2 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors">
-                                Delete
-                            </button>
-                        </div>
-                    </div>
-                </template>
-                
-                <!-- No Selection State -->
-                <div x-show="!selectedFile" class="text-center py-8">
-                    <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                    </svg>
-                    <p class="text-text-secondary">Select a file to view details</p>
-                </div>
-            </div>
-        </aside>
+        </div>
     </div>
     
-    <!-- Overlay for mobile -->
-    <div x-show="mobileMenuOpen" 
-         @click="mobileMenuOpen = false"
-         x-transition:enter="transition-opacity ease-linear duration-300"
-         x-transition:enter-start="opacity-0"
-         x-transition:enter-end="opacity-100"
-         x-transition:leave="transition-opacity ease-linear duration-300"
-         x-transition:leave-start="opacity-100"
-         x-transition:leave-end="opacity-0"
-         class="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"></div>
-
     <script>
-    function s3Browser() {
-        return {
-            // State
-            buckets: [],
-            bucketsLoading: true,
-            selectedBucket: '',
-            currentPath: '',
-            directories: [],
-            files: [],
-            loading: false,
-            error: null,
-            selectedFile: null,
-            selectedFileMetadata: null,
-            mobileMenuOpen: false,
-            icebergParser: null,
-            isIcebergTable: false,
-            
-            // User info
-            userName: 'User',
-            userEmail: 'user@example.com',
-            userInitials: 'U',
-
-            init() {
-                // Check authentication
-                if (!this.isAuthenticated()) {
-                    window.location.href = '/ui/login.html';
-                    return;
-                }
-
-                // Initialize Iceberg parser
-                this.icebergParser = new IcebergMetadataParser();
-
-                // Load user info
-                this.loadUserInfo();
+        function storageApp() {
+            return {
+                buckets: [],
+                bucketsWithBackends: [],
+                selectedBucket: '',
+                currentPath: '',
+                files: [],
+                directories: [],
+                loading: false,
+                error: null,
+                showDetails: false,
+                selectedFile: null,
+                isIcebergTable: false,
+                userEmail: localStorage.getItem('userEmail') || null,
                 
-                // Load buckets
-                this.loadBuckets();
+                async init() {
+                    // Check authentication
+                    const token = localStorage.getItem('token');
+                    if (!token && window.location.pathname !== '/ui/login') {
+                        window.location.href = '/ui/login';
+                        return;
+                    }
+                    
+                    await this.loadBuckets();
+                },
                 
-                // Get path from URL hash
-                const hash = window.location.hash.substring(1);
-                if (hash) {
-                    const parts = hash.split('/');
-                    if (parts.length > 0) {
-                        this.selectedBucket = parts[0];
-                        this.currentPath = parts.join('/');
-                        this.loadContents();
-                    }
-                }
-                
-                // Listen for hash changes
-                window.addEventListener('hashchange', () => {
-                    const hash = window.location.hash.substring(1);
-                    if (hash) {
-                        const parts = hash.split('/');
-                        if (parts.length > 0) {
-                            this.selectedBucket = parts[0];
-                            this.currentPath = parts.join('/');
-                            this.loadContents();
-                        }
-                    }
-                });
-            },
-
-            isAuthenticated() {
-                return localStorage.getItem('s3_auth_token') || 
-                       localStorage.getItem('auth_token') || 
-                       this.checkAuth0();
-            },
-
-            checkAuth0() {
-                const cookies = document.cookie.split(';');
-                for (let cookie of cookies) {
-                    const [name, value] = cookie.trim().split('=');
-                    if (name === 'auth0-session' || name === 'appSession') {
-                        return true;
-                    }
-                }
-                return false;
-            },
-
-            loadUserInfo() {
-                // Try to get user info from different sources
-                const authToken = localStorage.getItem('auth_token');
-                if (authToken) {
-                    // Decode basic auth
+                async loadBuckets() {
                     try {
-                        const decoded = atob(authToken);
-                        const [email] = decoded.split(':');
-                        this.userEmail = email;
-                        this.userName = email.split('@')[0];
-                        this.userInitials = this.userName.substring(0, 2).toUpperCase();
-                    } catch (e) {}
-                }
-                
-                // TODO: Get user info from Auth0 session if available
-            },
-
-            getAuthHeaders() {
-                const s3Token = localStorage.getItem('s3_auth_token');
-                if (s3Token) {
-                    const creds = JSON.parse(atob(s3Token));
-                    const date = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
-                    return {
-                        'Authorization': `AWS4-HMAC-SHA256 Credential=${creds.accessKey}/${date.substring(0,8)}/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=dummy`,
-                        'X-Amz-Date': date
-                    };
-                }
-                
-                const authToken = localStorage.getItem('auth_token');
-                if (authToken) {
-                    return {
-                        'Authorization': `Basic ${authToken}`
-                    };
-                }
-                
-                return {};
-            },
-
-            async loadBuckets() {
-                this.bucketsLoading = true;
-                try {
-                    const response = await fetch('/', {
-                        headers: this.getAuthHeaders()
-                    });
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    
-                    const text = await response.text();
-                    const parser = new DOMParser();
-                    const xml = parser.parseFromString(text, 'text/xml');
-                    
-                    this.buckets = [];
-                    const bucketNodes = xml.querySelectorAll('Bucket > Name');
-                    bucketNodes.forEach(node => {
-                        this.buckets.push(node.textContent);
-                    });
-                } catch (err) {
-                    console.error('Failed to load buckets:', err);
-                } finally {
-                    this.bucketsLoading = false;
-                }
-            },
-
-            selectBucket(bucket) {
-                this.selectedBucket = bucket;
-                this.currentPath = bucket;
-                window.location.hash = bucket;
-            },
-
-            async loadContents() {
-                if (!this.selectedBucket) return;
-                
-                this.loading = true;
-                this.error = null;
-                this.selectedFile = null;
-                
-                try {
-                    let url = '/' + this.currentPath;
-                    if (!url.endsWith('/')) url += '/';
-                    url += '?list-type=2&delimiter=/';
-                    
-                    const response = await fetch(url, {
-                        headers: this.getAuthHeaders()
-                    });
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    
-                    const text = await response.text();
-                    const parser = new DOMParser();
-                    const xml = parser.parseFromString(text, 'text/xml');
-                    
-                    // Parse directories
-                    this.directories = [];
-                    const prefixes = xml.querySelectorAll('CommonPrefixes > Prefix');
-                    prefixes.forEach(prefix => {
-                        const path = prefix.textContent;
-                        const dir = path.substring(this.currentPath.length + 1).replace(/\/$/, '');
-                        if (dir && !dir.includes('/')) {
-                            this.directories.push(dir);
-                        }
-                    });
-                    
-                    // Check if this is an Iceberg table directory
-                    this.isIcebergTable = this.icebergParser.isIcebergTablePath(this.currentPath);
-                    if (this.isIcebergTable) {
-                        const tableInfo = this.icebergParser.detectTableFromPath(this.currentPath);
-                        if (tableInfo) {
-                            console.log('Viewing Iceberg table:', tableInfo);
-                        }
-                    }
-                    
-                    // Parse files
-                    this.files = [];
-                    const contents = xml.querySelectorAll('Contents');
-                    contents.forEach(content => {
-                        const key = content.querySelector('Key').textContent;
-                        if (!key.endsWith('/') && this.isInCurrentDirectory(key)) {
-                            this.files.push({
-                                Key: key,
-                                Size: parseInt(content.querySelector('Size').textContent),
-                                LastModified: content.querySelector('LastModified').textContent
-                            });
-                        }
-                    });
-                } catch (err) {
-                    this.error = err.message;
-                } finally {
-                    this.loading = false;
-                }
-            },
-
-            isInCurrentDirectory(key) {
-                const relativePath = key.substring(this.currentPath.length + 1);
-                return !relativePath.includes('/');
-            },
-
-            getFileName(key) {
-                return key.split('/').pop();
-            },
-
-            formatSize(bytes) {
-                if (bytes === 0) return '0 B';
-                const k = 1024;
-                const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-                const i = Math.floor(Math.log(bytes) / Math.log(k));
-                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-            },
-
-            formatDate(dateString) {
-                return new Date(dateString).toLocaleString();
-            },
-
-            navigateTo(path) {
-                window.location.hash = path;
-            },
-
-            async selectFile(file) {
-                this.selectedFile = file;
-                this.selectedFileMetadata = null;
-                
-                // Check if this is an Iceberg metadata file
-                if (this.icebergParser.isIcebergMetadata(file.Key)) {
-                    // Fetch and parse the metadata
-                    try {
-                        const response = await fetch('/' + file.Key, {
-                            headers: this.getAuthHeaders()
-                        });
+                        const response = await fetch('/');
+                        const text = await response.text();
+                        const parser = new DOMParser();
+                        const xml = parser.parseFromString(text, 'text/xml');
                         
-                        if (response.ok) {
-                            const metadata = await response.json();
-                            const parsed = await this.icebergParser.parseMetadata(metadata);
-                            if (parsed) {
-                                this.selectedFileMetadata = this.icebergParser.createMetadataHTML(parsed);
+                        const bucketElements = xml.querySelectorAll('Bucket');
+                        this.buckets = Array.from(bucketElements).map(b => 
+                            b.querySelector('Name').textContent
+                        );
+                        
+                        // Track which backends have each bucket
+                        const bucketBackends = {};
+                        
+                        // Get backend info from headers (if available)
+                        const backendHeader = response.headers.get('X-Backend-Mapping');
+                        if (backendHeader) {
+                            try {
+                                const mapping = JSON.parse(backendHeader);
+                                Object.assign(bucketBackends, mapping);
+                            } catch (e) {
+                                console.error('Failed to parse backend mapping', e);
                             }
                         }
+                        
+                        // Determine backend based on bucket name prefix
+                        this.bucketsWithBackends = this.buckets.map(bucket => {
+                            let backends = bucketBackends[bucket];
+                            
+                            // If no backend info from server, determine based on bucket name
+                            if (!backends) {
+                                if (bucket.startsWith('azure-')) {
+                                    backends = ['azure'];
+                                } else {
+                                    backends = ['s3'];
+                                }
+                            }
+                            
+                            return {
+                                name: bucket,
+                                backends: Array.isArray(backends) ? backends : [backends]
+                            };
+                        });
+                        
+                        if (this.buckets.length > 0 && !this.selectedBucket) {
+                            this.selectBucket(this.buckets[0]);
+                        }
                     } catch (error) {
-                        console.error('Failed to load Iceberg metadata:', error);
+                        console.error('Failed to load buckets:', error);
                     }
-                }
-            },
-
-            getDownloadUrl(key) {
-                return '/' + key;
-            },
-
-            logout() {
-                localStorage.removeItem('s3_auth_token');
-                localStorage.removeItem('auth_token');
+                },
                 
-                if (this.checkAuth0()) {
-                    window.location.href = '/api/auth/logout';
-                } else {
-                    window.location.href = '/ui/login.html';
+                selectBucket(bucket) {
+                    this.selectedBucket = bucket;
+                    this.currentPath = '';
+                    this.loadContents();
+                },
+                
+                navigateTo(path) {
+                    this.currentPath = path;
+                    this.loadContents();
+                },
+                
+                async loadContents() {
+                    if (!this.selectedBucket) return;
+                    
+                    this.loading = true;
+                    this.error = null;
+                    
+                    try {
+                        const prefix = this.currentPath ? this.currentPath + '/' : '';
+                        const url = `/${this.selectedBucket}?list-type=2&prefix=${encodeURIComponent(prefix)}&delimiter=/`;
+                        
+                        const response = await fetch(url);
+                        const text = await response.text();
+                        const parser = new DOMParser();
+                        const xml = parser.parseFromString(text, 'text/xml');
+                        
+                        // Check for Iceberg table
+                        this.checkForIcebergTable();
+                        
+                        // Parse directories (CommonPrefixes)
+                        const prefixes = xml.querySelectorAll('CommonPrefixes');
+                        this.directories = Array.from(prefixes).map(p => {
+                            const fullPrefix = p.querySelector('Prefix').textContent;
+                            const name = fullPrefix.replace(prefix, '').replace('/', '');
+                            return {
+                                name: name,
+                                backend: 'multi' // Will be determined by contents
+                            };
+                        });
+                        
+                        // Parse files
+                        const contents = xml.querySelectorAll('Contents');
+                        this.files = Array.from(contents)
+                            .filter(c => {
+                                const key = c.querySelector('Key').textContent;
+                                return key !== prefix && !key.endsWith('/');
+                            })
+                            .map(c => {
+                                const key = c.querySelector('Key').textContent;
+                                const name = key.replace(prefix, '');
+                                const backend = c.querySelector('Backend')?.textContent || 
+                                               response.headers.get(`X-Object-Backend-${name}`) || 
+                                               's3'; // Default fallback
+                                
+                                return {
+                                    name: name,
+                                    size: parseInt(c.querySelector('Size').textContent),
+                                    lastModified: c.querySelector('LastModified').textContent,
+                                    etag: c.querySelector('ETag').textContent,
+                                    backend: backend
+                                };
+                            });
+                            
+                    } catch (error) {
+                        this.error = error.message || 'Failed to load contents';
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                checkForIcebergTable() {
+                    // Check if this directory contains Iceberg metadata
+                    const hasMetadataJson = this.files.some(f => f.name === 'metadata.json');
+                    const hasMetadataDir = this.directories.some(d => d.name === 'metadata');
+                    const hasDataDir = this.directories.some(d => d.name === 'data');
+                    
+                    this.isIcebergTable = hasMetadataJson || (hasMetadataDir && hasDataDir);
+                },
+                
+                formatFileSize(bytes) {
+                    if (bytes === 0) return '0 Bytes';
+                    const k = 1024;
+                    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+                    const i = Math.floor(Math.log(bytes) / Math.log(k));
+                    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                },
+                
+                formatDate(dateString) {
+                    const date = new Date(dateString);
+                    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+                },
+                
+                logout() {
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('userEmail');
+                    window.location.href = '/ui/login';
                 }
             }
         }
-    }
     </script>
 </body>
 </html>
