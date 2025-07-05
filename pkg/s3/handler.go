@@ -65,6 +65,30 @@ func NewHandler(storage storage.Backend, auth auth.Provider, cfg config.S3Config
 	return h
 }
 
+// isListOperation checks if a GET request should be treated as a list operation
+// based on query parameters that indicate a bucket listing rather than object retrieval
+func (h *Handler) isListOperation(r *http.Request) bool {
+	query := r.URL.Query()
+	
+	// Check for list-type query parameters that indicate this is a list operation
+	listParams := []string{
+		"list-type",     // S3 v2 list API
+		"delimiter",     // Directory-style listing
+		"prefix",        // Prefix filtering
+		"marker",        // S3 v1 list continuation
+		"max-keys",      // Limit number of results
+		"continuation-token", // S3 v2 list continuation
+	}
+	
+	for _, param := range listParams {
+		if query.Get(param) != "" {
+			return true
+		}
+	}
+	
+	return false
+}
+
 // isValidBucket checks if a bucket exists in our virtual bucket configuration
 func (h *Handler) isValidBucket(bucket string) bool {
 	// Try to check if bucket exists via storage backend
@@ -206,6 +230,13 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 		"query":  r.URL.RawQuery,
 		"path":   r.URL.Path,
 	})
+	
+	// Debug logging for download issues
+	logger.WithFields(logrus.Fields{
+		"rawPath": r.URL.Path,
+		"bucket": bucket,
+		"key": key,
+	}).Debug("handleObject called")
 
 	// logger.Debug("Handling object request")
 
@@ -262,6 +293,13 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 
 	// Check if this is an SDK v2 request and handle any specific requirements
 	h.handleSDKv2Request(w, r)
+
+	// Check if this is actually a list operation disguised as an object request
+	if r.Method == "GET" && h.isListOperation(r) {
+		// This is a list operation, not an object get - delegate to list logic
+		h.listObjects(w, r, bucket)
+		return
+	}
 
 	switch r.Method {
 	case "GET":

@@ -14,18 +14,22 @@ import (
 	"github.com/einyx/foundation-storage-engine/internal/auth"
 	"github.com/einyx/foundation-storage-engine/internal/cache"
 	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/database"
 	"github.com/einyx/foundation-storage-engine/internal/metrics"
 	"github.com/einyx/foundation-storage-engine/internal/storage"
 	"github.com/einyx/foundation-storage-engine/pkg/s3"
 )
 
 type Server struct {
-	config    *config.Config
-	storage   storage.Backend
-	auth      auth.Provider
-	router    *mux.Router
-	s3Handler *s3.Handler
-	metrics   *metrics.Metrics
+	config           *config.Config
+	storage          storage.Backend
+	auth             auth.Provider
+	router           *mux.Router
+	s3Handler        *s3.Handler
+	metrics          *metrics.Metrics
+	auth0            *Auth0Handler
+	shareLinkHandler *ShareLinkHandler
+	db               *database.DB // Database connection for auth
 }
 
 // NewServer creates a new proxy server instance
@@ -71,9 +75,33 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		}
 	}
 
-	authProvider, err := auth.NewProvider(cfg.Auth)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create auth provider: %w", err)
+	// Create auth provider based on configuration
+	var authProvider auth.Provider
+	var db *database.DB
+	
+	if cfg.Auth.Type == "database" && cfg.Database.Enabled {
+		// Initialize database connection for authentication
+		dbConfig := database.Config{
+			Driver:           cfg.Database.Driver,
+			ConnectionString: cfg.Database.ConnectionString,
+			MaxOpenConns:     cfg.Database.MaxOpenConns,
+			MaxIdleConns:     cfg.Database.MaxIdleConns,
+			ConnMaxLifetime:  cfg.Database.ConnMaxLifetime,
+		}
+		
+		var err error
+		db, err = database.NewConnection(dbConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create database connection: %w", err)
+		}
+		
+		authProvider = auth.NewDatabaseProvider(db)
+		logrus.Info("Database authentication provider initialized")
+	} else {
+		authProvider, err = auth.NewProvider(cfg.Auth)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create auth provider: %w", err)
+		}
 	}
 
 	// Remove overhead
@@ -85,9 +113,19 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		auth:    authProvider,
 		router:  mux.NewRouter(),
 		metrics: metrics.NewMetrics("foundation_storage_engine"),
+		db:      db,
+	}
+
+	// Initialize Auth0 if enabled
+	if cfg.Auth0.Enabled {
+		s.auth0 = NewAuth0Handler(&cfg.Auth0)
 	}
 
 	s.s3Handler = s3.NewHandler(s.storage, s.auth, cfg.S3, cfg.Chunking)
+	
+	// Initialize share link handler
+	s.shareLinkHandler = NewShareLinkHandler(s.s3Handler)
+	
 	s.setupRoutes()
 
 	// Apply metrics middleware to all routes
@@ -120,7 +158,39 @@ func (s *Server) setupRoutes() {
 	s.router.Handle("/metrics", s.metrics.Handler()).Methods("GET")
 	s.router.Handle("/stats", s.metrics.StatsHandler()).Methods("GET")
 
-	// Register S3 bucket operations (must be after monitoring endpoints)
+	// Register Auth0 routes if enabled
+	if s.config.Auth0.Enabled && s.auth0 != nil {
+		logrus.Info("Auth0 authentication enabled")
+		s.router.HandleFunc("/api/auth/login", s.auth0.LoginHandler).Methods("GET")
+		s.router.HandleFunc("/api/auth/callback", s.auth0.CallbackHandler).Methods("GET")
+		s.router.HandleFunc("/api/auth/logout", s.auth0.LogoutHandler).Methods("GET")
+		s.router.HandleFunc("/api/auth/userinfo", s.auth0.UserInfoHandler).Methods("GET")
+	}
+	
+	// Register share link routes
+	s.router.HandleFunc("/api/share/create", s.shareLinkHandler.CreateShareLinkHandler).Methods("POST")
+	s.router.HandleFunc("/api/share/{shareID}", s.shareLinkHandler.ServeSharedFile).Methods("GET", "HEAD")
+
+	// Register UI routes if enabled
+	if s.config.UI.Enabled {
+		logrus.WithFields(logrus.Fields{
+			"basePath": s.config.UI.BasePath,
+			"staticPath": s.config.UI.StaticPath,
+		}).Info("Web UI enabled")
+		
+		// Serve static files from the UI path
+		fileServer := http.FileServer(http.Dir(s.config.UI.StaticPath))
+		s.router.PathPrefix(s.config.UI.BasePath + "/").Handler(
+			http.StripPrefix(s.config.UI.BasePath, fileServer),
+		).Methods("GET")
+		
+		// Redirect /ui to /ui/
+		s.router.HandleFunc(s.config.UI.BasePath, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, s.config.UI.BasePath+"/", http.StatusMovedPermanently)
+		}).Methods("GET")
+	}
+
+	// Register S3 bucket operations (must be after monitoring endpoints and UI)
 	s.router.HandleFunc("/", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
 	s.router.HandleFunc("/{bucket}", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
 	s.router.HandleFunc("/{bucket}/", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
@@ -128,6 +198,12 @@ func (s *Server) setupRoutes() {
 }
 
 func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
+	logrus.WithFields(logrus.Fields{
+		"path": r.URL.Path,
+		"authType": s.config.Auth.Type,
+		"hasAuth": r.Header.Get("Authorization") != "",
+	}).Debug("handleS3Request called")
+	
 	if s.config.Auth.Type != "none" {
 		userAgent := r.Header.Get("User-Agent")
 		if strings.Contains(strings.ToLower(userAgent), "minio") || strings.Contains(strings.ToLower(userAgent), "mc") {
@@ -151,6 +227,25 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
 			return
 		}
+		
+		// Remove Authorization header after successful authentication
+		// to prevent it from being forwarded to the backend S3
+		logrus.WithFields(logrus.Fields{
+			"path": r.URL.Path,
+			"hadAuth": r.Header.Get("Authorization") != "",
+		}).Debug("Removing auth headers after successful authentication")
+		
+		r.Header.Del("Authorization")
+		r.Header.Del("X-Amz-Security-Token")
+		r.Header.Del("X-Amz-Credential")
+		r.Header.Del("X-Amz-Date")
+		r.Header.Del("X-Amz-SignedHeaders")
+		r.Header.Del("X-Amz-Signature")
+		
+		logrus.WithFields(logrus.Fields{
+			"path": r.URL.Path,
+			"hasAuthAfter": r.Header.Get("Authorization") != "",
+		}).Debug("Auth headers removed")
 	}
 
 	// Log request for debugging - commented out for production
@@ -246,4 +341,12 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// Close cleanly shuts down the server and releases resources
+func (s *Server) Close() error {
+	if s.db != nil {
+		return s.db.Close()
+	}
+	return nil
 }

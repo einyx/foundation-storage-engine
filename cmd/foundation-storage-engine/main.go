@@ -48,9 +48,6 @@ func run(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid log level: %w", err)
 	}
-	if level < logrus.WarnLevel {
-		level = logrus.WarnLevel
-	}
 	logrus.SetLevel(level)
 
 	logrus.SetFormatter(&logrus.JSONFormatter{})
@@ -121,6 +118,10 @@ func run(cmd *cobra.Command, _ []string) error {
 		defer shutdownCancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			logrus.WithError(err).Error("Failed to shutdown server gracefully")
+		}
+		// Close proxy server resources (including database connections)
+		if err := proxyServer.Close(); err != nil {
+			logrus.WithError(err).Error("Failed to close proxy server resources")
 		}
 		cancel()
 	}()

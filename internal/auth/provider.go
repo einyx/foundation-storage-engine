@@ -62,6 +62,9 @@ func NewProvider(cfg config.AuthConfig) (Provider, error) {
 			identity:   cfg.Identity,
 			credential: cfg.Credential,
 		}, nil
+	case "database":
+		// Database provider is initialized separately with DB connection
+		return nil, fmt.Errorf("database auth provider must be initialized with NewDatabaseProvider")
 	case "multi", "aws-multi":
 		// Support multiple AWS auth methods simultaneously
 		return NewMultiProvider(cfg)

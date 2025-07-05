@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.16
 	github.com/aws/aws-sdk-go-v2/service/kms v1.40.1
 	github.com/gorilla/mux v1.8.1
+	github.com/gorilla/sessions v1.4.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/prometheus/client_golang v1.22.0
@@ -16,6 +17,7 @@ require (
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.10.0
+	golang.org/x/crypto v0.39.0
 	golang.org/x/time v0.11.0
 )
 
@@ -37,9 +39,12 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
+	github.com/jmoiron/sqlx v1.4.0 // indirect
+	github.com/lib/pq v1.10.9 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mattn/go-ieproxy v0.0.1 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
@@ -56,6 +61,7 @@ require (
 	github.com/spf13/afero v1.11.0 // indirect
 	github.com/spf13/cast v1.6.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
