@@ -2025,6 +2025,11 @@
                 const maxSize = 5 * 1024 * 1024 * 1024; // 5GB
                 
                 files.forEach(file => {
+                    if (!file) {
+                        console.warn('Skipping undefined file');
+                        return;
+                    }
+                    
                     if (file.size > maxSize) {
                         alert(`File "${file.name}" exceeds the 5GB limit`);
                         return;
@@ -2110,6 +2115,12 @@
             
             async uploadFile(fileItem, index) {
                 const file = fileItem.file;
+                if (!file) {
+                    console.error('File is undefined for upload item at index', index);
+                    this.uploadQueue[index].status = 'error';
+                    this.uploadQueue[index].error = 'File is undefined';
+                    return;
+                }
                 // Use relative path if available (for folder uploads)
                 const fileName = fileItem.relativePath || file.name;
                 const key = this.currentPath + '/' + fileName;
@@ -2692,6 +2703,9 @@
                                 });
                             }
                             resolve();
+                        }, error => {
+                            console.error(`Failed to read file ${entry.name}:`, error);
+                            resolve(); // Still resolve to not break Promise.all
                         });
                     });
                 } else if (entry.isDirectory) {

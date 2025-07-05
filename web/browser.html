@@ -890,6 +890,10 @@
                     input.onchange = async (e) => {
                         const files = e.target.files;
                         for (const file of files) {
+                            if (!file) {
+                                console.warn('Skipping undefined file');
+                                continue;
+                            }
                             await this.uploadFile(file, file.name);
                         }
                         this.loadContents();
