@@ -792,10 +792,24 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	// start := time.Now()
 
 	size := r.ContentLength
+	
+	// AWS CLI with chunked transfer doesn't send Content-Length, 
+	// but sends X-Amz-Decoded-Content-Length instead
+	if size < 0 && r.Header.Get("X-Amz-Decoded-Content-Length") != "" {
+		decodedLength, err := strconv.ParseInt(r.Header.Get("X-Amz-Decoded-Content-Length"), 10, 64)
+		if err == nil {
+			size = decodedLength
+		}
+	}
+	
 	logger := logrus.WithFields(logrus.Fields{
 		"bucket": bucket,
 		"key":    key,
 		"size":   size,
+		"contentLengthHeader": r.Header.Get("Content-Length"),
+		"decodedContentLength": r.Header.Get("X-Amz-Decoded-Content-Length"),
+		"transferEncoding": r.Header.Get("Transfer-Encoding"),
+		"method": r.Method,
 	})
 
 	if size < 0 {
@@ -882,10 +896,10 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			// For now, use non-validating reader until validation is implemented
 			// TODO: Implement ValidatingChunkReader
 			logger.Warn("Chunk signature verification requested but using non-validating reader")
-			body = storage.NewAWSChunkDecoder(r.Body)
+			body = storage.NewSmartChunkDecoder(r.Body)
 		} else {
-			// Use non-validating reader (current approach) - MUST strip chunks!
-			body = storage.NewAWSChunkDecoder(r.Body)
+			// Use smart decoder that can handle both chunked and raw data
+			body = storage.NewSmartChunkDecoder(r.Body)
 		}
 
 		// If x-amz-decoded-content-length is provided, use it as the actual size
@@ -1347,12 +1361,36 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	size := r.ContentLength
+	
+	// AWS CLI with chunked transfer doesn't send Content-Length, 
+	// but sends X-Amz-Decoded-Content-Length instead
+	if size < 0 && r.Header.Get("X-Amz-Decoded-Content-Length") != "" {
+		decodedLength, err := strconv.ParseInt(r.Header.Get("X-Amz-Decoded-Content-Length"), 10, 64)
+		if err == nil {
+			size = decodedLength
+		}
+	}
+	
 	if size < 0 {
 		h.sendError(w, fmt.Errorf("missing Content-Length"), http.StatusBadRequest)
 		return
 	}
 
-	etag, err := h.storage.UploadPart(ctx, bucket, key, uploadID, partNumber, r.Body, size)
+	// Handle AWS chunked encoding if present
+	var body io.Reader = r.Body
+	if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" ||
+		r.Header.Get("Content-Encoding") == "aws-chunked" {
+		// Decode AWS v4 chunks
+		body = storage.NewAWSChunkDecoder(r.Body)
+		// For chunked uploads, the size is the decoded content length
+		if decodedSize := r.Header.Get("x-amz-decoded-content-length"); decodedSize != "" {
+			if ds, err := strconv.ParseInt(decodedSize, 10, 64); err == nil {
+				size = ds
+			}
+		}
+	}
+
+	etag, err := h.storage.UploadPart(ctx, bucket, key, uploadID, partNumber, body, size)
 	if err != nil {
 		h.sendError(w, err, http.StatusInternalServerError)
 		return

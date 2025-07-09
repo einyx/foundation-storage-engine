@@ -534,22 +534,70 @@ func (fs *FileSystemBackend) CompleteMultipartUpload(ctx context.Context, bucket
 	}
 	defer func() { _ = file.Close() }()
 
-	// Concatenate parts in order
-	for _, part := range parts {
-		partPath := filepath.Join(uploadDir, fmt.Sprintf("part-%d", part.PartNumber))
-		partFile, err := os.Open(partPath) //nolint:gosec // partPath is controlled
-		if err != nil {
-			return fmt.Errorf("failed to open part %d: %w", part.PartNumber, err)
+	// Use concurrent readers with sequential writes for better performance
+	const maxConcurrentReads = 3
+	type partReader struct {
+		partNumber int
+		reader     io.ReadCloser
+		err        error
+	}
+	
+	// Channel for part readers
+	readerChan := make(chan partReader, maxConcurrentReads)
+	
+	// Start goroutine to open part files concurrently
+	go func() {
+		defer close(readerChan)
+		
+		// Process parts in batches
+		for i := 0; i < len(parts); i += maxConcurrentReads {
+			batch := parts[i:min(i+maxConcurrentReads, len(parts))]
+			
+			// Open files in parallel
+			readers := make([]partReader, len(batch))
+			var wg sync.WaitGroup
+			
+			for j, part := range batch {
+				wg.Add(1)
+				go func(idx int, p CompletedPart) {
+					defer wg.Done()
+					partPath := filepath.Join(uploadDir, fmt.Sprintf("part-%d", p.PartNumber))
+					file, err := os.Open(partPath) //nolint:gosec // partPath is controlled
+					readers[idx] = partReader{
+						partNumber: p.PartNumber,
+						reader:     file,
+						err:        err,
+					}
+				}(j, part)
+			}
+			
+			wg.Wait()
+			
+			// Send readers in order
+			for _, r := range readers {
+				select {
+				case readerChan <- r:
+				case <-ctx.Done():
+					return
+				}
+			}
 		}
-
+	}()
+	
+	// Write parts sequentially to maintain order
+	for reader := range readerChan {
+		if reader.err != nil {
+			return fmt.Errorf("failed to open part %d: %w", reader.partNumber, reader.err)
+		}
+		
 		bufPtr := fs.bufferPool.Get().(*[]byte)
 		buf := *bufPtr
-		_, err = io.CopyBuffer(file, partFile, buf)
-		_ = partFile.Close()
+		_, err = io.CopyBuffer(file, reader.reader, buf)
+		_ = reader.reader.Close()
 		fs.bufferPool.Put(bufPtr)
-
+		
 		if err != nil {
-			return fmt.Errorf("failed to copy part %d: %w", part.PartNumber, err)
+			return fmt.Errorf("failed to copy part %d: %w", reader.partNumber, err)
 		}
 	}
 

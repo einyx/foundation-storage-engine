@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"strconv"
 	"strings"
@@ -191,6 +192,23 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/health", s.healthCheck).Methods("GET")
 	s.router.Handle("/metrics", s.metrics.Handler()).Methods("GET")
 	s.router.Handle("/stats", s.metrics.StatsHandler()).Methods("GET")
+	
+	// Register pprof endpoints if enabled
+	if s.config.Monitoring.PprofEnabled {
+		logrus.Info("pprof profiling endpoints enabled at /debug/pprof/")
+		// Import registers handlers with DefaultServeMux, but we need to handle them directly
+		s.router.HandleFunc("/debug/pprof/", pprof.Index)
+		s.router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		s.router.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		s.router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		s.router.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		s.router.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+		s.router.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+		s.router.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
+		s.router.Handle("/debug/pprof/block", pprof.Handler("block"))
+		s.router.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
+		s.router.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
+	}
 
 	// Register API documentation endpoint
 	s.setupAPIDocumentation()
@@ -274,6 +292,8 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 		"path": r.URL.Path,
 		"authType": s.config.Auth.Type,
 		"hasAuth": r.Header.Get("Authorization") != "",
+		"contentLength": r.ContentLength,
+		"contentLengthHeader": r.Header.Get("Content-Length"),
 	}).Debug("handleS3Request called")
 	
 	if s.config.Auth.Type != "none" {
@@ -335,6 +355,14 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 	// 		"query":  r.URL.RawQuery,
 	// 	}).Debug("Passing request to S3 handler")
 	// }
+
+	// Debug log before passing to S3 handler
+	logrus.WithFields(logrus.Fields{
+		"path": r.URL.Path,
+		"contentLength": r.ContentLength,
+		"contentLengthHeader": r.Header.Get("Content-Length"),
+		"method": r.Method,
+	}).Debug("Passing to S3 handler")
 
 	// Pass to S3 handler
 	s.s3Handler.ServeHTTP(w, r)

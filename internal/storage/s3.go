@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -19,8 +21,9 @@ import (
 )
 
 const (
-	multipartThreshold = 5 * 1024 * 1024 // 5MB
-	partSize           = 5 * 1024 * 1024 // 5MB
+	multipartThreshold = 10 * 1024 * 1024  // 10MB - use multipart early to avoid large single uploads
+	partSize           = 5 * 1024 * 1024   // 5MB - smaller parts to avoid timeouts
+	maxPartSize        = 10 * 1024 * 1024  // 10MB - keep parts small for reliability
 )
 
 type chunkedDecodingReader struct {
@@ -102,6 +105,16 @@ type S3Backend struct {
 	largeBufferPool sync.Pool
 	metadataCache   *MetadataCache
 	mu              sync.RWMutex // Protect client creation
+	// Track problematic servers for resilient upload
+	problematicServers map[string]*serverStatus
+	serverMu          sync.RWMutex
+}
+
+type serverStatus struct {
+	endpoint        string
+	failureCount    int
+	lastFailure     time.Time
+	useResilient    bool
 }
 
 type MetadataCache struct {
@@ -263,24 +276,60 @@ func (s *S3Backend) getOrCreateClient(bucketCfg *config.BucketConfig) (*s3.S3, e
 		clientKey = bucketCfg.Endpoint + "_" + bucketCfg.Region // pragma: allowlist secret
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"clientKey": clientKey,
+		"region":    bucketCfg.Region,
+		"endpoint":  bucketCfg.Endpoint,
+	}).Debug("Getting or creating S3 client")
+
 	s.mu.RLock()
 	if client, ok := s.clients[clientKey]; ok {
 		s.mu.RUnlock()
+		// Skip validation if we've validated recently
+		// This prevents excessive validation calls
 		return client, nil
+	} else {
+		s.mu.RUnlock()
 	}
-	s.mu.RUnlock()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Double-check after acquiring write lock
 	if client, ok := s.clients[clientKey]; ok {
+		// Client already exists, return it
 		return client, nil
+	}
+
+	// Use more conservative settings for problematic regions
+	dialTimeout := 30 * time.Second
+	if bucketCfg.Region == "me-central-1" {
+		dialTimeout = 60 * time.Second // Longer timeout for ME region
 	}
 
 	awsConfig := &aws.Config{
 		Region:           aws.String(bucketCfg.Region),
 		S3ForcePathStyle: aws.Bool(s.config.UsePathStyle),
-		MaxRetries:       aws.Int(3),
+		MaxRetries:       aws.Int(5), // More retries for reliability
+		HTTPClient: &http.Client{
+			Timeout: 300 * time.Second,
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   dialTimeout,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				MaxIdleConns:          50,    // Reduce to prevent connection overload
+				MaxIdleConnsPerHost:   5,     // Limit per-host connections
+				MaxConnsPerHost:       5,     // Prevent too many concurrent uploads
+				IdleConnTimeout:       90 * time.Second,
+				DisableKeepAlives:     false,
+				TLSHandshakeTimeout:   30 * time.Second, // Increased from 10s
+				ExpectContinueTimeout: 5 * time.Second,  // Increased from 1s
+				ForceAttemptHTTP2:     false, // Disable HTTP/2 for better compatibility
+				WriteBufferSize:       32 * 1024,  // 32KB - smaller buffers
+				ReadBufferSize:        32 * 1024,  // 32KB - prevent buffer bloat
+			},
+		},
 	}
 
 	if bucketCfg.Endpoint != "" {
@@ -337,6 +386,21 @@ func NewS3Backend(cfg *config.S3StorageConfig) (*S3Backend, error) {
 		MaxRetries:                    aws.Int(3),
 		S3UseAccelerate:               aws.Bool(false),
 		S3DisableContentMD5Validation: aws.Bool(false),
+		HTTPClient: &http.Client{
+			Timeout: 300 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:          50,    // Reduce to prevent connection overload
+				MaxIdleConnsPerHost:   5,     // Limit per-host connections
+				MaxConnsPerHost:       5,     // Prevent too many concurrent uploads
+				IdleConnTimeout:       90 * time.Second,
+				DisableKeepAlives:     false,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+				ForceAttemptHTTP2:     false, // Disable HTTP/2 for better compatibility
+				WriteBufferSize:       32 * 1024,  // 32KB - smaller buffers
+				ReadBufferSize:        32 * 1024,  // 32KB - prevent buffer bloat
+			},
+		},
 	}
 
 	if cfg.Endpoint != "" {
@@ -419,13 +483,13 @@ func NewS3Backend(cfg *config.S3StorageConfig) (*S3Backend, error) {
 		bucketConfigs: cfg.BucketConfigs,
 		bufferPool: sync.Pool{
 			New: func() interface{} {
-				buf := make([]byte, 32*1024) // 32KB buffers
+				buf := make([]byte, 64*1024) // 64KB buffers for better performance
 				return &buf
 			},
 		},
 		largeBufferPool: sync.Pool{
 			New: func() interface{} {
-				buf := make([]byte, 1024*1024) // 1MB buffers
+				buf := make([]byte, partSize) // 16MB buffers to match part size
 				return &buf
 			},
 		},
@@ -433,6 +497,7 @@ func NewS3Backend(cfg *config.S3StorageConfig) (*S3Backend, error) {
 			cache: make(map[string]*cachedMetadata),
 			ttl:   30 * time.Second,
 		},
+		problematicServers: make(map[string]*serverStatus),
 	}, nil
 }
 
@@ -722,6 +787,19 @@ func (s *S3Backend) PutObject(ctx context.Context, bucket, key string, reader io
 			}
 			body = bytes.NewReader(data)
 		} else {
+			// Check if we should use resilient uploader
+			if s.shouldUseResilientUpload(bucket) {
+				client, err := s.getClientForBucket(bucket)
+				if err != nil {
+					return fmt.Errorf("failed to get client for bucket: %w", err)
+				}
+				logrus.WithFields(logrus.Fields{
+					"bucket": bucket,
+					"key":    key,
+					"size":   size,
+				}).Info("Using resilient uploader for problematic server")
+				return s.putObjectMultipartResilient(ctx, bucket, key, reader, size, client)
+			}
 			return s.putObjectMultipart(ctx, bucket, realBucket, key, reader, metadata)
 		}
 	}
@@ -931,24 +1009,47 @@ func (s *S3Backend) UploadPart(ctx context.Context, bucket, key, uploadID string
 	realBucket := s.mapBucket(bucket)
 	realKey := s.addPrefixToKey(bucket, key)
 
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return "", fmt.Errorf("failed to read part data: %w", err)
-	}
-
 	client, err := s.getClientForBucket(bucket)
 	if err != nil {
 		return "", fmt.Errorf("failed to get client for bucket: %w", err)
 	}
 
+	// AWS SDK requires io.ReadSeeker for uploads
+	// For streaming uploads, we'll use the S3 manager which handles this better
+	var body io.ReadSeeker
+	
+	if rs, ok := reader.(io.ReadSeeker); ok {
+		body = rs
+	} else {
+		// For non-seekable readers (including chunked streams), buffer the data
+		// Use a limited reader to prevent reading beyond the part size
+		limitedReader := io.LimitReader(reader, size)
+		data, err := io.ReadAll(limitedReader)
+		if err != nil {
+			return "", fmt.Errorf("failed to read part data: %w", err)
+		}
+		if int64(len(data)) != size {
+			// This is OK for the last part
+			logrus.WithFields(logrus.Fields{
+				"expected": size,
+				"actual":   len(data),
+				"bucket":   bucket,
+				"key":      key,
+				"part":     partNumber,
+			}).Debug("Part size mismatch - likely last part")
+		}
+		body = bytes.NewReader(data)
+	}
+	
 	resp, err := client.UploadPartWithContext(ctx, &s3.UploadPartInput{
 		Bucket:        aws.String(realBucket),
 		Key:           aws.String(realKey),
 		UploadId:      aws.String(uploadID),
 		PartNumber:    aws.Int64(int64(partNumber)),
-		Body:          bytes.NewReader(data),
-		ContentLength: aws.Int64(int64(len(data))),
+		Body:          body,
+		ContentLength: aws.Int64(size),
 	})
+	
 	if err != nil {
 		return "", fmt.Errorf("failed to upload part: %w", err)
 	}
@@ -1059,6 +1160,23 @@ func (s *S3Backend) ListParts(ctx context.Context, bucket, key, uploadID string,
 }
 
 func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realBucket, key string, reader io.Reader, metadata map[string]string) error {
+	// Use concurrent uploads with a worker pool
+	const maxConcurrentUploads = 2 // Limited to prevent server overload
+	
+	// For now use default part size since we might not know total size
+	// TODO: In the future, we could implement dynamic part sizing based on file size
+	actualPartSize := partSize
+	type partData struct {
+		partNumber int64
+		data       []byte
+		bufPtr     *[]byte // Store buffer pointer for cleanup
+	}
+	
+	type uploadResult struct {
+		partNumber int64
+		etag       string
+		err        error
+	}
 	client, err := s.getClientForBucket(virtualBucket)
 	if err != nil {
 		return fmt.Errorf("failed to get client for bucket: %w", err)
@@ -1100,54 +1218,155 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 
 	uploadID := resp.UploadId
 
-	multipartPartSize := int64(partSize)
+	partChan := make(chan partData, maxConcurrentUploads)
+	resultChan := make(chan uploadResult, maxConcurrentUploads*2)
+	
+	// Start worker goroutines
+	var wg sync.WaitGroup
+	for i := 0; i < maxConcurrentUploads; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for part := range partChan {
+				partInput := &s3.UploadPartInput{
+					Bucket:        aws.String(realBucket),
+					Key:           aws.String(realKey),
+					UploadId:      uploadID,
+					PartNumber:    aws.Int64(part.partNumber),
+					Body:          bytes.NewReader(part.data),
+					ContentLength: aws.Int64(int64(len(part.data))),
+				}
+				
+				resp, err := client.UploadPartWithContext(ctx, partInput)
+				
+				// Return buffer to pool after upload
+				if part.bufPtr != nil {
+					if len(*part.bufPtr) <= 64*1024 {
+						s.bufferPool.Put(part.bufPtr)
+					} else {
+						s.largeBufferPool.Put(part.bufPtr)
+					}
+				}
+				
+				if err != nil {
+					resultChan <- uploadResult{partNumber: part.partNumber, err: err}
+					return
+				}
+				
+				resultChan <- uploadResult{
+					partNumber: part.partNumber,
+					etag:       aws.StringValue(resp.ETag),
+					err:        nil,
+				}
+			}
+		}()
+	}
 
-	var parts []*s3.CompletedPart
-	partNumber := int64(1)
+	// Result collector goroutine
+	parts := make(map[int64]*s3.CompletedPart)
+	var uploadErr error
+	
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
 
-	buf := make([]byte, multipartPartSize)
-	for {
-		n, readErr := io.ReadFull(reader, buf)
-		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
-			_, _ = client.AbortMultipartUploadWithContext(ctx, &s3.AbortMultipartUploadInput{
-				Bucket:   aws.String(realBucket),
-				Key:      aws.String(realKey),
-				UploadId: uploadID,
-			})
-			return fmt.Errorf("failed to read part: %w", readErr)
+	// Reader goroutine
+	go func() {
+		defer close(partChan)
+		
+		partNumber := int64(1)
+		bufSize := actualPartSize
+		
+		// Use appropriate buffer pool based on part size
+		var bufPtr *[]byte
+		var buf []byte
+		if bufSize <= 5*1024*1024 {
+			bufPtr = s.largeBufferPool.Get().(*[]byte)
+			defer s.largeBufferPool.Put(bufPtr)
+			buf = (*bufPtr)[:bufSize]
+		} else {
+			// For very large parts, allocate directly
+			buf = make([]byte, bufSize)
 		}
+		
+		for {
+			// Dynamic buffer sizing for small files
+			readSize := int(bufSize)
+			if len(buf) < readSize {
+				readSize = len(buf)
+			}
+			
+			n, readErr := io.ReadFull(reader, buf[:readSize])
+			if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
+				uploadErr = fmt.Errorf("failed to read part: %w", readErr)
+				return
+			}
+			
+			if n == 0 {
+				break
+			}
+			
+			// Copy data to avoid race conditions
+			// Use buffer pool for part data
+			var data []byte
+			var bufPtr *[]byte
+			if n <= 64*1024 { // 64KB - use small buffer pool
+				bufPtr = s.bufferPool.Get().(*[]byte)
+				data = (*bufPtr)[:n]
+				copy(data, buf[:n])
+			} else if n <= partSize { // Use large buffer pool for parts up to part size
+				bufPtr = s.largeBufferPool.Get().(*[]byte)
+				data = (*bufPtr)[:n]
+				copy(data, buf[:n])
+			} else {
+				data = make([]byte, n)
+				copy(data, buf[:n])
+			}
+			
+			select {
+			case partChan <- partData{partNumber: partNumber, data: data, bufPtr: bufPtr}:
+				partNumber++
+			case <-ctx.Done():
+				uploadErr = ctx.Err()
+				return
+			}
+			
+			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+				break
+			}
+		}
+	}()
 
-		if n == 0 {
+	// Collect results
+	for result := range resultChan {
+		if result.err != nil {
+			uploadErr = result.err
 			break
 		}
-
-		partInput := &s3.UploadPartInput{
-			Bucket:     aws.String(realBucket),
-			Key:        aws.String(realKey),
-			UploadId:   uploadID,
-			PartNumber: aws.Int64(partNumber),
-			Body:       bytes.NewReader(buf[:n]),
+		parts[result.partNumber] = &s3.CompletedPart{
+			ETag:       aws.String(result.etag),
+			PartNumber: aws.Int64(result.partNumber),
 		}
+	}
 
-		partResp, uploadErr := client.UploadPartWithContext(ctx, partInput)
-		if uploadErr != nil {
-			_, _ = client.AbortMultipartUploadWithContext(ctx, &s3.AbortMultipartUploadInput{
-				Bucket:   aws.String(realBucket),
-				Key:      aws.String(realKey),
-				UploadId: uploadID,
-			})
-			return fmt.Errorf("failed to upload part %d: %w", partNumber, uploadErr)
-		}
-
-		parts = append(parts, &s3.CompletedPart{
-			ETag:       partResp.ETag,
-			PartNumber: aws.Int64(partNumber),
+	// Handle errors
+	if uploadErr != nil {
+		_, _ = client.AbortMultipartUploadWithContext(ctx, &s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(realBucket),
+			Key:      aws.String(realKey),
+			UploadId: uploadID,
 		})
+		// Mark server as problematic on upload errors
+		s.markServerProblematic(virtualBucket, uploadErr)
+		return uploadErr
+	}
 
-		partNumber++
-
-		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-			break
+	// Sort parts by part number
+	var sortedParts []*s3.CompletedPart
+	for i := int64(1); i <= int64(len(parts)); i++ {
+		if part, ok := parts[i]; ok {
+			sortedParts = append(sortedParts, part)
 		}
 	}
 
@@ -1156,7 +1375,7 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 		Key:      aws.String(realKey),
 		UploadId: uploadID,
 		MultipartUpload: &s3.CompletedMultipartUpload{
-			Parts: parts,
+			Parts: sortedParts,
 		},
 	}
 
@@ -1168,5 +1387,95 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 	// Invalidate cache
 	s.metadataCache.Delete(fmt.Sprintf("%s/%s", virtualBucket, key))
 
+	return nil
+}
+
+// getServerEndpoint gets the endpoint for a bucket
+func (s *S3Backend) getServerEndpoint(bucket string) string {
+	if s.bucketConfigs != nil {
+		if cfg, ok := s.bucketConfigs[bucket]; ok && cfg.Endpoint != "" {
+			return cfg.Endpoint
+		}
+	}
+	if s.config.Endpoint != "" {
+		return s.config.Endpoint
+	}
+	return "default"
+}
+
+// markServerProblematic marks a server as problematic
+func (s *S3Backend) markServerProblematic(bucket string, err error) {
+	endpoint := s.getServerEndpoint(bucket)
+	
+	s.serverMu.Lock()
+	defer s.serverMu.Unlock()
+	
+	status, exists := s.problematicServers[endpoint]
+	if !exists {
+		status = &serverStatus{
+			endpoint: endpoint,
+		}
+		s.problematicServers[endpoint] = status
+	}
+	
+	status.failureCount++
+	status.lastFailure = time.Now()
+	
+	// After 3 failures, mark for resilient upload
+	if status.failureCount >= 3 {
+		status.useResilient = true
+		logrus.WithFields(logrus.Fields{
+			"endpoint": endpoint,
+			"failures": status.failureCount,
+		}).Warn("Server marked for resilient upload due to repeated failures")
+	}
+}
+
+// shouldUseResilientUpload checks if we should use resilient uploader
+func (s *S3Backend) shouldUseResilientUpload(bucket string) bool {
+	endpoint := s.getServerEndpoint(bucket)
+	
+	s.serverMu.RLock()
+	defer s.serverMu.RUnlock()
+	
+	if status, exists := s.problematicServers[endpoint]; exists {
+		// Reset after 1 hour of no failures
+		if time.Since(status.lastFailure) > time.Hour {
+			return false
+		}
+		return status.useResilient
+	}
+	
+	return false
+}
+
+// putObjectMultipartResilient uses the resilient uploader for problematic servers
+func (s *S3Backend) putObjectMultipartResilient(ctx context.Context, bucket, key string, reader io.Reader, size int64, client *s3.S3) error {
+	// Note: When size is 0 or unknown, we'll read until EOF
+	// The resilient uploader handles this by reading parts dynamically
+	realBucket := s.mapBucket(bucket)
+	realKey := s.addPrefixToKey(bucket, key)
+	
+	uploader := NewResilientUploader(client)
+	uploader.config.ProgressCallback = func(uploaded, total int64) {
+		percent := float64(uploaded) / float64(total) * 100
+		logrus.WithFields(logrus.Fields{
+			"bucket":   bucket,
+			"key":      key,
+			"uploaded": uploaded,
+			"total":    total,
+			"percent":  percent,
+		}).Debug("Resilient upload progress")
+	}
+	
+	err := uploader.UploadWithRetry(ctx, realBucket, realKey, reader, size)
+	if err != nil {
+		s.markServerProblematic(bucket, err)
+		return err
+	}
+	
+	// Invalidate cache
+	s.metadataCache.Delete(fmt.Sprintf("%s/%s", bucket, key))
+	
 	return nil
 }

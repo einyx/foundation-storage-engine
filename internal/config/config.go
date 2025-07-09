@@ -22,6 +22,7 @@ type Config struct {
 	Auth0      Auth0Config      `mapstructure:"auth0"`
 	VirusTotal VirusTotalConfig `mapstructure:"virustotal"`
 	ShareLinks ShareLinksConfig `mapstructure:"share_links"`
+	Monitoring MonitoringConfig `mapstructure:"monitoring"`
 }
 
 // ServerConfig contains HTTP server configuration settings
@@ -309,4 +310,10 @@ type VirusTotalConfig struct {
 // ShareLinksConfig contains share link configuration
 type ShareLinksConfig struct {
 	Enabled bool `mapstructure:"enabled" envconfig:"SHARE_LINKS_ENABLED" default:"true"`
+}
+
+// MonitoringConfig contains monitoring and profiling configuration
+type MonitoringConfig struct {
+	MetricsEnabled bool `mapstructure:"metrics_enabled" envconfig:"MONITORING_METRICS_ENABLED" default:"true"`
+	PprofEnabled   bool `mapstructure:"pprof_enabled" envconfig:"MONITORING_PPROF_ENABLED" default:"false"`
 }
