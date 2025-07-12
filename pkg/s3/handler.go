@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,9 +26,10 @@ import (
 )
 
 const (
-	smallBufferSize  = 4 * 1024   // 4KB
-	mediumBufferSize = 64 * 1024  // 64KB
-	smallFileLimit   = 100 * 1024 // 100KB
+	smallBufferSize  = 4 * 1024     // 4KB
+	mediumBufferSize = 256 * 1024   // 256KB - increased for better large file handling
+	largeBufferSize  = 1024 * 1024  // 1MB - for very large files
+	smallFileLimit   = 100 * 1024   // 100KB
 )
 
 var (
@@ -40,6 +42,12 @@ var (
 	bufferPool = sync.Pool{
 		New: func() interface{} {
 			buf := make([]byte, mediumBufferSize)
+			return &buf
+		},
+	}
+	largeBufferPool = sync.Pool{
+		New: func() interface{} {
+			buf := make([]byte, largeBufferSize)
 			return &buf
 		},
 	}
@@ -110,7 +118,43 @@ func (h *Handler) isValidBucket(bucket string) bool {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.router.ServeHTTP(w, r)
+	// Log every request to debug hanging
+	start := time.Now()
+	
+	// Wrap response writer to capture status
+	wrapped := &responseWriter{
+		ResponseWriter: w,
+		statusCode:    200,
+	}
+	
+	logrus.WithFields(logrus.Fields{
+		"method": r.Method,
+		"path":   r.URL.Path,
+		"query":  r.URL.RawQuery,
+		"userAgent": r.Header.Get("User-Agent"),
+	}).Info("Incoming S3 request")
+	
+	h.router.ServeHTTP(wrapped, r)
+	
+	// Log response
+	duration := time.Since(start)
+	logrus.WithFields(logrus.Fields{
+		"method":   r.Method,
+		"path":     r.URL.Path,
+		"status":   wrapped.statusCode,
+		"duration": duration,
+	}).Info("S3 request completed")
+}
+
+// responseWriter wraps http.ResponseWriter to capture status code
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *responseWriter) WriteHeader(code int) {
+	w.statusCode = code
+	w.ResponseWriter.WriteHeader(code)
 }
 
 func (h *Handler) setupRoutes() {
@@ -507,15 +551,20 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	// start := time.Now()
 
 	isIcebergMetadata := strings.Contains(key, "metadata") && (strings.HasSuffix(key, ".json") || strings.Contains(key, "metadata.json"))
+	isAvroFile := strings.HasSuffix(key, ".avro")
 
 	logger := logrus.WithFields(logrus.Fields{
 		"bucket":        bucket,
 		"key":           key,
 		"isIcebergMeta": isIcebergMetadata,
+		"isAvro":        isAvroFile,
+		"fileType":      filepath.Ext(key),
 	})
 
 	if isIcebergMetadata {
 		logger.Info("Getting Iceberg metadata file")
+	} else if isAvroFile {
+		logger.Info("Getting Avro data file")
 	}
 
 	// Check for range requests
@@ -576,6 +625,12 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			"bucket":   bucket,
 			"key":      key,
 		}).Warn("Content length mismatch - wrote different bytes than expected")
+	} else {
+		// Log successful retrieval
+		logger.WithFields(logrus.Fields{
+			"size": written,
+			"completed": true,
+		}).Info("Successfully retrieved object")
 	}
 
 	// if logrus.GetLevel() >= logrus.DebugLevel {
@@ -787,7 +842,53 @@ func parseRangeHeader(rangeHeader string) ([]byteRange, error) {
 	return ranges, nil
 }
 
+// extractTableName tries to extract the table name from an Iceberg path
+func extractTableName(key string) string {
+	parts := strings.Split(key, "/")
+	for i, part := range parts {
+		if strings.HasPrefix(part, "_") && i > 0 {
+			// This looks like an Iceberg table name
+			return part
+		}
+	}
+	return ""
+}
+
 func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	// handlerStart := time.Now()
+	
+	// Generate request ID for tracking
+	requestID := r.Header.Get("X-Amz-Request-Id")
+	if requestID == "" {
+		requestID = fmt.Sprintf("req-%d", time.Now().UnixNano())
+	}
+	
+	// Log timing checkpoint
+	logrus.WithFields(logrus.Fields{
+		"stage": "handler_entry",
+		"bucket": bucket,
+		"key": key,
+		"requestID": requestID,
+		"contentLength": r.ContentLength,
+		"remoteAddr": r.RemoteAddr,
+	}).Info("PUT handler started")
+	
+	// CRITICAL: Ensure request body is closed
+	defer r.Body.Close()
+	
+	// Add panic recovery to prevent backend crashes
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithFields(logrus.Fields{
+				"bucket": bucket,
+				"key":    key,
+				"panic":  r,
+				"requestID": requestID,
+			}).Error("Panic recovered in putObject")
+			h.sendError(w, fmt.Errorf("internal server error"), http.StatusInternalServerError)
+		}
+	}()
+	
 	ctx := r.Context()
 	// start := time.Now()
 
@@ -802,6 +903,16 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		}
 	}
 	
+	// For chunked transfers without explicit size, we'll have to buffer the data
+	isChunkedWithoutSize := size < 0 && (r.Header.Get("Transfer-Encoding") == "chunked" || 
+		r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
+	
+	// Detect SDK version
+	userAgent := r.Header.Get("User-Agent")
+	isSDKv1 := strings.Contains(userAgent, "aws-sdk-java/1") || 
+		strings.Contains(userAgent, "aws-cli/1") ||
+		r.Header.Get("Content-MD5") != ""
+	
 	logger := logrus.WithFields(logrus.Fields{
 		"bucket": bucket,
 		"key":    key,
@@ -810,12 +921,47 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		"decodedContentLength": r.Header.Get("X-Amz-Decoded-Content-Length"),
 		"transferEncoding": r.Header.Get("Transfer-Encoding"),
 		"method": r.Method,
+		"requestID": requestID,
+		"isChunkedWithoutSize": isChunkedWithoutSize,
+		"userAgent": userAgent,
+		"isSDKv1": isSDKv1,
+		"contentMD5": r.Header.Get("Content-MD5"),
 	})
 
-	if size < 0 {
+	if size < 0 && !isChunkedWithoutSize {
 		logger.Error("Missing Content-Length header")
 		h.sendError(w, fmt.Errorf("missing Content-Length"), http.StatusBadRequest)
 		return
+	}
+
+	// Special logging for Iceberg-related files
+	if strings.HasSuffix(key, ".avro") {
+		logger.WithFields(logrus.Fields{
+			"stage": "start",
+			"contentType": r.Header.Get("Content-Type"),
+			"contentEncoding": r.Header.Get("Content-Encoding"),
+			"transferEncoding": r.TransferEncoding,
+		}).Info("Starting Avro file upload")
+	} else if strings.HasSuffix(key, ".parquet") {
+		logger.WithFields(logrus.Fields{
+			"stage": "start",
+			"contentType": r.Header.Get("Content-Type"),
+			"isIcebergData": strings.Contains(key, "/data/"),
+			"table": extractTableName(key),
+		}).Info("Starting Parquet file upload")
+	} else if strings.Contains(key, "metadata.json") {
+		logger.WithFields(logrus.Fields{
+			"stage": "start",
+			"isIcebergMetadata": true,
+			"table": extractTableName(key),
+			"isVersionFile": strings.Count(key, "metadata.json") > 1 || strings.Contains(key, "v"),
+		}).Info("Starting Iceberg metadata upload")
+	} else if strings.Contains(key, "manifest") || strings.Contains(key, "snap-") {
+		logger.WithFields(logrus.Fields{
+			"stage": "start",
+			"isIcebergManifest": true,
+			"table": extractTableName(key),
+		}).Info("Starting Iceberg manifest upload")
 	}
 
 	var body io.Reader = r.Body
@@ -917,6 +1063,42 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	if size == 0 {
 		body = bytes.NewReader([]byte{})
 		etag = "\"d41d8cd98f00b204e9800998ecf8427e\""
+	} else if isChunkedWithoutSize {
+		// For Trino, we should NOT buffer - it causes timeouts
+		if strings.Contains(userAgent, "Trino") {
+			logger.WithFields(logrus.Fields{
+				"key": key,
+				"userAgent": userAgent,
+			}).Warn("Trino chunked upload without size - streaming directly to avoid timeout")
+			// Leave body as-is (SmartChunkDecoder) and size as -1
+			// The storage backend will handle it
+			size = -1
+		} else {
+			// For other clients, buffer as before
+			logger.Info("Buffering chunked upload without explicit size")
+			bufferStart := time.Now()
+			
+			var buf bytes.Buffer
+			written, err := io.Copy(&buf, body)
+			bufferDuration := time.Since(bufferStart)
+			
+			if err != nil {
+				logger.WithError(err).WithField("duration", bufferDuration).Error("Failed to buffer chunked request body")
+				h.sendError(w, err, http.StatusBadRequest)
+				return
+			}
+			size = written
+			logger.WithFields(logrus.Fields{
+				"bufferedSize": size,
+				"duration": bufferDuration,
+				"bytesPerSec": float64(size) / bufferDuration.Seconds(),
+			}).Warn("Buffered chunked upload - THIS IS THE SLOW PART")
+			
+			data := buf.Bytes()
+			hash := md5.Sum(data) //nolint:gosec // MD5 is required for S3 ETag compatibility
+			etag = fmt.Sprintf("\"%s\"", hex.EncodeToString(hash[:]))
+			body = bytes.NewReader(data)
+		}
 	} else if size > 0 && size <= smallFileLimit {
 		bufPtr := smallBufferPool.Get().(*[]byte)
 		buf := *bufPtr
@@ -1015,7 +1197,46 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		body = &buf
 	}
 
+	// Add debugging for critical file types
+	if strings.HasSuffix(key, ".avro") || strings.HasSuffix(key, ".json") {
+		logger.WithFields(logrus.Fields{
+			"key": key,
+			"size": size,
+			"hasDecoder": body != r.Body,
+			"contentSha256": r.Header.Get("x-amz-content-sha256"),
+			"fileType": filepath.Ext(key),
+		}).Info("Processing data file upload")
+		
+		// For chunked files, ensure we track the actual decoded size
+		if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
+			// Size should already be set to decoded content length
+			logger.WithFields(logrus.Fields{
+				"decodedSize": size,
+				"originalContentLength": r.ContentLength,
+			}).Info("Using decoded size for chunked file")
+		}
+	}
+	
+	// Add timeout monitoring for Iceberg operations
+	putStart := time.Now()
+	if strings.Contains(key, "_expectations") || strings.Contains(key, "_validations") {
+		logger.Info("Starting PUT for Iceberg expectations/validations table")
+	}
+	
+	// Log before storage operation
+	logger.WithField("stage", "before_storage").Debug("About to call storage.PutObject")
+	
 	err := h.storage.PutObject(ctx, bucket, key, body, size, metadata)
+	
+	putDuration := time.Since(putStart)
+	if putDuration > 5*time.Second {
+		logger.WithFields(logrus.Fields{
+			"duration": putDuration,
+			"key": key,
+			"size": size,
+		}).Warn("Slow PUT operation detected - storage backend took too long")
+	}
+	
 	if err != nil {
 		// Check if it's a signature error
 		if verifier != nil && strings.Contains(err.Error(), "signature") {
@@ -1023,23 +1244,50 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			h.sendError(w, err, http.StatusForbidden)
 			return
 		}
+		
+		// Special error handling for Avro files
+		if strings.HasSuffix(key, ".avro") {
+			logger.WithError(err).WithFields(logrus.Fields{
+				"stage": "storage_error",
+				"decodedSize": size,
+			}).Error("Failed to store Avro file")
+		}
+		
 		logger.WithError(err).Error("Failed to put object")
 		h.sendError(w, err, http.StatusInternalServerError)
 		return
 	}
 
 	// Log chunk processing statistics if applicable
-	if _, ok := body.(*storage.AWSChunkDecoder); ok {
+	if smartDecoder, ok := body.(*storage.SmartChunkDecoder); ok {
 		logger.WithFields(logrus.Fields{
 			"bucket": bucket,
 			"key":    key,
 			"size":   size,
+			"isAvro": strings.HasSuffix(key, ".avro"),
+			"decoderType": "SmartChunkDecoder",
+			"rawFallback": smartDecoder.IsRawFallback(),
+		}).Info("Successfully processed chunked upload")
+	} else if _, ok := body.(*storage.AWSChunkDecoder); ok {
+		logger.WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key":    key,
+			"size":   size,
+			"isAvro": strings.HasSuffix(key, ".avro"),
+			"decoderType": "AWSChunkDecoder",
 		}).Info("Successfully processed AWS V4 chunked upload")
 	}
 	
 	if etag == "" {
 		etag = fmt.Sprintf("\"%x\"", time.Now().UnixNano())
 	}
+	
+	// Log successful completion
+	logger.WithFields(logrus.Fields{
+		"etag": etag,
+		"completed": true,
+		"stage": "before_response",
+	}).Info("Upload completed successfully, about to send response")
 	
 	// For chunked uploads, we need special handling to prevent SDK checksum validation
 	if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
@@ -1068,11 +1316,17 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 		// 3. Send 200 OK with no body
 		w.WriteHeader(http.StatusOK)
+		
+		// Force flush the response
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
 
 		logger.WithFields(logrus.Fields{
 			"bucket": bucket,
 			"key":    key,
 			"etag":   etag,
+			"flushed": true,
 		}).Debug("Sent minimal response for chunked upload to prevent checksum validation")
 
 		return
@@ -1125,7 +1379,42 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		w.Header().Set("X-VirusTotal-ThreatLevel", scanResult.GetThreatLevel())
 	}
 	
+	// SDK v1 might expect specific headers
+	if isSDKv1 {
+		w.Header().Set("x-amz-id-2", fmt.Sprintf("LriYPLdmOdAiIfgSm/%s", requestID))
+		w.Header().Set("x-amz-request-id", requestID)
+		w.Header().Set("Server", "AmazonS3")
+		w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
+		logger.Debug("Adding SDK v1 compatible response headers")
+	}
+	
+	// Write ETag header before status
+	w.Header().Set("ETag", etag)
+	w.Header().Set("x-amz-version-id", "") // Some clients expect this
+	
+	// For Trino/Iceberg, ensure proper response headers
+	if strings.Contains(userAgent, "Trino") || strings.Contains(key, "metadata.json") {
+		w.Header().Set("Connection", "close") // Force connection close
+		logger.Debug("Setting Connection: close for Trino client")
+	}
+	
 	w.WriteHeader(http.StatusOK)
+	
+	// Write empty response body
+	w.Write([]byte{})
+	
+	// Force flush the response to ensure client receives it immediately
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+		logger.Debug("Flushed response immediately")
+	}
+	
+	// Final log to confirm handler completed
+	logger.WithFields(logrus.Fields{
+		"stage": "handler_complete",
+		"etag": etag,
+		"responseHeaders": w.Header(),
+	}).Info("PUT handler completed - response sent and flushed")
 
 	// if logrus.GetLevel() >= logrus.DebugLevel {
 	// 	logger.WithField("duration", time.Since(start)).Debug("PUT completed")
@@ -1313,7 +1602,8 @@ func (h *Handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 		"bucket":   bucket,
 		"key":      key,
 		"uploadID": uploadID,
-	}).Info("Multipart upload initiated")
+		"userAgent": r.Header.Get("User-Agent"),
+	}).Info("Multipart upload initiated - TRACKING FOR LOCK ISSUES")
 
 	type initiateMultipartUploadResult struct {
 		XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
@@ -1353,6 +1643,7 @@ func (h *Handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key, uploadID, partNumberStr string) {
 	ctx := r.Context()
+	start := time.Now()
 
 	partNumber, err := strconv.Atoi(partNumberStr)
 	if err != nil || partNumber < 1 || partNumber > 10000 {
@@ -1376,28 +1667,70 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
+	logger := logrus.WithFields(logrus.Fields{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadId":   uploadID,
+		"partNumber": partNumber,
+		"size":       size,
+		"method":     "uploadPart",
+	})
+
+	logger.Info("Starting part upload")
+
 	// Handle AWS chunked encoding if present
 	var body io.Reader = r.Body
 	if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" ||
 		r.Header.Get("Content-Encoding") == "aws-chunked" {
-		// Decode AWS v4 chunks
-		body = storage.NewAWSChunkDecoder(r.Body)
+		// Use SmartChunkDecoder which can handle both chunked and raw data
+		body = storage.NewSmartChunkDecoder(r.Body)
 		// For chunked uploads, the size is the decoded content length
 		if decodedSize := r.Header.Get("x-amz-decoded-content-length"); decodedSize != "" {
 			if ds, err := strconv.ParseInt(decodedSize, 10, 64); err == nil {
 				size = ds
 			}
 		}
+		logger.Info("Using smart chunk decoder for part upload")
 	}
 
+	uploadStart := time.Now()
+	
+	// For very large parts, add progress logging
+	if size > 50*1024*1024 { // > 50MB
+		logger.WithFields(logrus.Fields{
+			"size": size,
+			"sizeMB": size / 1024 / 1024,
+		}).Warn("Large part upload - adding extended timeout and progress tracking")
+		
+		// Use extended timeout for large parts
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+	}
+	
 	etag, err := h.storage.UploadPart(ctx, bucket, key, uploadID, partNumber, body, size)
+	uploadDuration := time.Since(uploadStart)
+
 	if err != nil {
+		logger.WithError(err).WithField("uploadDuration", uploadDuration).Error("Part upload failed")
+		
+		// Check if it's a timeout
+		if ctx.Err() == context.DeadlineExceeded || strings.Contains(err.Error(), "timeout") {
+			logger.Error("Part upload timed out - S3 backend is too slow")
+		}
+		
 		h.sendError(w, err, http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
+	
+	logger.WithFields(logrus.Fields{
+		"etag":          etag,
+		"uploadDuration": uploadDuration,
+		"totalDuration": time.Since(start),
+	}).Info("Part upload completed successfully")
 }
 
 func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
@@ -1426,11 +1759,71 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	userAgent := r.Header.Get("User-Agent")
+	logrus.WithFields(logrus.Fields{
+		"bucket":    bucket,
+		"key":       key,
+		"uploadID":  uploadID,
+		"parts":     len(parts),
+		"userAgent": userAgent,
+		"isTrino":   strings.Contains(userAgent, "Trino"),
+		"headers":   r.Header,
+	}).Info("Completing multipart upload")
+
 	err := h.storage.CompleteMultipartUpload(ctx, bucket, key, uploadID, parts)
 	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"bucket":   bucket,
+			"key":      key,
+			"uploadID": uploadID,
+		}).Error("Failed to complete multipart upload")
 		h.sendError(w, err, http.StatusInternalServerError)
 		return
 	}
+	
+	// For Trino, verify the object exists before returning success
+	// This ensures S3 backend has fully processed the multipart upload
+	if strings.Contains(userAgent, "Trino") {
+		logrus.WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key":    key,
+		}).Debug("Verifying object exists for Trino before returning success")
+		
+		// Small retry loop to handle eventual consistency
+		var verifyErr error
+		for i := 0; i < 3; i++ {
+			_, verifyErr = h.storage.HeadObject(ctx, bucket, key)
+			if verifyErr == nil {
+				break
+			}
+			if i < 2 {
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+		
+		if verifyErr != nil {
+			logrus.WithError(verifyErr).WithFields(logrus.Fields{
+				"bucket": bucket,
+				"key":    key,
+			}).Warn("Object not immediately available after multipart complete")
+		}
+	}
+	
+	logrus.WithFields(logrus.Fields{
+		"bucket":   bucket,
+		"key":      key,
+		"uploadID": uploadID,
+	}).Info("Multipart upload completed successfully - LOCK SHOULD BE RELEASED")
+	
+	// Add AWS-compatible headers
+	requestID := r.Header.Get("X-Request-ID")
+	if requestID == "" {
+		requestID = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	w.Header().Set("x-amz-request-id", requestID)
+	w.Header().Set("x-amz-id-2", fmt.Sprintf("uS8Fg/%s", requestID))
+	w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
+	w.Header().Set("Server", "AmazonS3")
 
 	type completeMultipartUploadResult struct {
 		XMLName  xml.Name `xml:"CompleteMultipartUploadResult"`
@@ -1441,6 +1834,18 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/xml")
+	
+	// Write status code BEFORE encoding
+	w.WriteHeader(http.StatusOK)
+	
+	// CRITICAL: Flush headers immediately for Trino
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	
+	// Add XML declaration
+	w.Write([]byte("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"))
+	
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")
 	multipartETag := fmt.Sprintf("\"%x-%d\"", time.Now().UnixNano(), len(parts))
@@ -1452,16 +1857,39 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	}); err != nil {
 		logrus.WithError(err).Error("Failed to encode response")
 	}
+	
+	// CRITICAL: Flush the response body to ensure Trino receives it
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+		logrus.WithFields(logrus.Fields{
+			"bucket":   bucket,
+			"key":      key,
+			"uploadID": uploadID,
+		}).Debug("Flushed CompleteMultipartUpload response")
+	}
 }
 
 func (h *Handler) abortMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
 	ctx := r.Context()
 
+	logrus.WithFields(logrus.Fields{
+		"bucket":   bucket,
+		"key":      key,
+		"uploadID": uploadID,
+	}).Info("Aborting multipart upload - RELEASING LOCK")
+
 	err := h.storage.AbortMultipartUpload(ctx, bucket, key, uploadID)
 	if err != nil {
+		logrus.WithError(err).Error("Failed to abort multipart upload")
 		h.sendError(w, err, http.StatusInternalServerError)
 		return
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"bucket":   bucket,
+		"key":      key,
+		"uploadID": uploadID,
+	}).Info("Multipart upload aborted successfully")
 
 	w.WriteHeader(http.StatusNoContent)
 }

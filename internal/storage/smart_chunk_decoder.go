@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"io"
 	"strings"
+	"time"
+	
+	"github.com/sirupsen/logrus"
 )
 
 // SmartChunkDecoder wraps the AWS chunk decoder and falls back to raw reading
@@ -21,7 +24,7 @@ type SmartChunkDecoder struct {
 func NewSmartChunkDecoder(r io.Reader) *SmartChunkDecoder {
 	return &SmartChunkDecoder{
 		reader:    r,
-		bufReader: bufio.NewReaderSize(r, 64*1024),
+		bufReader: bufio.NewReaderSize(r, 1024*1024), // Increased to 1MB for large JSON data
 		isChunked: true, // Assume chunked initially
 	}
 }
@@ -30,9 +33,11 @@ func (d *SmartChunkDecoder) Read(p []byte) (int, error) {
 	// First time reading, check if it's actually chunked
 	if !d.checkedFirst {
 		d.checkedFirst = true
+		detectionStart := time.Now()
 		
 		// Peek at the first line to see if it looks like a chunk header
-		firstLine, err := d.bufReader.Peek(1024)
+		// Reduced peek size for faster detection
+		firstLine, err := d.bufReader.Peek(256)
 		if err != nil && err != io.EOF && err != bufio.ErrBufferFull {
 			return 0, err
 		}
@@ -55,14 +60,24 @@ func (d *SmartChunkDecoder) Read(p []byte) (int, error) {
 			line := string(firstLine[:lineEnd])
 			line = strings.TrimSuffix(line, "\r")
 			
+			// Log what we're detecting
+			logrus.WithFields(logrus.Fields{
+				"firstLine": line,
+				"lineLength": len(line),
+			}).Debug("SmartChunkDecoder: Analyzing first line")
+			
 			// Check if this looks like a valid chunk header
 			if !d.isValidChunkHeader(line) {
 				// Not chunked, use raw reader
+				logrus.Info("SmartChunkDecoder: Detected raw data, switching to raw mode")
 				d.rawFallback = true
 				d.decoder = d.bufReader
+			} else {
+				logrus.Info("SmartChunkDecoder: Detected chunked data")
 			}
 		} else {
 			// No data or can't determine, assume raw
+			logrus.Info("SmartChunkDecoder: No data to analyze, assuming raw mode")
 			d.rawFallback = true
 			d.decoder = d.bufReader
 		}
@@ -71,9 +86,16 @@ func (d *SmartChunkDecoder) Read(p []byte) (int, error) {
 		if !d.rawFallback {
 			d.decoder = &AWSChunkDecoder{
 				reader:     d.bufReader,
-				readBuffer: make([]byte, 256*1024),
+				readBuffer: make([]byte, 1024*1024), // Increased to 1MB for large data
 			}
 		}
+		
+		// Log detection time
+		detectionDuration := time.Since(detectionStart)
+		logrus.WithFields(logrus.Fields{
+			"duration": detectionDuration,
+			"mode":     map[bool]string{true: "raw", false: "chunked"}[d.rawFallback],
+		}).Debug("SmartChunkDecoder: Detection completed")
 	}
 	
 	return d.decoder.Read(p)
@@ -115,4 +137,9 @@ func (d *SmartChunkDecoder) isValidChunkHeader(line string) bool {
 	}
 	
 	return true
+}
+
+// IsRawFallback returns whether the decoder fell back to raw mode
+func (d *SmartChunkDecoder) IsRawFallback() bool {
+	return d.rawFallback
 }

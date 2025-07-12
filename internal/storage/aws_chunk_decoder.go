@@ -7,6 +7,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	
+	"github.com/sirupsen/logrus"
 )
 
 // AWSChunkDecoder decodes AWS V4 streaming chunks without validation
@@ -25,8 +27,8 @@ type AWSChunkDecoder struct {
 // NewAWSChunkDecoder creates a new chunk decoder
 func NewAWSChunkDecoder(r io.Reader) *AWSChunkDecoder {
 	return &AWSChunkDecoder{
-		reader:     bufio.NewReaderSize(r, 1024*1024), // 1MB buffer for smooth reading
-		readBuffer: make([]byte, 256*1024), // 256KB reusable buffer
+		reader:     bufio.NewReaderSize(r, 2*1024*1024), // 2MB buffer for large chunks
+		readBuffer: make([]byte, 1024*1024), // 1MB reusable buffer
 	}
 }
 
@@ -53,6 +55,10 @@ func (d *AWSChunkDecoder) Read(p []byte) (int, error) {
 		if err == io.EOF {
 			d.done = true
 		}
+		logrus.WithFields(logrus.Fields{
+			"error": err,
+			"bytesRead": d.bytesRead,
+		}).Debug("Chunk header read error")
 		return 0, err
 	}
 
@@ -61,6 +67,7 @@ func (d *AWSChunkDecoder) Read(p []byte) (int, error) {
 		// Read trailing data
 		_, _ = d.reader.Discard(2) // Final CRLF
 		d.done = true
+		logrus.WithField("totalBytesRead", d.bytesRead).Debug("Finished reading all chunks")
 		return 0, io.EOF
 	}
 
@@ -91,6 +98,12 @@ func (d *AWSChunkDecoder) readChunkHeader() (int64, error) {
 			if d.looksLikeRawData(header) {
 				return 0, fmt.Errorf("client declared chunked encoding but sent raw data")
 			}
+			// Log the problematic header for debugging
+			logrus.WithFields(logrus.Fields{
+				"header": header,
+				"sizeStr": sizeStr,
+				"error": parseErr,
+			}).Error("Failed to parse chunk size")
 			return 0, fmt.Errorf("invalid chunk size '%s': %w", sizeStr, parseErr)
 		}
 		size = parsedSize
@@ -111,6 +124,12 @@ func (d *AWSChunkDecoder) readChunkHeader() (int64, error) {
 }
 
 func (d *AWSChunkDecoder) streamChunkData(p []byte, chunkSize int64) (int, error) {
+	// Protect against unreasonably large chunks that could cause OOM
+	const maxChunkSize = 100 * 1024 * 1024 // 100MB max chunk
+	if chunkSize > maxChunkSize {
+		return 0, fmt.Errorf("chunk size too large: %d bytes (max: %d)", chunkSize, maxChunkSize)
+	}
+	
 	// Read directly into the output buffer when possible
 	toRead := int64(len(p))
 	if toRead > chunkSize {
@@ -138,6 +157,13 @@ func (d *AWSChunkDecoder) streamChunkData(p []byte, chunkSize int64) (int, error
 	if int64(n) < chunkSize {
 		// Read remaining chunk data into internal buffer
 		remaining := chunkSize - int64(n)
+		
+		// Protect against unreasonably large allocations
+		const maxChunkSize = 100 * 1024 * 1024 // 100MB max chunk
+		if remaining > maxChunkSize {
+			return n, fmt.Errorf("chunk size too large: %d bytes", remaining)
+		}
+		
 		d.currentChunk = make([]byte, remaining)
 		_, err := io.ReadFull(d.reader, d.currentChunk)
 		if err != nil {

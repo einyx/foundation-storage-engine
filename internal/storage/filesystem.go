@@ -134,7 +134,7 @@ func NewFileSystemBackend(cfg *config.FileSystemConfig) (*FileSystemBackend, err
 		baseDir: cfg.BaseDir,
 		bufferPool: sync.Pool{
 			New: func() interface{} {
-				buf := make([]byte, 64*1024) // 64KB buffers
+				buf := make([]byte, 1024*1024) // 1MB buffers for better large file handling
 				return &buf
 			},
 		},

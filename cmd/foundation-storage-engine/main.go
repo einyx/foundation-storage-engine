@@ -85,12 +85,19 @@ func run(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to create proxy server: %w", err)
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"readTimeout":  cfg.Server.ReadTimeout,
+		"writeTimeout": cfg.Server.WriteTimeout,
+		"idleTimeout":  cfg.Server.IdleTimeout,
+		"listen":       cfg.Server.Listen,
+	}).Info("Starting HTTP server with configured timeouts")
+	
 	srv := &http.Server{
 		Addr:              cfg.Server.Listen,
 		Handler:           proxyServer,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      300 * time.Second,
-		IdleTimeout:       300 * time.Second,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
 		MaxHeaderBytes:    1 << 20,
 		ReadHeaderTimeout: 2 * time.Second,
 
