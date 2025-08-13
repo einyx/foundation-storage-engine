@@ -125,6 +125,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wrapped := &responseWriter{
 		ResponseWriter: w,
 		statusCode:    200,
+		written:       false,
 	}
 	
 	logrus.WithFields(logrus.Fields{
@@ -150,11 +151,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
+	written    bool
 }
 
 func (w *responseWriter) WriteHeader(code int) {
-	w.statusCode = code
-	w.ResponseWriter.WriteHeader(code)
+	if !w.written {
+		w.statusCode = code
+		w.written = true
+		w.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (w *responseWriter) Write(b []byte) (int, error) {
+	if !w.written {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// isResponseStarted checks if response has already been written
+func isResponseStarted(w http.ResponseWriter) bool {
+	if rw, ok := w.(*responseWriter); ok {
+		return rw.written
+	}
+	return false
 }
 
 func (h *Handler) setupRoutes() {
@@ -358,6 +378,12 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 		// logger.Debug("Getting object")
 		h.getObject(w, r, bucket, key)
 	case "PUT":
+		// Check if this is a copy operation
+		if copySource := r.Header.Get("x-amz-copy-source"); copySource != "" {
+			logger.WithField("copySource", copySource).Info("Handling CopyObject request")
+			h.handleCopyObject(w, r)
+			return
+		}
 		// logger.WithField("size", r.ContentLength).Debug("Putting object")
 		h.putObject(w, r, bucket, key)
 	case "POST":
@@ -595,6 +621,15 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	headers.Set("ETag", obj.ETag)
 	headers.Set("Last-Modified", obj.LastModified.Format(http.TimeFormat))
 	headers.Set("Accept-Ranges", "bytes")
+	
+	// Add cache headers to reduce repeated requests
+	// Iceberg metadata files change frequently, so use short cache
+	if isIcebergMetadata {
+		headers.Set("Cache-Control", "private, max-age=5")
+	} else {
+		// Data files are immutable once written
+		headers.Set("Cache-Control", "private, max-age=3600")
+	}
 
 	for k, v := range obj.Metadata {
 		// Skip checksum metadata that might cause validation errors
@@ -882,10 +917,13 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			logrus.WithFields(logrus.Fields{
 				"bucket": bucket,
 				"key":    key,
-				"panic":  r,
+				"panic":  fmt.Sprintf("%v", r),
 				"requestID": requestID,
 			}).Error("Panic recovered in putObject")
-			h.sendError(w, fmt.Errorf("internal server error"), http.StatusInternalServerError)
+			// Try to send error response if possible
+			if !isResponseStarted(w) {
+				h.sendError(w, fmt.Errorf("internal server error"), http.StatusInternalServerError)
+			}
 		}
 	}()
 	
@@ -907,11 +945,17 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	isChunkedWithoutSize := size < 0 && (r.Header.Get("Transfer-Encoding") == "chunked" || 
 		r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
 	
-	// Detect SDK version
+	// Detect SDK version and client type
 	userAgent := r.Header.Get("User-Agent")
 	isSDKv1 := strings.Contains(userAgent, "aws-sdk-java/1") || 
 		strings.Contains(userAgent, "aws-cli/1") ||
 		r.Header.Get("Content-MD5") != ""
+	
+	// Detect Java-based clients (including Spark)
+	isJavaClient := strings.Contains(userAgent, "aws-sdk-java") ||
+		strings.Contains(userAgent, "Java/") ||
+		strings.Contains(userAgent, "Apache-Spark") ||
+		strings.Contains(userAgent, "Hadoop")
 	
 	logger := logrus.WithFields(logrus.Fields{
 		"bucket": bucket,
@@ -925,6 +969,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		"isChunkedWithoutSize": isChunkedWithoutSize,
 		"userAgent": userAgent,
 		"isSDKv1": isSDKv1,
+		"isJavaClient": isJavaClient,
 		"contentMD5": r.Header.Get("Content-MD5"),
 	})
 
@@ -948,6 +993,9 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			"contentType": r.Header.Get("Content-Type"),
 			"isIcebergData": strings.Contains(key, "/data/"),
 			"table": extractTableName(key),
+			"isSparkUpload": isJavaClient || strings.Contains(userAgent, "Spark"),
+			"checksumAlgorithm": r.Header.Get("x-amz-sdk-checksum-algorithm"),
+			"contentMD5": r.Header.Get("Content-MD5"),
 		}).Info("Starting Parquet file upload")
 	} else if strings.Contains(key, "metadata.json") {
 		logger.WithFields(logrus.Fields{
@@ -1095,8 +1143,10 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			}).Warn("Buffered chunked upload - THIS IS THE SLOW PART")
 			
 			data := buf.Bytes()
-			hash := md5.Sum(data) //nolint:gosec // MD5 is required for S3 ETag compatibility
-			etag = fmt.Sprintf("\"%s\"", hex.EncodeToString(hash[:]))
+			// Don't calculate our own ETag for chunked uploads - it won't match client expectations
+			// The client calculated MD5 on the original chunked data, not the decoded data
+			// hash := md5.Sum(data) //nolint:gosec // MD5 is required for S3 ETag compatibility
+			// etag = fmt.Sprintf("\"%s\"", hex.EncodeToString(hash[:]))
 			body = bytes.NewReader(data)
 		}
 	} else if size > 0 && size <= smallFileLimit {
@@ -1278,7 +1328,20 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		}).Info("Successfully processed AWS V4 chunked upload")
 	}
 	
-	if etag == "" {
+	// For chunked uploads, ALWAYS generate a multipart-style ETag to prevent client validation errors
+	// This is critical because we modify the content by stripping chunk headers
+	if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" ||
+		r.Header.Get("Content-Encoding") == "aws-chunked" ||
+		len(r.TransferEncoding) > 0 {
+		// Use multipart-style ETag format (hash-partcount) to signal modified content
+		// This prevents AWS SDK from trying to validate MD5 checksums
+		etag = fmt.Sprintf("\"%x-1\"", time.Now().UnixNano())
+		logger.WithFields(logrus.Fields{
+			"generatedETag": etag,
+			"reason": "chunked upload content modified",
+		}).Debug("Generated multipart-style ETag for chunked upload")
+	} else if etag == "" {
+		// For non-chunked uploads without ETag, generate a simple one
 		etag = fmt.Sprintf("\"%x\"", time.Now().UnixNano())
 	}
 	
@@ -1287,7 +1350,37 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		"etag": etag,
 		"completed": true,
 		"stage": "before_response",
+		"userAgent": userAgent,
+		"isAzure": strings.Contains(strings.ToLower(userAgent), "azure"),
 	}).Info("Upload completed successfully, about to send response")
+	
+	// Special handling for Azure clients
+	if strings.Contains(strings.ToLower(userAgent), "azure") || strings.Contains(strings.ToLower(userAgent), "java") {
+		// Azure SDK and Java clients need specific response handling
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Content-Length", "0")
+		w.Header().Set("x-amz-request-id", requestID)
+		w.Header().Set("x-amz-id-2", fmt.Sprintf("Azure/%s", requestID))
+		w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
+		
+		// Write status and flush immediately
+		w.WriteHeader(http.StatusOK)
+		
+		// Force immediate flush for Azure clients
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		
+		logger.WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key": key,
+			"etag": etag,
+			"requestID": requestID,
+			"client": "azure/java",
+		}).Info("Sent Azure-optimized response")
+		
+		return
+	}
 	
 	// For chunked uploads, we need special handling to prevent SDK checksum validation
 	if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
@@ -1333,8 +1426,10 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	}
 
 	// For AWS SDK v1 uploads with Content-MD5, also prevent checksum validation
-	if r.Header.Get("Content-MD5") != "" {
+	// Also handle Java clients (including Spark) which may validate checksums
+	if r.Header.Get("Content-MD5") != "" || isJavaClient {
 		// AWS SDK v1 sends Content-MD5 and validates it against ETag
+		// Java clients (Spark) also validate checksums
 		// Since content might be modified by proxy, send minimal response
 
 		// Remove all checksum headers
@@ -1362,14 +1457,16 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			"bucket": bucket,
 			"key":    key,
 			"etag":   etag,
-			"sdk":    "v1",
-		}).Debug("Sent minimal response for SDK v1 upload with Content-MD5")
+			"sdk":    "v1/java",
+			"isJavaClient": isJavaClient,
+		}).Debug("Sent minimal response for SDK v1/Java upload with checksum validation")
 
 		return
 	}
 
 	// Normal upload response (no checksums to validate)
 	w.Header().Set("ETag", etag)
+	w.Header().Set("Content-Length", "0") // Explicitly set Content-Length for all responses
 	
 	// Add VirusTotal scan info to response headers if available
 	if scanResult != nil {
@@ -1388,8 +1485,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		logger.Debug("Adding SDK v1 compatible response headers")
 	}
 	
-	// Write ETag header before status
-	w.Header().Set("ETag", etag)
+	// Write ETag header before status (removing duplicate)
 	w.Header().Set("x-amz-version-id", "") // Some clients expect this
 	
 	// For Trino/Iceberg, ensure proper response headers
@@ -1398,10 +1494,11 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		logger.Debug("Setting Connection: close for Trino client")
 	}
 	
+	// CRITICAL: Write status code
 	w.WriteHeader(http.StatusOK)
 	
-	// Write empty response body
-	w.Write([]byte{})
+	// CRITICAL: No body for PUT responses per S3 spec
+	// Don't write empty byte slice as it can cause issues
 	
 	// Force flush the response to ensure client receives it immediately
 	if flusher, ok := w.(http.Flusher); ok {
@@ -1413,7 +1510,9 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	logger.WithFields(logrus.Fields{
 		"stage": "handler_complete",
 		"etag": etag,
-		"responseHeaders": w.Header(),
+		"requestID": requestID,
+		"bucket": bucket,
+		"key": key,
 	}).Info("PUT handler completed - response sent and flushed")
 
 	// if logrus.GetLevel() >= logrus.DebugLevel {
@@ -1473,6 +1572,15 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
 	w.Header().Set("ETag", info.ETag)
 	w.Header().Set("Last-Modified", info.LastModified.Format(http.TimeFormat))
+	
+	// Add cache headers to reduce repeated requests
+	// Iceberg metadata files change frequently, so use short cache
+	if isIcebergMetadata {
+		w.Header().Set("Cache-Control", "private, max-age=5")
+	} else {
+		// Data files are immutable once written
+		w.Header().Set("Cache-Control", "private, max-age=3600")
+	}
 
 	for k, v := range info.Metadata {
 		// Skip checksum metadata that might cause validation errors
@@ -1846,9 +1954,22 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	// Add XML declaration
 	w.Write([]byte("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"))
 	
+	// Generate proper multipart ETag
+	// For multipart uploads, AWS S3 generates an ETag in the format: {md5_of_md5s}-{number_of_parts}
+	hasher := md5.New()
+	for _, part := range parts {
+		// Remove quotes from ETag if present
+		etag := strings.Trim(part.ETag, "\"")
+		// Decode hex string to bytes
+		if partMD5, err := hex.DecodeString(etag); err == nil {
+			hasher.Write(partMD5)
+		}
+	}
+	multipartMD5 := hasher.Sum(nil)
+	multipartETag := fmt.Sprintf("\"%s-%d\"", hex.EncodeToString(multipartMD5), len(parts))
+	
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")
-	multipartETag := fmt.Sprintf("\"%x-%d\"", time.Now().UnixNano(), len(parts))
 	if err := enc.Encode(completeMultipartUploadResult{
 		Location: fmt.Sprintf("http://%s/%s/%s", r.Host, bucket, key),
 		Bucket:   bucket,

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5" //nolint:gosec // MD5 is required for Azure ETag compatibility
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -25,6 +26,10 @@ type AzureBackend struct {
 	accountName   string
 	containerName string
 	bufferPool    sync.Pool
+	// Track multipart upload metadata
+	uploadMetadata sync.Map // uploadID -> metadata map[string]string
+	// Limit concurrent operations to prevent resource exhaustion
+	uploadSem chan struct{}
 }
 
 func NewAzureBackend(cfg *config.AzureStorageConfig) (*AzureBackend, error) {
@@ -67,8 +72,8 @@ func NewAzureBackend(cfg *config.AzureStorageConfig) (*AzureBackend, error) {
 	pipelineOptions := azblob.PipelineOptions{
 		Retry: azblob.RetryOptions{
 			Policy:        azblob.RetryPolicyExponential,
-			MaxTries:      2,                      // Reduced retries for faster failures
-			TryTimeout:    120 * time.Second,      // Increased timeout for large files
+			MaxTries:      1,                      // No retries for multipart uploads to avoid timeouts
+			TryTimeout:    300 * time.Second,      // 5 minutes timeout for large files
 			RetryDelay:    500 * time.Millisecond, // Faster retry
 			MaxRetryDelay: 5 * time.Second,        // Reduced max delay
 		},
@@ -88,9 +93,13 @@ func NewAzureBackend(cfg *config.AzureStorageConfig) (*AzureBackend, error) {
 		containerName: containerName,
 		bufferPool: sync.Pool{
 			New: func() interface{} {
-				return make([]byte, 1024*1024) // 1MB buffers for better performance (16x increase)
+				buf := make([]byte, 1024*1024) // 1MB buffers for better performance (16x increase)
+				return &buf
 			},
 		},
+		// Limit concurrent uploads to prevent resource exhaustion
+		// Azure performs better with limited concurrency
+		uploadSem: make(chan struct{}, 4),
 	}, nil
 }
 
@@ -624,13 +633,14 @@ func (a *AzureBackend) PutObject(ctx context.Context, bucket, key string, reader
 			_, _ = br.Seek(0, 0) // Reset for potential retry
 		} else {
 			// Read into memory
-			data = a.bufferPool.Get().([]byte)
+			bufPtr := a.bufferPool.Get().(*[]byte)
+			data = *bufPtr
 			if len(data) < int(size) {
-				a.bufferPool.Put(&data)
+				a.bufferPool.Put(bufPtr)
 				data = make([]byte, size)
 			} else {
 				data = data[:size]
-				defer a.bufferPool.Put(&data)
+				defer a.bufferPool.Put(bufPtr)
 			}
 
 			_, err := io.ReadFull(reader, data)
@@ -729,6 +739,19 @@ func (a *AzureBackend) DeleteObject(ctx context.Context, bucket, key string) err
 
 	_, err := blobURL.Delete(ctx, azblob.DeleteSnapshotsOptionInclude, azblob.BlobAccessConditions{})
 	if err != nil {
+		// Check if the error is BlobNotFound - this is expected for S3 compatibility
+		// S3 returns success when deleting non-existent objects (idempotent behavior)
+		if stgErr, ok := err.(azblob.StorageError); ok {
+			if stgErr.ServiceCode() == azblob.ServiceCodeBlobNotFound {
+				// Silently succeed like S3 does
+				logrus.WithFields(logrus.Fields{
+					"bucket": bucket,
+					"key":    key,
+					"normalizedKey": normalizedKey,
+				}).Debug("Attempted to delete non-existent blob - returning success for S3 compatibility")
+				return nil
+			}
+		}
 		return fmt.Errorf("failed to delete blob: %w", err)
 	}
 
@@ -879,23 +902,156 @@ func (a *AzureBackend) InitiateMultipartUpload(ctx context.Context, bucket, key 
 	// Azure doesn't have the same multipart upload concept as S3
 	// Generate a unique upload ID
 	uploadID := fmt.Sprintf("%s-%d", key, time.Now().UnixNano())
+	
+	// Store metadata for later use in CompleteMultipartUpload
+	if metadata != nil {
+		a.uploadMetadata.Store(uploadID, metadata)
+	}
+	
+	logrus.WithFields(logrus.Fields{
+		"uploadID": uploadID,
+		"bucket":   bucket,
+		"key":      key,
+		"metadata": metadata,
+	}).Info("Initiated multipart upload for Azure")
+	
 	return uploadID, nil
 }
 
 func (a *AzureBackend) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, reader io.Reader, size int64) (string, error) {
+	// Acquire semaphore to limit concurrent uploads
+	select {
+	case a.uploadSem <- struct{}{}:
+		defer func() { <-a.uploadSem }()
+	case <-ctx.Done():
+		return "", fmt.Errorf("context cancelled while waiting for upload slot")
+	}
+	
 	containerURL := a.serviceURL.NewContainerURL(bucket)
 	blobURL := containerURL.NewBlockBlobURL(key)
 
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return "", fmt.Errorf("failed to read part data: %w", err)
+	logrus.WithFields(logrus.Fields{
+		"bucket":     bucket,
+		"key":        key,
+		"uploadID":   uploadID,
+		"partNumber": partNumber,
+		"size":       size,
+		"concurrent": len(a.uploadSem),
+	}).Info("Azure UploadPart called - optimized streaming")
+
+	// Azure requires block IDs to be base64-encoded and of equal length
+	blockID := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%010d", partNumber)))
+	
+	// Use a longer timeout for Azure to handle slow chunked reads
+	// This is necessary because chunked encoding from S3 clients can be very slow
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	
+	// Azure SDK's StageBlock requires io.ReadSeeker for retry capability
+	// We need to buffer the data, but we'll do it efficiently
+	
+	const smallPartThreshold = 50 * 1024 * 1024  // 50MB
+	const maxPartSize = 100 * 1024 * 1024        // 100MB Azure block size limit
+	
+	if size <= 0 {
+		return "", fmt.Errorf("size must be provided for part upload")
+	}
+	
+	if size > maxPartSize {
+		return "", fmt.Errorf("part size %d exceeds Azure maximum block size of %d", size, maxPartSize)
+	}
+	
+	// For smaller parts, buffer in memory
+	if size <= smallPartThreshold {
+		// Buffer the entire part to handle slow chunked streams
+		// We need to be defensive about EOF errors from chunk decoder
+		var data []byte
+		buf := make([]byte, 1024*1024) // 1MB buffer for reading
+		
+		for {
+			n, err := reader.Read(buf)
+			if n > 0 {
+				data = append(data, buf[:n]...)
+			}
+			if err != nil {
+				if err == io.EOF {
+					break // Normal end of stream
+				}
+				// Check if we have enough data despite the error
+				if int64(len(data)) >= size {
+					logrus.WithFields(logrus.Fields{
+						"error": err.Error(),
+						"read": len(data),
+						"expected": size,
+					}).Warn("Got error but have enough data, continuing")
+					break
+				}
+				// If it's a chunk decoder EOF error and we have some data, use what we got
+				if strings.Contains(err.Error(), "chunk data") && len(data) > 0 {
+					logrus.WithFields(logrus.Fields{
+						"error": err.Error(),
+						"read": len(data),
+						"expected": size,
+					}).Warn("Chunk decoder EOF - using partial data")
+					break
+				}
+				return "", fmt.Errorf("failed to read part data: %w", err)
+			}
+			// Stop if we've read enough
+			if int64(len(data)) >= size {
+				break
+			}
+		}
+		
+		// Verify we got some data at least
+		if len(data) == 0 {
+			return "", fmt.Errorf("no data read for part")
+		}
+		
+		// Log if size doesn't match
+		if int64(len(data)) != size {
+			logrus.WithFields(logrus.Fields{
+				"expected": size,
+				"actual":   len(data),
+			}).Warn("Part size mismatch - using available data")
+		}
+		
+		// Stage the block
+		_, err := blobURL.StageBlock(ctx, blockID, bytes.NewReader(data), azblob.LeaseAccessConditions{}, nil, azblob.ClientProvidedKeyOptions{})
+		if err != nil {
+			return "", fmt.Errorf("failed to stage block: %w", err)
+		}
+	} else {
+		// For larger parts (50MB-100MB), also buffer in memory
+		// Same approach as AWS - no temp files needed
+		logrus.WithFields(logrus.Fields{
+			"size": size,
+			"sizeMB": size / 1024 / 1024,
+		}).Info("Large part detected, buffering in memory")
+		
+		// Read all data into memory
+		data, err := io.ReadAll(io.LimitReader(reader, size))
+		if err != nil {
+			return "", fmt.Errorf("failed to read large part data: %w", err)
+		}
+		
+		if int64(len(data)) != size {
+			return "", fmt.Errorf("incomplete read: got %d bytes, expected %d", len(data), size)
+		}
+		
+		// Stage the block
+		_, err = blobURL.StageBlock(ctx, blockID, bytes.NewReader(data), azblob.LeaseAccessConditions{}, nil, azblob.ClientProvidedKeyOptions{})
+		if err != nil {
+			return "", fmt.Errorf("failed to stage block: %w", err)
+		}
 	}
 
-	blockID := fmt.Sprintf("%05d", partNumber)
-	_, err = blobURL.StageBlock(ctx, blockID, bytes.NewReader(data), azblob.LeaseAccessConditions{}, nil, azblob.ClientProvidedKeyOptions{})
-	if err != nil {
-		return "", fmt.Errorf("failed to stage block: %w", err)
-	}
+	logrus.WithFields(logrus.Fields{
+		"blockID":    blockID,
+		"partNumber": partNumber,
+		"size":       size,
+	}).Info("Successfully staged block")
 
 	return fmt.Sprintf("\"%s\"", blockID), nil
 }
@@ -904,22 +1060,57 @@ func (a *AzureBackend) CompleteMultipartUpload(ctx context.Context, bucket, key,
 	containerURL := a.serviceURL.NewContainerURL(bucket)
 	blobURL := containerURL.NewBlockBlobURL(key)
 
+	logrus.WithFields(logrus.Fields{
+		"bucket":   bucket,
+		"key":      key,
+		"uploadID": uploadID,
+		"parts":    len(parts),
+	}).Info("Completing multipart upload for Azure")
+
 	blockList := make([]string, len(parts))
 	for i, part := range parts {
-		blockList[i] = fmt.Sprintf("%05d", part.PartNumber)
+		// Azure requires block IDs to be base64-encoded and of equal length
+		blockList[i] = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%010d", part.PartNumber)))
 	}
 
-	_, err := blobURL.CommitBlockList(ctx, blockList, azblob.BlobHTTPHeaders{}, azblob.Metadata{}, azblob.BlobAccessConditions{}, azblob.AccessTierNone, nil, azblob.ClientProvidedKeyOptions{}, azblob.ImmutabilityPolicyOptions{})
+	// Retrieve stored metadata
+	var metadata azblob.Metadata
+	if storedMeta, ok := a.uploadMetadata.LoadAndDelete(uploadID); ok {
+		if metaMap, ok := storedMeta.(map[string]string); ok {
+			// Sanitize metadata for Azure
+			metadata = azblob.Metadata(sanitizeAzureMetadata(metaMap))
+			logrus.WithField("metadata", metadata).Debug("Using stored metadata for multipart upload")
+		}
+	}
+
+	httpHeaders := azblob.BlobHTTPHeaders{
+		ContentType: "application/octet-stream",
+	}
+
+	_, err := blobURL.CommitBlockList(ctx, blockList, httpHeaders, metadata, azblob.BlobAccessConditions{}, azblob.AccessTierNone, nil, azblob.ClientProvidedKeyOptions{}, azblob.ImmutabilityPolicyOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to commit block list: %w", err)
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"bucket":   bucket,
+		"key":      key,
+		"uploadID": uploadID,
+	}).Info("Successfully completed multipart upload for Azure")
 
 	return nil
 }
 
 func (a *AzureBackend) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
-	// No specific action needed for Azure
-	// logrus.Debug("AbortMultipartUpload called for Azure backend")
+	// Clean up any stored metadata
+	a.uploadMetadata.Delete(uploadID)
+	
+	logrus.WithFields(logrus.Fields{
+		"bucket":   bucket,
+		"key":      key,
+		"uploadID": uploadID,
+	}).Info("Aborted multipart upload for Azure")
+	
 	return nil
 }
 

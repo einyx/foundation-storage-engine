@@ -316,9 +316,10 @@ func (s *S3Backend) getOrCreateClient(bucketCfg *config.BucketConfig) (*s3.S3, e
 	}
 	
 	awsConfig := &aws.Config{
-		Region:           aws.String(bucketCfg.Region),
-		S3ForcePathStyle: aws.Bool(s.config.UsePathStyle),
-		MaxRetries:       aws.Int(maxRetries),
+		Region:                        aws.String(bucketCfg.Region),
+		S3ForcePathStyle:              aws.Bool(s.config.UsePathStyle),
+		S3DisableContentMD5Validation: aws.Bool(true),
+		MaxRetries:                    aws.Int(maxRetries),
 		HTTPClient: &http.Client{
 			Timeout: httpTimeout,
 			Transport: &http.Transport{
@@ -374,6 +375,9 @@ func (s *S3Backend) getOrCreateClient(bucketCfg *config.BucketConfig) (*s3.S3, e
 	}
 
 	client := s3.New(sess)
+	
+	// Add custom handlers to fix S3 compatibility issues
+	addCustomHandlers(client)
 
 	s.clients[clientKey] = client
 	s.sessions[clientKey] = sess
@@ -393,7 +397,7 @@ func NewS3Backend(cfg *config.S3StorageConfig) (*S3Backend, error) {
 		S3ForcePathStyle:              aws.Bool(cfg.UsePathStyle),
 		MaxRetries:                    aws.Int(3),
 		S3UseAccelerate:               aws.Bool(false),
-		S3DisableContentMD5Validation: aws.Bool(false),
+		S3DisableContentMD5Validation: aws.Bool(true),
 		HTTPClient: &http.Client{
 			Timeout: 300 * time.Second,
 			Transport: &http.Transport{
@@ -446,6 +450,9 @@ func NewS3Backend(cfg *config.S3StorageConfig) (*S3Backend, error) {
 	}
 
 	s3Client := s3.New(sess)
+	
+	// Add custom handlers to fix S3 compatibility issues
+	addCustomHandlers(s3Client)
 
 	if sess.Config.Credentials != nil {
 		creds, err := sess.Config.Credentials.Get()

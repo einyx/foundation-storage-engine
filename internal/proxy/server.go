@@ -251,6 +251,14 @@ func (s *Server) setupRoutes() {
 		}).Methods("GET")
 	}
 
+	// Handle common web files that should not be treated as S3 buckets
+	commonWebFiles := []string{"/favicon.ico", "/robots.txt", "/.well-known", "/apple-touch-icon.png"}
+	for _, path := range commonWebFiles {
+		s.router.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}).Methods("GET", "HEAD")
+	}
+
 	// Register S3 bucket operations (must be after monitoring endpoints and UI)
 	s.router.HandleFunc("/", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
 	s.router.HandleFunc("/{bucket}", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
