@@ -296,9 +296,12 @@ func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 	// AGGRESSIVE GET OPTIMIZATION: Tuned strategies for benchmark sizes
 	size := props.ContentLength()
 
-	// For files >= 1MB, use optimized reader unless encrypted (buffering corrupts encrypted data)
-	if size >= 1024*1024 && !isEncryptedMetadata(props.NewMetadata()) {
-		blockBlobURL := containerURL.NewBlockBlobURL(key)
+	// Check if this is a Parquet file (which uses Range requests)
+	isParquetFile := strings.HasSuffix(strings.ToLower(key), ".parquet")
+
+	// For files >= 1MB, use optimized reader unless encrypted or Parquet (buffering corrupts encrypted data and breaks Range requests)
+	if size >= 1024*1024 && !isEncryptedMetadata(props.NewMetadata()) && !isParquetFile {
+		blockBlobURL := containerURL.NewBlockBlobURL(normalizedKey)
 
 		// Download with minimal retry for speed
 		resp, downloadErr := blockBlobURL.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false, azblob.ClientProvidedKeyOptions{})
@@ -318,8 +321,8 @@ func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 			etag = fmt.Sprintf("\"%s\"", md5Hash)
 		}
 
-		// Use optimized reader for non-encrypted files only
-		body := wrapWithOptimizedReader(bodyStream, size, isEncryptedMetadata(props.NewMetadata()))
+		// Use optimized reader for non-encrypted and non-Parquet files only
+		body := wrapWithOptimizedReader(bodyStream, size, isEncryptedMetadata(props.NewMetadata()) || isParquetFile)
 
 		return &Object{
 			Body:         body,
@@ -348,8 +351,8 @@ func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 		etag = fmt.Sprintf("\"%s\"", md5Hash)
 	}
 
-	// Use optimized reader for non-encrypted files only
-	body2 := wrapWithFastReader(bodyStream, size, isEncryptedMetadata(resp.NewMetadata()))
+	// Use optimized reader for non-encrypted and non-Parquet files only
+	body2 := wrapWithFastReader(bodyStream, size, isEncryptedMetadata(resp.NewMetadata()) || isParquetFile)
 
 	return &Object{
 		Body:         body2,
@@ -364,16 +367,20 @@ func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 // azureHighPerfReader optimizes reading for large files
 type azureHighPerfReader struct {
 	io.ReadCloser
-	size int64
-	buf  []byte
-	pos  int
-	n    int
+	size         int64
+	buf          []byte
+	pos          int
+	n            int
+	totalRead    int64 // Track total bytes read for proper positioning
+	bufferOffset int64 // Track where the buffer starts in the stream
 }
 
 func (r *azureHighPerfReader) Read(p []byte) (n int, err error) {
 	// For very large reads (>= 1MB), bypass buffering completely
 	if len(p) >= 1024*1024 {
-		return r.ReadCloser.Read(p)
+		n, err = r.ReadCloser.Read(p)
+		r.totalRead += int64(n)
+		return n, err
 	}
 
 	// For medium reads (>= 64KB), use larger buffer
@@ -390,6 +397,7 @@ func (r *azureHighPerfReader) Read(p []byte) (n int, err error) {
 
 	// Refill buffer if empty
 	if r.pos >= r.n {
+		r.bufferOffset = r.totalRead
 		r.n, err = r.ReadCloser.Read(r.buf)
 		if r.n == 0 {
 			return 0, err
@@ -400,22 +408,67 @@ func (r *azureHighPerfReader) Read(p []byte) (n int, err error) {
 	// Copy from buffer
 	n = copy(p, r.buf[r.pos:r.n])
 	r.pos += n
+	r.totalRead += int64(n)
 	return n, nil
+}
+
+// Seek implements io.Seeker for azureHighPerfReader
+func (r *azureHighPerfReader) Seek(offset int64, whence int) (int64, error) {
+	// Check if underlying reader supports seeking
+	seeker, ok := r.ReadCloser.(io.Seeker)
+	if !ok {
+		return 0, fmt.Errorf("underlying reader does not support seeking")
+	}
+
+	// Calculate absolute position
+	var absPos int64
+	switch whence {
+	case io.SeekStart:
+		absPos = offset
+	case io.SeekCurrent:
+		absPos = r.totalRead + offset
+	case io.SeekEnd:
+		absPos = r.size + offset
+	default:
+		return 0, fmt.Errorf("invalid whence value")
+	}
+
+	if absPos < 0 {
+		return 0, fmt.Errorf("negative position")
+	}
+
+	// Seek the underlying reader
+	newPos, err := seeker.Seek(absPos, io.SeekStart)
+	if err != nil {
+		return 0, err
+	}
+
+	// Reset buffer state
+	r.totalRead = newPos
+	r.bufferOffset = newPos
+	r.pos = 0
+	r.n = 0
+
+	return newPos, nil
 }
 
 // azureFastReader wraps Azure's retry reader with buffering for better performance
 type azureFastReader struct {
 	io.ReadCloser
-	size int64
-	buf  []byte
-	pos  int
-	n    int
+	size         int64
+	buf          []byte
+	pos          int
+	n            int
+	totalRead    int64 // Track total bytes read for proper positioning
+	bufferOffset int64 // Track where the buffer starts in the stream
 }
 
 func (r *azureFastReader) Read(p []byte) (n int, err error) {
 	// For large reads, bypass buffering
 	if len(p) >= 256*1024 { // 256KB or larger - reduced threshold
-		return r.ReadCloser.Read(p)
+		n, err = r.ReadCloser.Read(p)
+		r.totalRead += int64(n)
+		return n, err
 	}
 
 	// Buffer smaller reads
@@ -425,6 +478,7 @@ func (r *azureFastReader) Read(p []byte) (n int, err error) {
 
 	// Refill buffer if empty
 	if r.pos >= r.n {
+		r.bufferOffset = r.totalRead
 		r.n, err = r.ReadCloser.Read(r.buf)
 		if r.n == 0 {
 			return 0, err
@@ -435,7 +489,48 @@ func (r *azureFastReader) Read(p []byte) (n int, err error) {
 	// Copy from buffer
 	n = copy(p, r.buf[r.pos:r.n])
 	r.pos += n
+	r.totalRead += int64(n)
 	return n, nil
+}
+
+// Seek implements io.Seeker for azureFastReader
+func (r *azureFastReader) Seek(offset int64, whence int) (int64, error) {
+	// Check if underlying reader supports seeking
+	seeker, ok := r.ReadCloser.(io.Seeker)
+	if !ok {
+		return 0, fmt.Errorf("underlying reader does not support seeking")
+	}
+
+	// Calculate absolute position
+	var absPos int64
+	switch whence {
+	case io.SeekStart:
+		absPos = offset
+	case io.SeekCurrent:
+		absPos = r.totalRead + offset
+	case io.SeekEnd:
+		absPos = r.size + offset
+	default:
+		return 0, fmt.Errorf("invalid whence value")
+	}
+
+	if absPos < 0 {
+		return 0, fmt.Errorf("negative position")
+	}
+
+	// Seek the underlying reader
+	newPos, err := seeker.Seek(absPos, io.SeekStart)
+	if err != nil {
+		return 0, err
+	}
+
+	// Reset buffer state
+	r.totalRead = newPos
+	r.bufferOffset = newPos
+	r.pos = 0
+	r.n = 0
+
+	return newPos, nil
 }
 
 // azureFastUploadReader wraps the input reader to buffer small reads
@@ -1153,18 +1248,18 @@ func isEncryptedMetadata(metadata map[string]string) bool {
 	return metadata["xamzmetaencryptionalgorithm"] != ""
 }
 
-// wrapWithOptimizedReader wraps the stream with high-performance reader for large files, unless encrypted
-func wrapWithOptimizedReader(stream io.ReadCloser, size int64, isEncrypted bool) io.ReadCloser {
-	if isEncrypted {
-		return stream // No optimization for encrypted data to prevent corruption
+// wrapWithOptimizedReader wraps the stream with high-performance reader for large files, unless it should be skipped
+func wrapWithOptimizedReader(stream io.ReadCloser, size int64, skipOptimization bool) io.ReadCloser {
+	if skipOptimization {
+		return stream // No optimization for encrypted data or files that use Range requests
 	}
 	return &azureHighPerfReader{ReadCloser: stream, size: size}
 }
 
-// wrapWithFastReader wraps the stream with fast reader for smaller files, unless encrypted
-func wrapWithFastReader(stream io.ReadCloser, size int64, isEncrypted bool) io.ReadCloser {
-	if isEncrypted {
-		return stream // No optimization for encrypted data to prevent corruption
+// wrapWithFastReader wraps the stream with fast reader for smaller files, unless it should be skipped
+func wrapWithFastReader(stream io.ReadCloser, size int64, skipOptimization bool) io.ReadCloser {
+	if skipOptimization {
+		return stream // No optimization for encrypted data or files that use Range requests
 	}
 	return &azureFastReader{ReadCloser: stream, size: size}
 }
