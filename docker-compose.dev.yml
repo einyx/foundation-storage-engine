@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  foundation-storage-engine:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - LOG_LEVEL=debug
+      - SERVER_LISTEN=:8080
+      - STORAGE_PROVIDER=filesystem
+      - STORAGE_FILESYSTEM_BASE_DIR=/data
+      - AUTH_TYPE=basic
+      - AUTH_IDENTITY=admin
+      - AUTH_CREDENTIAL=password
+      - UI_ENABLED=true
+      - UI_STATIC_PATH=/web
+      - UI_BASE_PATH=/ui
+    volumes:
+      - ./data:/data
+      - ./web:/web:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

@@ -1,0 +1,93 @@
+# S3 Proxy Configuration with KMS Encryption
+# This example shows how to configure KMS encryption for secure object storage
+
+server:
+  listen: ":8080"
+  read_timeout: 60s
+  write_timeout: 60s
+  max_body_size: 5368709120  # 5GB
+
+s3:
+  region: "us-east-1"
+  path_style: true
+  ignore_unknown_headers: true
+
+# Storage backend configuration
+storage:
+  provider: "s3"
+  s3:
+    region: "us-east-1"
+    # Use IAM role or environment variables for credentials
+    # access_key: "${AWS_ACCESS_KEY_ID}"
+    # secret_key: "${AWS_SECRET_ACCESS_KEY}"
+
+    # Bucket configurations with KMS encryption
+    bucket_configs:
+      # Public data - no encryption
+      public-data:
+        real_name: "company-public-data"
+        region: "us-east-1"
+
+      # Internal data - default KMS encryption
+      internal-data:
+        real_name: "company-internal-data"
+        region: "us-east-1"
+        kms_key_id: "alias/aws/s3"  # AWS managed S3 key
+        kms_encryption_context:
+          bucket: "internal-data"
+          classification: "internal"
+
+      # Sensitive data - customer managed KMS key
+      sensitive-data:
+        real_name: "company-sensitive-data"
+        region: "us-east-1"
+        kms_key_id: "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+        kms_encryption_context:
+          bucket: "sensitive-data"
+          classification: "confidential"
+          compliance: "pci-dss"
+
+      # Financial data - specific compliance key
+      financial-data:
+        real_name: "company-financial-data"
+        region: "us-east-1"
+        kms_key_id: "alias/financial-data-key"
+        kms_encryption_context:
+          bucket: "financial-data"
+          classification: "restricted"
+          compliance: "sox"
+          department: "finance"
+
+# Authentication configuration
+auth:
+  type: "awsv4"
+  # Use environment variables or IAM role
+
+# KMS encryption configuration
+encryption:
+  kms:
+    enabled: true
+    default_key_id: "alias/s3proxy-default"  # Default key for buckets without specific config
+    key_spec: "AES_256"
+    region: "us-east-1"
+    encryption_context:
+      application: "s3proxy"
+      environment: "production"
+      version: "1.0"
+    data_key_cache_ttl: "5m"  # Cache data keys for 5 minutes
+    validate_keys: true       # Validate all configured keys on startup
+    enable_key_rotation: true # Enable automatic key rotation
+
+# Logging configuration
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+# Metrics configuration
+metrics:
+  enabled: true
+  prometheus:
+    enabled: true
+    path: "/metrics"
+    port: 9090

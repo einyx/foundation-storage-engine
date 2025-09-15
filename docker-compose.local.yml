@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  foundation-storage-engine:
+    #image: ghcr.io/einyx/foundation-storage-engine:latest
+    # Or build locally: 
+    build: .
+    ports:
+      - "8080:8080"
+      - "80:8080"  # Also expose on port 80 for S3 clients
+    env_file:
+      - .env.local
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
+      - SERVER_LISTEN=${SERVER_LISTEN:-:8080}
+      - STORAGE_PROVIDER=${STORAGE_PROVIDER:-multi}
+      # - S3_ENDPOINT=${S3_ENDPOINT:-https://s3.amazonaws.com}  # Commented out to use default AWS endpoint with profile
+      - S3_REGION=${AWS_REGION:-me-central-1}
+      - S3_PATH_STYLE=${S3_PATH_STYLE:-true}
+      - S3_DISABLE_SSL=${S3_DISABLE_SSL:-false}
+      - AWS_PROFILE=dev
+      - AWS_REGION=me-central-1
+      - AZURE_STORAGE_ACCOUNT=${AZURE_STORAGE_ACCOUNT}
+      - AZURE_STORAGE_KEY=${AZURE_STORAGE_KEY}
+      - AUTH_TYPE=${AUTH_TYPE:-awsv4}
+      - AUTH_IDENTITY=${AUTH_IDENTITY:-EXAMPLEKEY}
+      - AUTH_CREDENTIAL=${AUTH_CREDENTIAL:-EXAMPLESECRET}
+      - UI_ENABLED=${UI_ENABLED:-true}
+      - UI_STATIC_PATH=${UI_STATIC_PATH:-/web}
+      - UI_BASE_PATH=${UI_BASE_PATH:-/ui}
+      - VIRUSTOTAL_ENABLED=${VIRUSTOTAL_ENABLED:-true}
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
+    volumes:
+      - ./config.local.yaml:/etc/foundation-storage-engine/foundation-storage-engine.yaml:ro
+      - ~/.aws:/root/.aws:rw  # Mount AWS credentials with write access for SSO token refresh
+    command:
+      - "--config"
+      - "/etc/foundation-storage-engine/foundation-storage-engine.yaml"
+      - "--log-level"
+      - "debug"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Optional: LocalStack for testing S3 locally
+  localstack:
+    image: localstack/localstack:latest
+    profiles: ["localstack"]
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3
+      - DEBUG=1
+      - DATA_DIR=/tmp/localstack/data
+    volumes:
+      - localstack-data:/tmp/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # Optional: Azurite for testing Azure Blob Storage locally
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    profiles: ["azurite"]
+    ports:
+      - "10000:10000"  # Blob service
+      - "10001:10001"  # Queue service
+      - "10002:10002"  # Table service
+    volumes:
+      - azurite-data:/data
+    command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0
+
+volumes:
+  localstack-data:
+  azurite-data:

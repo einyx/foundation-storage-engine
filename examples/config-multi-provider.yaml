@@ -1,0 +1,117 @@
+# Multi-Provider Encryption Configuration Example
+# This example shows how to configure multiple key management providers
+
+storage:
+  provider: s3
+  s3:
+    endpoint: "http://localhost:9000"
+    region: "us-east-1"
+    access_key: "minioadmin"
+    secret_key: "minioadmin"
+    bucket_mapping:
+      my-encrypted-bucket: real-bucket-name
+
+auth:
+  type: basic
+  identity: admin
+  credential: secret
+
+encryption:
+  enabled: true
+  algorithm: AES-256-GCM
+
+  # Default provider - can be one of: local, aws-kms, azure-keyvault, custom
+  key_provider: aws-kms
+
+  # AWS KMS Configuration
+  kms:
+    enabled: true
+    default_key_id: "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+    key_spec: "AES_256"
+    region: "us-east-1"
+    encryption_context:
+      app: "s3proxy"
+      environment: "production"
+    data_key_cache_ttl: "5m"
+    validate_keys: true
+    enable_key_rotation: true
+
+  # Azure Key Vault Configuration
+  azure_keyvault:
+    vault_url: "https://myvault.vault.azure.net"
+    # Use managed identity by default
+    # Or specify service principal credentials:
+    # client_id: "your-client-id"
+    # client_secret: "your-client-secret"
+    # tenant_id: "your-tenant-id"
+    key_size: 256
+    data_key_cache_ttl: "5m"
+
+  # Custom Key Provider Configuration
+  custom:
+    # Base64 encoded master key
+    master_key: "YmFzZTY0ZW5jb2RlZDMyYnl0ZW1hc3RlcmtleWhlcmU="
+    # Or read from file:
+    # master_key_file: "/path/to/master.key"
+    key_derivation_salt: "YmFzZTY0ZW5jb2RlZHNhbHQ="
+    data_key_cache_ttl: "5m"
+
+  # Local Key Provider Configuration (legacy)
+  local:
+    master_key: "YmFzZTY0ZW5jb2RlZDMyYnl0ZW1hc3RlcmtleWhlcmU="
+
+  # Named Key Providers for Advanced Scenarios
+  key_providers:
+    # Production AWS KMS
+    prod-kms:
+      type: aws-kms
+      config:
+        default_key_id: "arn:aws:kms:us-east-1:123456789012:key/prod-key-id"
+        region: "us-east-1"
+        encryption_context:
+          env: "production"
+        data_key_cache_ttl: "10m"
+
+    # Development Azure Key Vault
+    dev-azure:
+      type: azure-keyvault
+      config:
+        vault_url: "https://dev-vault.vault.azure.net"
+        key_size: 256
+        data_key_cache_ttl: "5m"
+
+    # Testing with custom key
+    test-custom:
+      type: custom
+      config:
+        master_key: "dGVzdGluZ21hc3RlcmtleQ=="
+        data_key_cache_ttl: "1m"
+
+  # Bucket-specific encryption policies
+  policies:
+    - bucket_pattern: "sensitive-*"
+      key_provider: prod-kms
+      algorithm: AES-256-GCM
+      mandatory: true
+
+    - bucket_pattern: "dev-*"
+      key_provider: dev-azure
+      algorithm: AES-256-GCM
+      mandatory: false
+
+    - bucket_pattern: "test-*"
+      key_provider: test-custom
+      algorithm: AES-256-GCM
+      mandatory: false
+
+rate_limit:
+  enabled: true
+  requests_per_second: 100
+  burst: 200
+
+tls:
+  enabled: false
+
+logging:
+  level: info
+  format: json

@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Foundation Storage Engine - Login</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'surface-layer': '#ffffff',
+                        'line-5': '#e5e7eb',
+                        'text-secondary': '#6b7280',
+                        'primary': '#3b82f6',
+                        'primary-hover': '#2563eb',
+                    },
+                    spacing: {
+                        '115': '28.75rem',
+                    },
+                    fontSize: {
+                        'h3': '1.5rem',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background: #f9fafb;
+        }
+        
+        input[type="checkbox"] {
+            width: 1rem;
+            height: 1rem;
+            cursor: pointer;
+        }
+        
+        input:focus {
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
+        button:focus {
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+    <form id="loginForm" class="bg-surface-layer py-10 px-12 max-w-md w-full rounded-2xl shadow-xl flex flex-col gap-5">
+        <!-- Logo -->
+        <div class="flex items-center justify-center">
+            <img src="logo.png" alt="Foundation Storage" class="w-10 h-10">
+            <h1 class="ml-3 text-xl font-bold text-gray-900">Foundation Storage</h1>
+        </div>
+        
+        <div class="h-[1px] border-b border-line-5"></div>
+        
+        <!-- Login Header -->
+        <div class="flex justify-between items-center">
+            <h3 class="text-2xl font-semibold text-gray-900">Login</h3>
+            <button type="button" class="text-primary text-sm font-medium hover:underline flex items-center gap-1" disabled>
+                Sign Up
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Error Message -->
+        <div id="errorMessage" class="hidden p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm"></div>
+
+        <!-- Email Field -->
+        <div class="w-full">
+            <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input 
+                type="email" 
+                id="email" 
+                name="email" 
+                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-base"
+                placeholder="your@email.com"
+                autocomplete="username"
+                required
+            >
+        </div>
+
+        <!-- Password Field -->
+        <div class="w-full">
+            <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <input 
+                type="password" 
+                id="password" 
+                name="password" 
+                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-base"
+                placeholder="••••••••"
+                autocomplete="current-password"
+                required
+            >
+        </div>
+
+        <!-- Login Button -->
+        <button 
+            type="submit" 
+            id="loginButton"
+            class="w-full py-3 px-4 bg-primary text-white font-semibold text-base rounded-lg hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-colors"
+        >
+            Continue
+        </button>
+
+        <!-- Divider -->
+        <div class="flex items-center gap-3">
+            <div class="flex-1 h-[1px] border-b border-line-5"></div>
+            <span class="text-xs text-text-secondary">or</span>
+            <div class="flex-1 h-[1px] border-b border-line-5"></div>
+        </div>
+
+        <!-- Auth0 Login -->
+        <button 
+            type="button" 
+            onclick="window.location.href = '/api/auth/login'"
+            class="w-full py-3 px-4 bg-orange-500 text-white font-medium text-base rounded-lg hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 transition-colors flex items-center justify-center gap-2"
+        >
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M21.98 7.448L19.62 0H4.347L2.02 7.448c-1.352 4.312.03 9.206 3.815 12.015L12.007 24l6.157-4.552c3.755-2.81 5.182-7.688 3.815-12.015l-6.16 4.58 2.343 7.45-6.157-4.597-6.158 4.58 2.358-7.433-6.188-4.55 7.63-.045L12.008 0l2.356 7.404 7.615.044z"/>
+            </svg>
+            Continue with MeshX Auth0
+        </button>
+
+        <!-- S3 Compatible Login -->
+        <button 
+            type="button" 
+            id="s3LoginButton"
+            class="w-full py-3 px-4 border border-gray-300 text-gray-700 font-medium text-base rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-2 transition-colors flex items-center justify-center gap-2"
+        >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                      d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H7a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+            </svg>
+            Use S3 Credentials
+        </button>
+
+        <!-- Remember Me & Forgot Password -->
+        <div class="flex justify-between items-center">
+            <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" id="rememberMe" class="rounded border-gray-300 text-primary focus:ring-primary">
+                <span class="text-gray-600">Remember me</span>
+            </label>
+            <button type="button" class="text-primary text-sm hover:underline" disabled>
+                Recover password
+            </button>
+        </div>
+    </form>
+
+    <!-- S3 Credentials Modal -->
+    <div id="s3Modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 class="text-lg font-semibold mb-4">S3 Compatible Credentials</h3>
+            <form id="s3Form">
+                <div class="mb-4">
+                    <label for="accessKey" class="block text-sm font-medium text-gray-700 mb-1">Access Key</label>
+                    <input 
+                        type="text" 
+                        id="accessKey" 
+                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                        placeholder="Enter access key"
+                        required
+                    >
+                </div>
+                <div class="mb-4">
+                    <label for="secretKey" class="block text-sm font-medium text-gray-700 mb-1">Secret Key</label>
+                    <input 
+                        type="password" 
+                        id="secretKey" 
+                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                        placeholder="Enter secret key"
+                        required
+                    >
+                </div>
+                <div class="flex gap-3">
+                    <button 
+                        type="submit" 
+                        class="flex-1 py-2 px-4 bg-primary text-white font-medium rounded-lg hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+                    >
+                        Login
+                    </button>
+                    <button 
+                        type="button" 
+                        onclick="document.getElementById('s3Modal').classList.add('hidden')"
+                        class="flex-1 py-2 px-4 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-2"
+                    >
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Check if already authenticated
+        const authToken = localStorage.getItem('s3_auth_token');
+        const basicAuthToken = localStorage.getItem('auth_token');
+        
+        // Check for Auth0 session
+        function checkAuth0Session() {
+            const cookies = document.cookie.split(';');
+            for (let cookie of cookies) {
+                const [name, value] = cookie.trim().split('=');
+                if (name === 'auth0-session' || name === 'appSession') {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        if (authToken || basicAuthToken || checkAuth0Session()) {
+            window.location.href = '/ui/';
+        }
+
+        // Handle main login form
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const rememberMe = document.getElementById('rememberMe').checked;
+            
+            showError('');
+            setLoading(true);
+            
+            try {
+                // For demo purposes, we'll accept any credentials
+                // In production, this would validate against your auth system
+                if (email && password) {
+                    // Store auth token
+                    const token = btoa(`${email}:${password}`);
+                    localStorage.setItem('auth_token', token);
+                    if (rememberMe) {
+                        localStorage.setItem('rememberMe', 'true');
+                    }
+                    
+                    // Redirect to main UI
+                    window.location.href = '/ui/';
+                } else {
+                    showError('Please enter both email and password');
+                }
+            } catch (error) {
+                showError('Login failed. Please try again.');
+            } finally {
+                setLoading(false);
+            }
+        });
+
+        // Handle S3 login button
+        document.getElementById('s3LoginButton').addEventListener('click', () => {
+            document.getElementById('s3Modal').classList.remove('hidden');
+        });
+
+        // Handle S3 credentials form
+        document.getElementById('s3Form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const accessKey = document.getElementById('accessKey').value;
+            const secretKey = document.getElementById('secretKey').value;
+            
+            if (accessKey && secretKey) {
+                // Show loading state
+                const submitButton = e.target.querySelector('button[type="submit"]');
+                const originalText = submitButton.textContent;
+                submitButton.disabled = true;
+                submitButton.textContent = 'Validating...';
+                
+                try {
+                    // Validate credentials with backend
+                    const response = await fetch('/api/auth/validate', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            accessKey: accessKey,
+                            secretKey: secretKey
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok && result.valid) {
+                        // Store S3 credentials
+                        const credentials = {
+                            accessKey: accessKey,
+                            secretKey: secretKey,
+                            type: 's3'
+                        };
+                        localStorage.setItem('s3_auth_token', btoa(JSON.stringify(credentials)));
+                        
+                        // Redirect to main UI
+                        window.location.href = '/ui/';
+                    } else {
+                        // Show error
+                        const errorDiv = document.createElement('div');
+                        errorDiv.className = 'text-red-600 text-sm mt-2';
+                        errorDiv.textContent = result.message || 'Invalid credentials';
+                        
+                        // Remove any existing error
+                        const existingError = e.target.querySelector('.text-red-600');
+                        if (existingError) {
+                            existingError.remove();
+                        }
+                        
+                        // Add new error
+                        e.target.querySelector('.flex.gap-3').before(errorDiv);
+                        
+                        // Reset button
+                        submitButton.disabled = false;
+                        submitButton.textContent = originalText;
+                    }
+                } catch (error) {
+                    console.error('Validation error:', error);
+                    
+                    // Show error
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'text-red-600 text-sm mt-2';
+                    errorDiv.textContent = 'Failed to validate credentials. Please try again.';
+                    
+                    // Remove any existing error
+                    const existingError = e.target.querySelector('.text-red-600');
+                    if (existingError) {
+                        existingError.remove();
+                    }
+                    
+                    // Add new error
+                    e.target.querySelector('.flex.gap-3').before(errorDiv);
+                    
+                    // Reset button
+                    submitButton.disabled = false;
+                    submitButton.textContent = originalText;
+                }
+            }
+        });
+
+        function showError(message) {
+            const errorEl = document.getElementById('errorMessage');
+            if (message) {
+                errorEl.textContent = message;
+                errorEl.classList.remove('hidden');
+            } else {
+                errorEl.classList.add('hidden');
+            }
+        }
+
+        function setLoading(loading) {
+            const button = document.getElementById('loginButton');
+            button.disabled = loading;
+            button.textContent = loading ? 'Logging in...' : 'Continue';
+        }
+
+        // Check remember me preference
+        if (localStorage.getItem('rememberMe') === 'true') {
+            document.getElementById('rememberMe').checked = true;
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+# Example values for Azure Blob Storage backend
+# Usage: helm install s3proxy ./charts/s3proxy -f ./charts/s3proxy/values-azure.yaml
+
+# Service configuration - named "minio" for compatibility
+service:
+  name: minio
+  type: ClusterIP
+  port: 9000
+
+# S3 Proxy Configuration
+config:
+  storage:
+    provider: "azure"
+    azure:
+      accountName: "mystorageaccount"
+      # Account key (set via --set flags or external secrets)
+      accountKey: ""
+      containerName: "mycontainer"
+
+  # Authentication
+  auth:
+    type: "basic"
+    # Authentication credentials (set via --set flags or external secrets)
+    identity: ""
+    credential: ""
+
+# Enable AWS credentials for fast authentication
+awsCredentials:
+  enabled: true
+  # AWS credentials (set via --set flags or external secrets)
+  accessKeyId: ""
+  secretAccessKey: ""
+
+# Resources
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+# Autoscaling
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+# Ingress
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: minio.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: minio-tls  # pragma: allowlist secret
+      hosts:
+        - minio.example.com

@@ -1,0 +1,238 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly scan on Sunday midnight
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  trufflehog:
+    name: Secret Scanning
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run TruffleHog (PR)
+        if: github.event_name == 'pull_request'
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          extra_args: --debug --only-verified
+
+      - name: Run TruffleHog (Full Scan)
+        if: github.event_name != 'pull_request'
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --debug --only-verified
+
+  gosec:
+    name: Go Security Scanning
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.0'
+
+      - name: Run Gosec
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec -fmt json -out gosec-results.json ./... || true
+
+      - name: Upload Gosec results
+        uses: actions/upload-artifact@v4
+        with:
+          name: gosec-results
+          path: gosec-results.json
+        if: always()
+
+  trivy:
+    name: Container Security Scanning
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /tmp/trivy-install latest
+          sudo mv /tmp/trivy-install/trivy /usr/local/bin/
+          trivy --version
+
+      - name: Run Trivy vulnerability scanner in repo mode
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'json'
+          output: 'trivy-results.json'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: Upload Trivy scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results
+          path: trivy-results.json
+
+  semgrep:
+    name: Static Analysis with Semgrep
+    runs-on: self-hosted
+    container:
+      image: returntocorp/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: semgrep --config=auto --json --output=semgrep-results.json || true
+
+      - name: Upload Semgrep results
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-results
+          path: semgrep-results.json
+        if: always()
+
+  dependency-check:
+    name: Dependency Vulnerability Scanning
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.0'
+
+      - name: Install and Run Nancy
+        run: |
+          go install github.com/sonatype-nexus-community/nancy@latest
+          go list -json -deps ./... | nancy sleuth
+
+  # CodeQL requires GitHub Advanced Security
+  # Uncomment this job if you have Advanced Security enabled
+  # codeql:
+  #   name: CodeQL Analysis
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     actions: read
+  #     contents: read
+  #     security-events: write
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       language: [ 'go' ]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Initialize CodeQL
+  #       uses: github/codeql-action/init@v3
+  #       with:
+  #         languages: ${{ matrix.language }}
+  #
+  #     - name: Autobuild
+  #       uses: github/codeql-action/autobuild@v3
+  #
+  #     - name: Perform CodeQL Analysis
+  #       uses: github/codeql-action/analyze@v3
+
+  license-check:
+    name: License Compliance Check
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.0'
+
+      - name: Install go-licenses
+        run: go install github.com/google/go-licenses@latest
+
+      - name: Check licenses
+        run: |
+          # Download dependencies first
+          go mod download
+          # Run go-licenses with proper module context
+          go-licenses check ./... --disallowed_types=forbidden,restricted --ignore github.com/einyx/foundation-storage-engine || true
+
+  sbom:
+    name: Generate SBOM
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json
+
+  security-summary:
+    name: Security Summary
+    runs-on: self-hosted
+    needs: [trufflehog, gosec, trivy, semgrep, dependency-check, license-check]
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: security-results
+        continue-on-error: true
+
+      - name: Create summary
+        run: |
+          echo "# Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Job Status" >> $GITHUB_STEP_SUMMARY
+          echo "- TruffleHog: ${{ needs.trufflehog.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Gosec: ${{ needs.gosec.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Trivy: ${{ needs.trivy.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Semgrep: ${{ needs.semgrep.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Dependency Check: ${{ needs.dependency-check.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- License Check: ${{ needs.license-check.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Add details if artifacts exist
+          if [ -d "security-results" ]; then
+            echo "## Scan Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # Count issues from various reports if they exist
+            if [ -f "security-results/gosec-results/gosec-results.json" ]; then
+              GOSEC_COUNT=$(jq '.Issues | length' security-results/gosec-results/gosec-results.json 2>/dev/null || echo "0")
+              echo "- Gosec: Found $GOSEC_COUNT potential issues" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ -f "security-results/trivy-results/trivy-results.json" ]; then
+              TRIVY_COUNT=$(jq '.Results[].Vulnerabilities | length' security-results/trivy-results/trivy-results.json 2>/dev/null | awk '{s+=$1} END {print s}' || echo "0")
+              echo "- Trivy: Found $TRIVY_COUNT vulnerabilities" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "Check the artifacts for detailed results." >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload combined security report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-scan-summary
+          path: security-results/
+          retention-days: 30
