@@ -112,7 +112,7 @@ func (m *MultipartWrapper) UploadPart(ctx context.Context, bucket, key, uploadID
 func (m *MultipartWrapper) isSlowBackend(bucket string) bool {
 	// Check if this is the known slow backend
 	// This could be made configurable
-	return bucket == "warehouse" || bucket == "dev-terraform-managed-bucket"
+	return bucket == "warehouse" || bucket == "dev-terraform-managed-bucket" || bucket == "abccargo"
 }
 
 // CompleteMultipartUpload with extended timeout for slow backends

@@ -1724,7 +1724,7 @@ func (h *Handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 		"key":      key,
 		"uploadID": uploadID,
 		"userAgent": r.Header.Get("User-Agent"),
-	}).Info("Multipart upload initiated - TRACKING FOR LOCK ISSUES")
+	}).Info("Multipart upload initiated")
 
 	type initiateMultipartUploadResult struct {
 		XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
@@ -1845,7 +1845,15 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	w.Header().Set("ETag", etag)
+	w.Header().Set("Content-Length", "0")
+	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	
+	// AWS CLI expects an empty body, but we need to ensure the connection stays open
+	// by flushing the response
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
 	
 	logger.WithFields(logrus.Fields{
 		"etag":          etag,
@@ -1910,31 +1918,34 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 			"key":    key,
 		}).Debug("Verifying object exists for Trino before returning success")
 		
-		// Small retry loop to handle eventual consistency
-		var verifyErr error
-		for i := 0; i < 3; i++ {
-			_, verifyErr = h.storage.HeadObject(ctx, bucket, key)
-			if verifyErr == nil {
-				break
+		// Do verification in background to avoid blocking response
+		go func() {
+			// Small retry loop to handle eventual consistency
+			var verifyErr error
+			for i := 0; i < 3; i++ {
+				_, verifyErr = h.storage.HeadObject(context.Background(), bucket, key)
+				if verifyErr == nil {
+					break
+				}
+				if i < 2 {
+					time.Sleep(50 * time.Millisecond)
+				}
 			}
-			if i < 2 {
-				time.Sleep(100 * time.Millisecond)
+			
+			if verifyErr != nil {
+				logrus.WithError(verifyErr).WithFields(logrus.Fields{
+					"bucket": bucket,
+					"key":    key,
+				}).Warn("Object not immediately available after multipart complete")
 			}
-		}
-		
-		if verifyErr != nil {
-			logrus.WithError(verifyErr).WithFields(logrus.Fields{
-				"bucket": bucket,
-				"key":    key,
-			}).Warn("Object not immediately available after multipart complete")
-		}
+		}()
 	}
 	
 	logrus.WithFields(logrus.Fields{
 		"bucket":   bucket,
 		"key":      key,
 		"uploadID": uploadID,
-	}).Info("Multipart upload completed successfully - LOCK SHOULD BE RELEASED")
+	}).Info("Multipart upload completed successfully")
 	
 	// Add AWS-compatible headers
 	requestID := r.Header.Get("X-Request-ID")

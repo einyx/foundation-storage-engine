@@ -1489,7 +1489,9 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 
 	uploadID := resp.UploadId
 
-	partChan := make(chan partData, maxConcurrentUploads)
+	// Increase buffer to prevent blocking on large uploads
+	// With 5MB parts, 32 buffer = 160MB of parts can be queued
+	partChan := make(chan partData, maxConcurrentUploads*4)
 	resultChan := make(chan uploadResult, maxConcurrentUploads*2)
 	
 	// Start worker goroutines

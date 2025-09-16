@@ -165,8 +165,13 @@ func (d *AWSChunkDecoder) streamChunkData(p []byte, chunkSize int64) (int, error
 		}
 		
 		d.currentChunk = make([]byte, remaining)
-		_, err := io.ReadFull(d.reader, d.currentChunk)
+		bytesRead, err := io.ReadFull(d.reader, d.currentChunk)
 		if err != nil {
+			logrus.WithFields(logrus.Fields{
+				"expectedBytes": remaining,
+				"bytesRead": bytesRead,
+				"error": err.Error(),
+			}).Error("Failed to read chunk data")
 			return n, fmt.Errorf("failed to read remaining chunk data: %w", err)
 		}
 		d.currentChunkPos = 0

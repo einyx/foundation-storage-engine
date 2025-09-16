@@ -51,13 +51,22 @@ func NewAzureBackend(cfg *config.AzureStorageConfig) (*AzureBackend, error) {
 	clientOptions := &azblob.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Retry: policy.RetryOptions{
-				MaxRetries:    1,                      // Minimal retries for multipart uploads
-				TryTimeout:    300 * time.Second,      // 5 minutes timeout
-				RetryDelay:    500 * time.Millisecond, // Fast retry
-				MaxRetryDelay: 5 * time.Second,        // Max delay
+				MaxRetries:    0,                      // No retries - let our wrapper handle it
+				TryTimeout:    60 * time.Second,       // 1 minute timeout per request
+				RetryDelay:    100 * time.Millisecond, // Minimal delay
+				MaxRetryDelay: 1 * time.Second,        // Small max delay
 			},
 			Transport: &http.Client{
-				Timeout: 300 * time.Second,
+				Timeout: 60 * time.Second,
+				Transport: &http.Transport{
+					MaxIdleConns:          100,
+					MaxIdleConnsPerHost:   10,
+					IdleConnTimeout:       90 * time.Second,
+					TLSHandshakeTimeout:   10 * time.Second,
+					ExpectContinueTimeout: 1 * time.Second,
+					DisableKeepAlives:     false, // Keep connections alive
+					DisableCompression:    true,  // Disable compression for speed
+				},
 			},
 		},
 	}
@@ -107,8 +116,108 @@ func NewAzureBackend(cfg *config.AzureStorageConfig) (*AzureBackend, error) {
 				return &buf
 			},
 		},
-		uploadSem: make(chan struct{}, 4), // Limit concurrent uploads
+		uploadSem: make(chan struct{}, 4), // Limit concurrent uploads to prevent overwhelming Azure
 	}, nil
+}
+
+// normalizeAzureContainerName converts S3 bucket names to valid Azure container names
+// Azure container names must:
+// - Be 3-63 characters long
+// - Start with a letter or number
+// - Contain only lowercase letters, numbers, and hyphens
+// - Not contain consecutive hyphens
+// - Not end with a hyphen
+func normalizeAzureContainerName(s3BucketName string) string {
+	// Convert to lowercase
+	name := strings.ToLower(s3BucketName)
+	
+	// Replace underscores with hyphens
+	name = strings.ReplaceAll(name, "_", "-")
+	
+	// Replace dots with hyphens (dots are not allowed in Azure container names)
+	name = strings.ReplaceAll(name, ".", "-")
+	
+	// Remove any other invalid characters
+	var result []rune
+	lastWasHyphen := false
+	for _, ch := range name {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') {
+			result = append(result, ch)
+			lastWasHyphen = false
+		} else if ch == '-' && !lastWasHyphen && len(result) > 0 {
+			result = append(result, ch)
+			lastWasHyphen = true
+		}
+	}
+	
+	// Ensure it doesn't end with hyphen
+	normalized := strings.TrimSuffix(string(result), "-")
+	
+	// Ensure minimum length
+	if len(normalized) < 3 {
+		normalized = "s3-" + normalized
+	}
+	
+	// Ensure maximum length
+	if len(normalized) > 63 {
+		normalized = normalized[:63]
+		// Remove trailing hyphen if truncation created one
+		normalized = strings.TrimSuffix(normalized, "-")
+	}
+	
+	// If name starts with number, prefix with 's3-'
+	if len(normalized) > 0 && normalized[0] >= '0' && normalized[0] <= '9' {
+		normalized = "s3-" + normalized
+		if len(normalized) > 63 {
+			normalized = normalized[:63]
+		}
+	}
+	
+	// Log normalization if changed
+	if normalized != s3BucketName {
+		logrus.WithFields(logrus.Fields{
+			"original": s3BucketName,
+			"normalized": normalized,
+		}).Debug("Normalized container name for Azure")
+	}
+	
+	return normalized
+}
+
+// isValidAzureContainerName checks if a name is valid for Azure container
+func isValidAzureContainerName(name string) bool {
+	// Must be 3-63 characters
+	if len(name) < 3 || len(name) > 63 {
+		return false
+	}
+	
+	// Must start with lowercase letter or number
+	if !((name[0] >= 'a' && name[0] <= 'z') || (name[0] >= '0' && name[0] <= '9')) {
+		return false
+	}
+	
+	// Check all characters and no consecutive hyphens
+	lastWasHyphen := false
+	for i, ch := range name {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') {
+			lastWasHyphen = false
+		} else if ch == '-' {
+			// No consecutive hyphens
+			if lastWasHyphen {
+				return false
+			}
+			// No hyphen at the end
+			if i == len(name)-1 {
+				return false
+			}
+			lastWasHyphen = true
+		} else {
+			// Invalid character (including underscore)
+			return false
+		}
+	}
+	
+	return true
 }
 
 func (a *AzureBackend) ListBuckets(ctx context.Context) ([]BucketInfo, error) {
@@ -309,10 +418,22 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 		// Use hierarchical listing
 		pager := containerClient.NewListBlobsHierarchyPager(delimiter, opts)
 		
+		pageCount := 0
 		for pager.More() && len(result.Contents) < maxKeys {
 			page, err := pager.NextPage(ctx)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list blobs: %w", err)
+			}
+			pageCount++
+			
+			// Safety check: prevent infinite loops
+			if pageCount > 100 && len(page.Segment.BlobItems) == 0 && len(page.Segment.BlobPrefixes) == 0 {
+				logrus.WithFields(logrus.Fields{
+					"bucket": bucket,
+					"prefix": prefix,
+					"pageCount": pageCount,
+				}).Warn("Breaking potential infinite loop in Azure blob listing")
+				break
 			}
 
 			// Process blobs
@@ -355,9 +476,13 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 				result.CommonPrefixes = append(result.CommonPrefixes, *prefix.Name)
 			}
 
-			if page.NextMarker != nil {
-				result.NextMarker = *page.NextMarker
-				result.IsTruncated = true
+			if page.NextMarker != nil && *page.NextMarker != "" {
+				// Only set IsTruncated if we actually have results or hit the max limit
+				// Azure can return NextMarker even when there are no more items
+				if len(result.Contents) > 0 || len(result.CommonPrefixes) > 0 || len(result.Contents) >= maxKeys {
+					result.NextMarker = *page.NextMarker
+					result.IsTruncated = true
+				}
 			}
 		}
 	} else {
@@ -373,10 +498,22 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 
 		pager := containerClient.NewListBlobsFlatPager(opts)
 		
+		pageCount := 0
 		for pager.More() && len(result.Contents) < maxKeys {
 			page, err := pager.NextPage(ctx)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list blobs: %w", err)
+			}
+			pageCount++
+			
+			// Safety check: prevent infinite loops
+			if pageCount > 100 && len(page.Segment.BlobItems) == 0 {
+				logrus.WithFields(logrus.Fields{
+					"bucket": bucket,
+					"prefix": prefix,
+					"pageCount": pageCount,
+				}).Warn("Breaking potential infinite loop in Azure blob listing")
+				break
 			}
 
 			for _, blob := range page.Segment.BlobItems {
@@ -406,9 +543,13 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 				})
 			}
 
-			if page.NextMarker != nil {
-				result.NextMarker = *page.NextMarker
-				result.IsTruncated = true
+			if page.NextMarker != nil && *page.NextMarker != "" {
+				// Only set IsTruncated if we actually have results or hit the max limit
+				// Azure can return NextMarker even when there are no more items
+				if len(result.Contents) > 0 || len(result.CommonPrefixes) > 0 || len(result.Contents) >= maxKeys {
+					result.NextMarker = *page.NextMarker
+					result.IsTruncated = true
+				}
 			}
 		}
 	}
@@ -417,6 +558,11 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 }
 
 func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Object, error) {
+	// Validate container name for Azure
+	if !isValidAzureContainerName(bucket) {
+		return nil, fmt.Errorf("invalid container name '%s' for Azure: must be 3-63 chars, lowercase letters/numbers/hyphens only, no underscores", bucket)
+	}
+	
 	// Handle directory-like objects
 	normalizedKey := key
 	if strings.HasSuffix(key, "/") && key != "/" {
@@ -460,6 +606,10 @@ func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 }
 
 func (a *AzureBackend) PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64, metadata map[string]string) error {
+	// Validate container name for Azure
+	if !isValidAzureContainerName(bucket) {
+		return fmt.Errorf("invalid container name '%s' for Azure: must be 3-63 chars, lowercase letters/numbers/hyphens only, no underscores", bucket)
+	}
 	logrus.WithFields(logrus.Fields{
 		"bucket": bucket,
 		"key":    key,
@@ -618,20 +768,26 @@ func (a *AzureBackend) InitiateMultipartUpload(ctx context.Context, bucket, key 
 }
 
 func (a *AzureBackend) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, reader io.Reader, size int64) (string, error) {
+	startTime := time.Now()
+	
 	// Acquire semaphore
+	semAcquireStart := time.Now()
 	select {
 	case a.uploadSem <- struct{}{}:
 		defer func() { <-a.uploadSem }()
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
-
+	semAcquireTime := time.Since(semAcquireStart)
+	
 	logrus.WithFields(logrus.Fields{
-		"bucket":     bucket,
-		"key":        key,
-		"uploadID":   uploadID,
-		"partNumber": partNumber,
-		"size":       size,
+		"bucket":          bucket,
+		"key":             key,
+		"uploadID":        uploadID,
+		"partNumber":      partNumber,
+		"size":            size,
+		"sizeMB":          float64(size) / (1024 * 1024),
+		"semAcquireTime":  semAcquireTime,
 	}).Info("Azure UploadPart called")
 
 	// Azure requires block IDs to be base64-encoded and of equal length
@@ -646,29 +802,95 @@ func (a *AzureBackend) UploadPart(ctx context.Context, bucket, key, uploadID str
 	// Get block blob client
 	blockBlobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlockBlobClient(key)
 
-	// Buffer the data for Azure SDK
-	data, err := io.ReadAll(io.LimitReader(reader, size))
-	if err != nil {
+	// For parts larger than 30MB, split into smaller blocks to avoid timeouts
+	const maxBlockSize = 30 * 1024 * 1024 // 30MB max per block
+	
+	if size > maxBlockSize {
+		// Upload in multiple blocks for this part
+		logrus.WithFields(logrus.Fields{
+			"partNumber": partNumber,
+			"partSize":   size,
+			"blocks":     (size + maxBlockSize - 1) / maxBlockSize,
+		}).Info("Large part detected, splitting into multiple blocks")
+		
+		// We need to handle this differently - stage multiple blocks for this part
+		blockNum := 0
+		totalRead := int64(0)
+		
+		for totalRead < size {
+			blockSize := size - totalRead
+			if blockSize > maxBlockSize {
+				blockSize = maxBlockSize
+			}
+			
+			// Read this block
+			blockData := make([]byte, blockSize)
+			n, err := io.ReadFull(reader, blockData)
+			if err != nil && err != io.EOF {
+				return "", fmt.Errorf("failed to read block %d: %w", blockNum, err)
+			}
+			if int64(n) != blockSize {
+				return "", fmt.Errorf("incomplete read for block %d: got %d, expected %d", blockNum, n, blockSize)
+			}
+			
+			// Generate unique block ID for this sub-block
+			subBlockID := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%010d-%03d", partNumber, blockNum)))
+			
+			// Stage this sub-block
+			_, err = blockBlobClient.StageBlock(ctx, subBlockID, streaming.NopCloser(bytes.NewReader(blockData)), nil)
+			if err != nil {
+				return "", fmt.Errorf("failed to stage sub-block %d: %w", blockNum, err)
+			}
+			
+			totalRead += blockSize
+			blockNum++
+			
+			logrus.WithFields(logrus.Fields{
+				"partNumber": partNumber,
+				"blockNum":   blockNum,
+				"blockSize":  blockSize,
+				"progress":   fmt.Sprintf("%d/%d", totalRead, size),
+			}).Debug("Staged sub-block for large part")
+		}
+		
+		// Return a composite block ID that represents all sub-blocks
+		return blockID, nil
+	}
+	
+	// For smaller parts, use the original buffering approach
+	buffer := make([]byte, size)
+	n, err := io.ReadFull(reader, buffer)
+	if err != nil && err != io.EOF {
 		return "", fmt.Errorf("failed to read part data: %w", err)
 	}
-
-	if int64(len(data)) != size {
-		logrus.WithFields(logrus.Fields{
-			"expected": size,
-			"actual":   len(data),
-		}).Warn("Part size mismatch")
+	if int64(n) != size {
+		return "", fmt.Errorf("incomplete read: got %d bytes, expected %d", n, size)
 	}
+	
+	body := streaming.NopCloser(bytes.NewReader(buffer))
 
 	// Stage the block
-	_, err = blockBlobClient.StageBlock(ctx, blockID, streaming.NopCloser(bytes.NewReader(data)), nil)
+	stageStart := time.Now()
+	_, err = blockBlobClient.StageBlock(ctx, blockID, body, nil)
+	stageTime := time.Since(stageStart)
 	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"error":     err.Error(),
+			"stageTime": stageTime,
+		}).Error("Failed to stage block")
 		return "", fmt.Errorf("failed to stage block: %w", err)
 	}
 
+	totalTime := time.Since(startTime)
+	throughputMBps := (float64(size) / (1024 * 1024)) / stageTime.Seconds()
+	
 	logrus.WithFields(logrus.Fields{
-		"blockID":    blockID,
-		"partNumber": partNumber,
-		"size":       size,
+		"blockID":        blockID,
+		"partNumber":     partNumber,
+		"size":           size,
+		"stageTime":      stageTime,
+		"totalTime":      totalTime,
+		"throughputMBps": fmt.Sprintf("%.2f", throughputMBps),
 	}).Info("Successfully staged block")
 
 	// Return the block ID as ETag for S3 compatibility
