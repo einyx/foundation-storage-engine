@@ -10,17 +10,35 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// SlowBackendConfig contains configuration for slow backend handling
+type SlowBackendConfig struct {
+	Buckets map[string]bool
+	Timeout time.Duration
+}
+
 // MultipartWrapper wraps a storage backend to handle slow multipart uploads better
 type MultipartWrapper struct {
 	Backend
-	slowBackendTimeout time.Duration
+	slowBackendConfig *SlowBackendConfig
+}
+
+// NewSlowBackendConfig creates a new SlowBackendConfig with the specified timeout and buckets
+func NewSlowBackendConfig(timeout time.Duration, buckets ...string) *SlowBackendConfig {
+	bucketMap := make(map[string]bool)
+	for _, bucket := range buckets {
+		bucketMap[bucket] = true
+	}
+	return &SlowBackendConfig{
+		Buckets: bucketMap,
+		Timeout: timeout,
+	}
 }
 
 // NewMultipartWrapper creates a wrapper that handles slow backends better
-func NewMultipartWrapper(backend Backend, timeout time.Duration) *MultipartWrapper {
+func NewMultipartWrapper(backend Backend, slowBackendConfig *SlowBackendConfig) *MultipartWrapper {
 	return &MultipartWrapper{
-		Backend:            backend,
-		slowBackendTimeout: timeout,
+		Backend:           backend,
+		slowBackendConfig: slowBackendConfig,
 	}
 }
 
@@ -44,7 +62,7 @@ func (m *MultipartWrapper) UploadPart(ctx context.Context, bucket, key, uploadID
 	uploadCtx := ctx
 	if isSlowBackend {
 		var cancel context.CancelFunc
-		uploadCtx, cancel = context.WithTimeout(context.Background(), m.slowBackendTimeout)
+		uploadCtx, cancel = context.WithTimeout(context.Background(), m.slowBackendConfig.Timeout)
 		defer cancel()
 	}
 
@@ -110,9 +128,10 @@ func (m *MultipartWrapper) UploadPart(ctx context.Context, bucket, key, uploadID
 
 // isSlowBackend checks if this bucket is configured to use a slow backend
 func (m *MultipartWrapper) isSlowBackend(bucket string) bool {
-	// Check if this is the known slow backend
-	// This could be made configurable
-	return bucket == "warehouse" || bucket == "dev-terraform-managed-bucket" || bucket == "abccargo"
+	if m.slowBackendConfig == nil || m.slowBackendConfig.Buckets == nil {
+		return false
+	}
+	return m.slowBackendConfig.Buckets[bucket]
 }
 
 // CompleteMultipartUpload with extended timeout for slow backends
@@ -128,7 +147,7 @@ func (m *MultipartWrapper) CompleteMultipartUpload(ctx context.Context, bucket, 
 	completeCtx := ctx
 	if m.isSlowBackend(bucket) {
 		var cancel context.CancelFunc
-		completeCtx, cancel = context.WithTimeout(context.Background(), m.slowBackendTimeout)
+		completeCtx, cancel = context.WithTimeout(context.Background(), m.slowBackendConfig.Timeout)
 		defer cancel()
 		logger.Warn("Completing multipart upload on slow backend - using extended timeout")
 	}
