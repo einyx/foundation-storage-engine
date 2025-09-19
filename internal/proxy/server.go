@@ -82,7 +82,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// Create auth provider based on configuration
 	var authProvider auth.Provider
 	var db *database.DB
-	
+
 	if cfg.Auth.Type == "database" && cfg.Database.Enabled {
 		// Initialize database connection for authentication
 		dbConfig := database.Config{
@@ -92,13 +92,13 @@ func NewServer(cfg *config.Config) (*Server, error) {
 			MaxIdleConns:     cfg.Database.MaxIdleConns,
 			ConnMaxLifetime:  cfg.Database.ConnMaxLifetime,
 		}
-		
+
 		var err error
 		db, err = database.NewConnection(dbConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create database connection: %w", err)
 		}
-		
+
 		authProvider = auth.NewDatabaseProvider(db)
 		logrus.Info("Database authentication provider initialized")
 	} else {
@@ -124,24 +124,24 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	if cfg.Auth0.Enabled {
 		s.auth0 = NewAuth0Handler(&cfg.Auth0)
 	}
-	
+
 	// Initialize VirusTotal scanner
 	scanner, err := virustotal.NewScanner(&cfg.VirusTotal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create VirusTotal scanner: %w", err)
 	}
 	s.scanner = scanner
-	
+
 	if scanner.IsEnabled() {
 		logrus.Info("VirusTotal scanning enabled")
 	}
 
 	s.s3Handler = s3.NewHandler(s.storage, s.auth, cfg.S3, cfg.Chunking)
 	s.s3Handler.SetScanner(s.scanner)
-	
+
 	// Initialize share link handler
 	s.shareLinkHandler = NewShareLinkHandler(s.s3Handler)
-	
+
 	s.setupRoutes()
 
 	// Apply metrics middleware to all routes
@@ -151,6 +151,9 @@ func NewServer(cfg *config.Config) (*Server, error) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Add security headers to all responses
+	s.setSecurityHeaders(w)
+
 	// Preprocess request to fix mc client issues
 	userAgent := r.Header.Get("User-Agent")
 	if strings.Contains(strings.ToLower(userAgent), "minio") || strings.Contains(strings.ToLower(userAgent), "mc") {
@@ -168,6 +171,34 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
 }
 
+// setSecurityHeaders adds security headers to all HTTP responses
+func (s *Server) setSecurityHeaders(w http.ResponseWriter) {
+	// Prevent clickjacking attacks
+	w.Header().Set("X-Frame-Options", "DENY")
+
+	// Prevent MIME type sniffing
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	// Enable XSS filter in older browsers
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+
+	// Enforce HTTPS (only if TLS is enabled)
+	if s.config.Server.TLS.Enabled {
+		// max-age=31536000 (1 year), includeSubDomains
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	}
+
+	// Content Security Policy - restrictive by default
+	// Allow self for scripts/styles, data: for images (base64), and 'unsafe-inline' for styles (needed by some UI frameworks)
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none';")
+
+	// Referrer Policy - don't leak referrer information
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+
+	// Permissions Policy (formerly Feature Policy) - disable unnecessary features
+	w.Header().Set("Permissions-Policy", "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()")
+}
+
 func (s *Server) setupAPIDocumentation() {
 	// Read the OpenAPI spec
 	openAPISpec, err := os.ReadFile("api/openapi.yaml")
@@ -178,7 +209,7 @@ func (s *Server) setupAPIDocumentation() {
 
 	// Serve Swagger UI
 	s.router.PathPrefix("/docs/").HandlerFunc(ServeSwaggerUI(openAPISpec)).Methods("GET")
-	
+
 	// Redirect /docs to /docs/
 	s.router.HandleFunc("/docs", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
@@ -192,7 +223,7 @@ func (s *Server) setupRoutes() {
 	s.router.HandleFunc("/health", s.healthCheck).Methods("GET")
 	s.router.Handle("/metrics", s.metrics.Handler()).Methods("GET")
 	s.router.Handle("/stats", s.metrics.StatsHandler()).Methods("GET")
-	
+
 	// Register pprof endpoints if enabled
 	if s.config.Monitoring.PprofEnabled {
 		logrus.Info("pprof profiling endpoints enabled at /debug/pprof/")
@@ -221,13 +252,13 @@ func (s *Server) setupRoutes() {
 		s.router.HandleFunc("/api/auth/logout", s.auth0.LogoutHandler).Methods("GET")
 		s.router.HandleFunc("/api/auth/userinfo", s.auth0.UserInfoHandler).Methods("GET")
 	}
-	
+
 	// Register auth validation endpoint
 	s.router.HandleFunc("/api/auth/validate", s.validateCredentials).Methods("POST")
-	
+
 	// Register feature flags endpoint
 	s.router.HandleFunc("/api/features", s.getFeatures).Methods("GET")
-	
+
 	// Register share link routes
 	s.router.HandleFunc("/api/share/create", s.shareLinkHandler.CreateShareLinkHandler).Methods("POST")
 	s.router.HandleFunc("/api/share/{shareID}", s.shareLinkHandler.ServeSharedFile).Methods("GET", "HEAD")
@@ -235,16 +266,16 @@ func (s *Server) setupRoutes() {
 	// Register UI routes if enabled
 	if s.config.UI.Enabled {
 		logrus.WithFields(logrus.Fields{
-			"basePath": s.config.UI.BasePath,
+			"basePath":   s.config.UI.BasePath,
 			"staticPath": s.config.UI.StaticPath,
 		}).Info("Web UI enabled")
-		
+
 		// Serve static files from the UI path
 		fileServer := http.FileServer(http.Dir(s.config.UI.StaticPath))
 		s.router.PathPrefix(s.config.UI.BasePath + "/").Handler(
 			http.StripPrefix(s.config.UI.BasePath, fileServer),
 		).Methods("GET")
-		
+
 		// Redirect /ui to /ui/
 		s.router.HandleFunc(s.config.UI.BasePath, func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, s.config.UI.BasePath+"/", http.StatusMovedPermanently)
@@ -287,30 +318,36 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 			}
 			vars["bucket"] = bucket
 			r = mux.SetURLVars(r, vars)
-			
+
 			logrus.WithFields(logrus.Fields{
-				"host": host,
-				"bucket": bucket,
+				"host":          host,
+				"bucket":        bucket,
 				"rewrittenPath": r.URL.Path,
 			}).Debug("Converted virtual-hosted-style to path-style")
 		}
 	}
-	
+
 	logrus.WithFields(logrus.Fields{
-		"path": r.URL.Path,
-		"authType": s.config.Auth.Type,
-		"hasAuth": r.Header.Get("Authorization") != "",
-		"contentLength": r.ContentLength,
+		"path":                r.URL.Path,
+		"authType":            s.config.Auth.Type,
+		"hasAuth":             r.Header.Get("Authorization") != "",
+		"contentLength":       r.ContentLength,
 		"contentLengthHeader": r.Header.Get("Content-Length"),
 	}).Debug("handleS3Request called")
-	
+
 	if s.config.Auth.Type != "none" {
-		// Allow unauthenticated access from UI
-		referer := r.Header.Get("Referer")
-		if strings.Contains(referer, "/ui/") {
-			// Skip auth for UI requests
-			logrus.WithField("referer", referer).Debug("Skipping auth for UI request")
-		} else {
+		// Allow unauthenticated access to UI static files and API documentation
+		// These paths are public and don't contain sensitive data
+		isPublicPath := false
+		if s.config.UI.Enabled && strings.HasPrefix(r.URL.Path, s.config.UI.BasePath+"/") {
+			isPublicPath = true
+		} else if strings.HasPrefix(r.URL.Path, "/docs/") {
+			isPublicPath = true
+		} else if r.URL.Path == "/health" || r.URL.Path == "/metrics" || r.URL.Path == "/stats" {
+			isPublicPath = true
+		}
+
+		if !isPublicPath {
 			userAgent := r.Header.Get("User-Agent")
 			if strings.Contains(strings.ToLower(userAgent), "minio") || strings.Contains(strings.ToLower(userAgent), "mc") {
 				authHeader := r.Header.Get("Authorization")
@@ -334,23 +371,23 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		
+
 		// Remove Authorization header after successful authentication
 		// to prevent it from being forwarded to the backend S3
 		logrus.WithFields(logrus.Fields{
-			"path": r.URL.Path,
+			"path":    r.URL.Path,
 			"hadAuth": r.Header.Get("Authorization") != "",
 		}).Debug("Removing auth headers after successful authentication")
-		
+
 		r.Header.Del("Authorization")
 		r.Header.Del("X-Amz-Security-Token")
 		r.Header.Del("X-Amz-Credential")
 		r.Header.Del("X-Amz-Date")
 		r.Header.Del("X-Amz-SignedHeaders")
 		r.Header.Del("X-Amz-Signature")
-		
+
 		logrus.WithFields(logrus.Fields{
-			"path": r.URL.Path,
+			"path":         r.URL.Path,
 			"hasAuthAfter": r.Header.Get("Authorization") != "",
 		}).Debug("Auth headers removed")
 	}
@@ -366,10 +403,10 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 
 	// Debug log before passing to S3 handler
 	logrus.WithFields(logrus.Fields{
-		"path": r.URL.Path,
-		"contentLength": r.ContentLength,
+		"path":                r.URL.Path,
+		"contentLength":       r.ContentLength,
 		"contentLengthHeader": r.Header.Get("Content-Length"),
-		"method": r.Method,
+		"method":              r.Method,
 	}).Debug("Passing to S3 handler")
 
 	// Pass to S3 handler
@@ -385,19 +422,19 @@ func (s *Server) healthCheck(w http.ResponseWriter, _ *http.Request) {
 // validateCredentials validates S3-compatible credentials
 func (s *Server) validateCredentials(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	// Parse JSON request body
 	var creds struct {
 		AccessKey string `json:"accessKey"`
 		SecretKey string `json:"secretKey"`
 	}
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":"Invalid request body"}`))
 		return
 	}
-	
+
 	// Validate credentials based on auth type
 	switch s.config.Auth.Type {
 	case "awsv4", "awsv2":
@@ -437,13 +474,13 @@ func (s *Server) validateCredentials(w http.ResponseWriter, r *http.Request) {
 // getFeatures returns the enabled features/modules
 func (s *Server) getFeatures(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	features := map[string]interface{}{
 		"virustotal": map[string]interface{}{
-			"enabled": s.config.VirusTotal.Enabled,
-			"scanUploads": s.config.VirusTotal.ScanUploads,
+			"enabled":      s.config.VirusTotal.Enabled,
+			"scanUploads":  s.config.VirusTotal.ScanUploads,
 			"blockThreats": s.config.VirusTotal.BlockThreats,
-			"maxFileSize": s.config.VirusTotal.MaxFileSize,
+			"maxFileSize":  s.config.VirusTotal.MaxFileSize,
 		},
 		"auth0": map[string]interface{}{
 			"enabled": s.config.Auth0.Enabled,
@@ -455,14 +492,14 @@ func (s *Server) getFeatures(w http.ResponseWriter, r *http.Request) {
 			"enabled": s.config.ShareLinks.Enabled,
 		},
 	}
-	
+
 	jsonData, err := json.Marshal(features)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":"Failed to marshal features"}`))
 		return
 	}
-	
+
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(jsonData)
 }
