@@ -1,0 +1,32 @@
+[Unit]
+Description=Foundation Storage Engine - High-performance S3-compatible proxy
+Documentation=https://github.com/{{ .Env.GITHUB_REPOSITORY }}
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=foundation-storage-engine
+Group=foundation-storage-engine
+ExecStart=/usr/bin/foundation-storage-engine -config /etc/foundation-storage-engine/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=foundation-storage-engine
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/foundation-storage-engine
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

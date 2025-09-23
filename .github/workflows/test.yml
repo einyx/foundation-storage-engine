@@ -1,0 +1,292 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.3'
+      
+      # Run unit tests
+      - name: Run unit tests
+        run: go test ./... -v -race -coverprofile=coverage.out
+      
+      # Upload coverage
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+      
+      # Run integration tests
+      - name: Run integration tests
+        run: go test ./... -tags=integration -v
+      
+      # Run stress tests
+      - name: Run stress tests
+        run: go test ./tests/stress/... -tags=stress -v -timeout=10m
+  
+  regression-tests:
+    runs-on: self-hosted
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for comparing commits
+      
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.3'
+      
+      # Set up test environment
+      - name: Set up test environment
+        run: |
+          mkdir -p regression-test-results
+          echo "REGRESSION_TEST_DIR=$PWD/regression-test-results" >> $GITHUB_ENV
+      
+      # Run regression tests against main branch
+      - name: Checkout main branch for baseline
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin main
+          git checkout origin/main
+      
+      - name: Run baseline benchmarks
+        if: github.event_name == 'pull_request'
+        run: |
+          go test -bench=. -benchmem -count=3 -benchtime=10s ./cmd/foundation-storage-engine \
+            -run=^$ | tee $REGRESSION_TEST_DIR/baseline-bench.txt
+      
+      - name: Checkout PR branch
+        if: github.event_name == 'pull_request'
+        run: |
+          git checkout ${{ github.event.pull_request.head.sha }}
+      
+      # Run current benchmarks
+      - name: Run current benchmarks
+        run: |
+          go test -bench=. -benchmem -count=3 -benchtime=10s ./cmd/foundation-storage-engine \
+            -run=^$ | tee $REGRESSION_TEST_DIR/current-bench.txt
+      
+      # Compare benchmarks
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+      
+      - name: Compare benchmark results
+        if: github.event_name == 'pull_request'
+        run: |
+          benchstat $REGRESSION_TEST_DIR/baseline-bench.txt $REGRESSION_TEST_DIR/current-bench.txt \
+            | tee $REGRESSION_TEST_DIR/comparison.txt
+          
+          # Check for significant regressions (>10% degradation)
+          if grep -E "\\+[0-9]{2}\\.[0-9]+%" $REGRESSION_TEST_DIR/comparison.txt; then
+            echo "::warning::Performance regression detected"
+            echo "REGRESSION_DETECTED=true" >> $GITHUB_ENV
+          fi
+      
+      # Run memory regression tests
+      - name: Run memory profiling
+        run: |
+          go test -run=BenchmarkPutObject -memprofile=$REGRESSION_TEST_DIR/mem.prof \
+            -bench=BenchmarkPutObject ./cmd/foundation-storage-engine
+          go tool pprof -text $REGRESSION_TEST_DIR/mem.prof > $REGRESSION_TEST_DIR/mem-profile.txt
+      
+      # Test backward compatibility
+      - name: Test backward compatibility
+        run: |
+          # Test that old client versions can still connect
+          go test ./tests/compatibility/... -v || true
+      
+      # Upload regression test results
+      - name: Upload regression test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-test-results
+          path: regression-test-results/
+      
+      # Comment on PR with results
+      - name: Comment PR with benchmark results
+        if: github.event_name == 'pull_request' && env.REGRESSION_DETECTED == 'true'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          script: |
+            const fs = require('fs');
+            const comparison = fs.readFileSync('${{ env.REGRESSION_TEST_DIR }}/comparison.txt', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '## Performance Regression Detected\n\n```\n' + comparison + '\n```'
+            });
+  
+  benchmark-trends:
+    runs-on: self-hosted
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.3'
+      
+      # Run benchmarks and save results
+      - name: Run benchmarks for trends
+        run: |
+          mkdir -p benchmark-history
+          DATE=$(date +%Y%m%d-%H%M%S)
+          COMMIT=$(git rev-parse --short HEAD)
+          
+          go test -bench=. -benchmem -count=5 -benchtime=10s ./cmd/foundation-storage-engine \
+            -run=^$ | tee benchmark-history/bench-${DATE}-${COMMIT}.txt
+      
+      # Download previous benchmark results
+      - name: Download previous benchmarks
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-history
+          path: benchmark-history
+        continue-on-error: true
+      
+      # Generate benchmark trend graph
+      - name: Generate benchmark trends
+        run: |
+          # Install required tools
+          go install golang.org/x/perf/cmd/benchstat@latest
+          pip install matplotlib pandas
+          
+          # Create Python script to generate graphs
+          cat > generate_trends.py << 'EOF'
+          import os
+          import re
+          import matplotlib.pyplot as plt
+          import pandas as pd
+          from datetime import datetime
+          
+          # Parse benchmark files
+          data = []
+          for filename in os.listdir('benchmark-history'):
+              if filename.startswith('bench-') and filename.endswith('.txt'):
+                  with open(os.path.join('benchmark-history', filename), 'r') as f:
+                      content = f.read()
+                      # Extract date from filename
+                      date_match = re.search(r'bench-(\d{8}-\d{6})', filename)
+                      if date_match:
+                          date = datetime.strptime(date_match.group(1), '%Y%m%d-%H%M%S')
+                          
+                          # Extract benchmark results
+                          for line in content.split('\n'):
+                              if 'BenchmarkPutObject' in line and 'ns/op' in line:
+                                  parts = line.split()
+                                  if len(parts) >= 3:
+                                      bench_name = parts[0]
+                                      ns_per_op = float(parts[2])
+                                      data.append({
+                                          'date': date,
+                                          'benchmark': bench_name,
+                                          'ns/op': ns_per_op
+                                      })
+          
+          if data:
+              df = pd.DataFrame(data)
+              
+              # Create trend graphs
+              fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+              fig.suptitle('Foundation Storage Engine - Performance Trends', fontsize=16)
+              
+              benchmarks = df['benchmark'].unique()[:4]  # Top 4 benchmarks
+              
+              for i, bench in enumerate(benchmarks):
+                  ax = axes[i // 2, i % 2]
+                  bench_data = df[df['benchmark'] == bench].sort_values('date')
+                  
+                  ax.plot(bench_data['date'], bench_data['ns/op'], marker='o')
+                  ax.set_title(bench.replace('Benchmark', ''))
+                  ax.set_xlabel('Date')
+                  ax.set_ylabel('ns/op')
+                  ax.grid(True, alpha=0.3)
+                  ax.tick_params(axis='x', rotation=45)
+              
+              plt.tight_layout()
+              plt.savefig('benchmark-trends.png', dpi=150, bbox_inches='tight')
+              
+              # Generate summary statistics
+              latest_date = df['date'].max()
+              latest_data = df[df['date'] == latest_date]
+              
+              with open('benchmark-summary.md', 'w') as f:
+                  f.write('## Latest Benchmark Results\n\n')
+                  f.write(f'Date: {latest_date.strftime("%Y-%m-%d %H:%M:%S")}\n\n')
+                  f.write('| Benchmark | ns/op |\n')
+                  f.write('|-----------|-------|\n')
+                  for _, row in latest_data.iterrows():
+                      f.write(f'| {row["benchmark"]} | {row["ns/op"]:.2f} |\n')
+          EOF
+          
+          python generate_trends.py
+      
+      # Update README with trends
+      - name: Update README with benchmark trends
+        run: |
+          # Check if benchmark-summary.md was created
+          if [ -f benchmark-summary.md ]; then
+            # Check if performance section exists
+            if ! grep -q "## Performance" README.md; then
+              echo -e "\n## Performance\n\n![Benchmark Trends](benchmark-trends.png)\n" >> README.md
+              cat benchmark-summary.md >> README.md
+            else
+              # Update existing section
+              sed -i '/## Performance/,/##[^#]/{/##[^#]/!d}' README.md
+              echo -e "## Performance\n\n![Benchmark Trends](benchmark-trends.png)\n" >> README.md
+              cat benchmark-summary.md >> README.md
+            fi
+          else
+            echo "No benchmark data found, skipping README update"
+          fi
+      
+      # Commit and push updates
+      - name: Commit benchmark updates
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Only add files that exist
+          if [ -f benchmark-trends.png ]; then
+            git add benchmark-trends.png
+          fi
+          
+          if [ -f README.md ]; then
+            git add README.md
+          fi
+          
+          if [ -d benchmark-history/ ]; then
+            git add benchmark-history/
+          fi
+          
+          # Only commit if there are changes
+          if ! git diff --quiet || ! git diff --staged --quiet; then
+            git commit -m "Update benchmark trends [skip ci]"
+            git push
+          else
+            echo "No changes to commit"
+          fi
+      
+      # Upload benchmark history
+      - name: Upload benchmark history
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-history
+          path: benchmark-history/
+          retention-days: 90

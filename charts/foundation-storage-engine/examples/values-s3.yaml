@@ -1,0 +1,40 @@
+# Example values for S3 backend
+# Usage: helm install s3proxy ./charts/s3proxy -f ./charts/s3proxy/values-s3.yaml
+
+# Service configuration - custom name
+service:
+  name: s3-gateway
+  type: LoadBalancer
+  port: 80
+
+# S3 Proxy Configuration
+config:
+  storage:
+    provider: "s3"
+    s3:
+      endpoint: "https://s3.amazonaws.com"
+      region: "us-west-2"
+      accessKey: "your-access-key"
+      secretKey: "your-secret-key"  # pragma: allowlist secret
+      usePathStyle: false
+
+  # No authentication for public access
+  auth:
+    type: "none"
+
+# Resources for high performance
+resources:
+  limits:
+    cpu: 4000m
+    memory: 4Gi
+  requests:
+    cpu: 2000m
+    memory: 2Gi
+
+# High availability
+replicaCount: 3
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
