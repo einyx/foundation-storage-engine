@@ -1,0 +1,33 @@
+# Configuration for using real S3 as backend
+server:
+  listen: ":8080"
+  read_timeout: 60s
+  write_timeout: 60s
+  max_body_size: 5368709120  # 5GB
+
+s3:
+  region: "us-east-1"
+  path_style: true
+
+# Use S3 as storage backend - buckets pass through directly
+storage:
+  provider: s3
+  s3:
+    region: "us-east-1"
+    # Option 1: Use AWS credentials directly
+    access_key: "${AWS_ACCESS_KEY_ID}"
+    secret_key: "${AWS_SECRET_ACCESS_KEY}"
+
+    # Option 2: Use AWS profile (comment out access_key/secret_key above)
+    # profile: "default"
+
+    # Option 3: Use environment variables (comment out both above)
+    # AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY will be used
+
+# Authentication for clients connecting to the proxy
+auth:
+  type: awsv4  # Clients must use AWS signature v4
+  # Or use basic auth:
+  # type: basic
+  # identity: "${AUTH_IDENTITY}"
+  # credential: "${AUTH_CREDENTIAL}"

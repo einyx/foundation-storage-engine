@@ -1,0 +1,50 @@
+# Example configuration for s3proxy-go
+
+# Server configuration
+server:
+  listen: ":8080"
+  read_timeout: 60s
+  write_timeout: 60s
+  max_body_size: 5368709120  # 5GB
+
+# S3 API configuration
+s3:
+  region: "us-east-1"
+  path_style: true  # Use path-style URLs (http://localhost:8080/bucket/key)
+
+# Storage backend configuration
+storage:
+  # Option 1: Use filesystem storage (no real S3 required)
+  provider: filesystem
+  filesystem:
+    base_dir: "./data"
+
+  # Option 2: Use Azure Blob Storage as backend
+  # provider: azure
+  # azure:
+  #   account_name: "${AZURE_STORAGE_ACCOUNT}"
+  #   account_key: "${AZURE_STORAGE_KEY}"
+  #   container_name: "mycontainer"  # All S3 buckets map to this container
+
+  # Option 3: Use real S3 as backend
+  # provider: s3
+  # s3:
+  #   region: "us-east-1"
+  #   access_key: "${AWS_ACCESS_KEY_ID}"
+  #   secret_key: "${AWS_SECRET_ACCESS_KEY}"
+  #   # Or use AWS profile
+  #   # profile: "default"
+
+# Authentication configuration
+auth:
+  type: basic  # Options: none, basic, awsv2, awsv4
+  identity: "${AUTH_IDENTITY}"
+  credential: "${AUTH_CREDENTIAL}"
+
+# Encryption configuration (optional)
+encryption:
+  enabled: false
+  # algorithm: "AES-256-GCM"
+  # key_provider: "local"
+  # local:
+  #   master_key: "base64-encoded-32-byte-key"

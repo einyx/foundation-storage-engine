@@ -1,0 +1,97 @@
+# KMS Configuration for Docker Development
+# Uses AWS profile 'dev' for authentication
+
+# Basic server configuration
+listen: "0.0.0.0:8080"
+
+# Storage backend - MinIO for local development
+storage:
+  provider: s3
+  s3:
+    endpoint: "http://minio:9000"
+    region: "us-east-1"
+    access_key: "minioadmin"
+    secret_key: "minioadmin"
+    use_path_style: true
+    disable_ssl: true
+    bucket_mapping:
+      encrypted-bucket: test-encrypted-bucket
+      sensitive-data: sensitive-data-bucket
+
+# Authentication
+auth:
+  type: basic
+  identity: admin
+  credential: secret
+
+# KMS Encryption Configuration
+encryption:
+  enabled: true
+  algorithm: AES-256-GCM
+  key_provider: aws-kms
+
+  # AWS KMS Configuration (uses AWS profile 'dev')
+  kms:
+    enabled: true
+    default_key_id: "alias/s3proxy-dev"
+    key_spec: "AES_256"
+    region: "us-east-1"
+    encryption_context:
+      application: "s3proxy"
+      environment: "development"
+      version: "1.0"
+    data_key_cache_ttl: "5m"
+    validate_keys: true
+    enable_key_rotation: false
+
+  # Optional: Multi-provider setup for testing
+  key_providers:
+    # AWS KMS using dev profile
+    dev-kms:
+      type: aws-kms
+      config:
+        default_key_id: "alias/s3proxy-dev"
+        region: "us-east-1"
+        encryption_context:
+          env: "development"
+        data_key_cache_ttl: "5m"
+
+    # Local provider for fallback/testing
+    local-dev:
+      type: local
+      config:
+        # Base64 encoded 32-byte key for AES-256
+        master_key: "ZGV2ZWxvcG1lbnRtYXN0ZXJrZXkzMmJ5dGVzaGVyZQ=="
+        data_key_cache_ttl: "1m"
+
+  # Bucket-specific encryption policies
+  policies:
+    - bucket_pattern: "sensitive-*"
+      key_provider: aws-kms
+      algorithm: AES-256-GCM
+      mandatory: true
+
+    - bucket_pattern: "test-*"
+      key_provider: local-dev
+      algorithm: AES-256-GCM
+      mandatory: false
+
+# Rate limiting
+rate_limit:
+  enabled: true
+  requests_per_second: 100
+  burst: 200
+
+# Disable TLS for local development
+tls:
+  enabled: false
+
+# Detailed logging for development
+logging:
+  level: debug
+  format: json
+
+# Enable metrics for monitoring
+metrics:
+  enabled: true
+  address: "0.0.0.0:9090"

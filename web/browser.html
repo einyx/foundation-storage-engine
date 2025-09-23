@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Foundation Storage - Multi-Provider</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script src="/ui/js/iceberg-parser.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        :root {
+            --sidebar-width: 240px;
+            --header-height: 52px;
+        }
+        
+        /* Smooth animations */
+        * {
+            transition: all 0.2s ease;
+        }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #e5e7eb;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #d1d5db;
+        }
+        
+        /* Backdrop blur effect */
+        .backdrop-blur-xl {
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        
+        /* Glass morphism */
+        .glass {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+        
+        /* Smooth hover effects */
+        .hover-lift {
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .hover-lift:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* Apple-style focus */
+        input:focus, button:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
+        /* Sidebar */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: rgba(249, 250, 251, 0.8);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(0, 0, 0, 0.05);
+        }
+        
+        /* Header */
+        .header {
+            height: var(--header-height);
+            background: rgba(255, 255, 255, 0.72);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        }
+        
+        /* Main layout */
+        .main-layout {
+            display: grid;
+            grid-template-columns: var(--sidebar-width) 1fr;
+            height: 100vh;
+        }
+        
+        .content-area {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        /* Loading spinner */
+        .loading-spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 0.8s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Buttons */
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+            font-size: 0.875rem;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            transition: all 0.2s;
+        }
+        
+        .btn-primary:hover {
+            background: #2563eb;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        
+        .btn-secondary {
+            background: white;
+            color: #374151;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+            font-size: 0.875rem;
+            border: 1px solid #e5e7eb;
+            transition: all 0.2s;
+        }
+        
+        .btn-secondary:hover {
+            background: #f9fafb;
+            border-color: #d1d5db;
+        }
+        
+        /* File grid */
+        .file-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 1rem;
+            padding: 1.5rem;
+        }
+        
+        .file-item {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.75rem;
+            padding: 1rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+        
+        .file-item:hover {
+            border-color: #3b82f6;
+            box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+        
+        .file-item.selected {
+            border-color: #3b82f6;
+            background: #eff6ff;
+        }
+        
+        /* Backend badges */
+        .backend-badge {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            font-size: 0.625rem;
+            font-weight: 600;
+            padding: 0.125rem 0.375rem;
+            border-radius: 0.25rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .backend-badge.aws {
+            background: #ff9900;
+            color: white;
+        }
+        
+        .backend-badge.azure {
+            background: #0078d4;
+            color: white;
+        }
+        
+        .backend-badge.multi {
+            background: linear-gradient(90deg, #ff9900 50%, #0078d4 50%);
+            color: white;
+        }
+        
+        /* Slide panel */
+        .slide-panel {
+            position: fixed;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 400px;
+            background: white;
+            box-shadow: -4px 0 16px rgba(0, 0, 0, 0.1);
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+            z-index: 50;
+        }
+        
+        .slide-panel.open {
+            transform: translateX(0);
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .main-layout {
+                grid-template-columns: 1fr;
+            }
+            
+            .sidebar {
+                display: none;
+            }
+            
+            .file-grid {
+                grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            }
+            
+            .slide-panel {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50" x-data="storageApp()">
+    <div class="main-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar flex flex-col">
+            <!-- Logo -->
+            <div class="px-6 py-4 border-b border-gray-200">
+                <div class="flex items-center gap-3">
+                    <img src="/ui/logo.png" alt="Logo" class="w-8 h-8">
+                    <h1 class="text-lg font-semibold text-gray-900">Foundation Storage</h1>
+                </div>
+            </div>
+            
+            <!-- Navigation -->
+            <nav class="flex-1 px-2 pb-4 overflow-y-auto">
+                <div class="mb-6">
+                    <h3 class="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Buckets</h3>
+                    <div class="space-y-1">
+                        <template x-for="bucket in bucketsWithBackends" :key="bucket.name">
+                            <button 
+                                @click="selectBucket(bucket.name)"
+                                :class="selectedBucket === bucket.name ? 'bg-blue-50 text-blue-600 border-blue-200' : 'text-gray-700 hover:bg-gray-100'"
+                                class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors relative"
+                            >
+                                <svg class="w-4 h-4" :class="selectedBucket === bucket.name ? 'text-blue-500' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                          d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                                </svg>
+                                <span class="truncate flex-1 text-left" x-text="bucket.name"></span>
+                                <div class="flex gap-1">
+                                    <span x-show="bucket.backends.includes('s3')" 
+                                          class="w-4 h-4 rounded-full bg-orange-500 flex items-center justify-center text-white text-xs font-bold" 
+                                          title="AWS S3">S</span>
+                                    <span x-show="bucket.backends.includes('azure')" 
+                                          class="w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold"
+                                          title="Azure Blob Storage">A</span>
+                                </div>
+                            </button>
+                        </template>
+                    </div>
+                </div>
+                
+                <!-- Quick Access -->
+                <div>
+                    <h3 class="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Quick Access</h3>
+                    <div class="space-y-1">
+                        <button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100">
+                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            Recent
+                        </button>
+                        <button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100">
+                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path>
+                            </svg>
+                            Favorites
+                        </button>
+                    </div>
+                </div>
+            </nav>
+            
+            <!-- User Profile -->
+            <div class="p-4 border-t border-gray-200" x-data="{ showProfile: false }">
+                <button @click="showProfile = !showProfile" class="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100">
+                    <div class="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white text-sm font-semibold">
+                        <span x-text="userEmail ? userEmail.charAt(0).toUpperCase() : 'U'"></span>
+                    </div>
+                    <div class="flex-1 text-left">
+                        <div class="text-sm font-medium text-gray-900" x-text="userEmail || 'User'"></div>
+                        <div class="text-xs text-gray-500">Administrator</div>
+                    </div>
+                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                </button>
+                
+                <!-- Profile Menu -->
+                <div x-show="showProfile" @click.away="showProfile = false" x-transition class="absolute bottom-20 left-4 right-4 bg-white rounded-lg shadow-lg border border-gray-200 py-2">
+                    <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Settings</a>
+                    <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Help</a>
+                    <hr class="my-2 border-gray-200">
+                    <button @click="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sign Out</button>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main Content -->
+        <div class="content-area">
+            <!-- Header -->
+            <header class="header px-6 flex items-center justify-between">
+                <!-- Breadcrumb -->
+                <nav class="flex items-center space-x-2 text-sm">
+                    <button @click="navigateTo('')" class="text-gray-500 hover:text-gray-700">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                        </svg>
+                    </button>
+                    <template x-for="(part, index) in currentPath.split('/').filter(p => p)" :key="index">
+                        <div class="flex items-center">
+                            <svg class="w-4 h-4 text-gray-400 mx-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                            <button 
+                                @click="navigateTo(currentPath.split('/').slice(0, index + 1).join('/'))" 
+                                class="text-gray-700 hover:text-gray-900 font-medium"
+                                x-text="part"
+                            ></button>
+                        </div>
+                    </template>
+                </nav>
+                
+                <!-- Actions -->
+                <div class="flex items-center gap-2">
+                    <!-- Recursive toggle -->
+                    <button @click="recursiveMode = !recursiveMode; loadContents()" 
+                            :class="recursiveMode ? 'bg-blue-100 text-blue-700' : 'text-gray-600'"
+                            class="p-2 hover:bg-gray-100 rounded-lg flex items-center gap-1 text-sm"
+                            title="Toggle recursive view">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                        </svg>
+                        <span x-show="recursiveMode" class="text-xs">Recursive</span>
+                    </button>
+                    
+                    <button class="p-2 hover:bg-gray-100 rounded-lg">
+                        <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                    </button>
+                    <button class="p-2 hover:bg-gray-100 rounded-lg">
+                        <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                    </button>
+                    <div class="h-6 w-px bg-gray-300 mx-2"></div>
+                    
+                    <!-- Upload dropdown -->
+                    <div class="relative" x-data="{ uploadOpen: false }">
+                        <button @click="uploadOpen = !uploadOpen" class="btn-primary flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                            </svg>
+                            Upload
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </button>
+                        <div x-show="uploadOpen" @click.away="uploadOpen = false" x-transition
+                             class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
+                            <button @click="uploadFiles(); uploadOpen = false" 
+                                    class="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                </svg>
+                                Upload Files
+                            </button>
+                            <button @click="uploadDirectory(); uploadOpen = false"
+                                    class="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                                </svg>
+                                Upload Folder
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </header>
+            
+            <!-- Content -->
+            <main class="flex-1 overflow-auto bg-white">
+                <!-- Iceberg Table Banner -->
+                <div x-show="isIcebergTable" x-transition class="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-100">
+                    <div class="px-6 py-4 flex items-center gap-4">
+                        <div class="w-12 h-12 bg-white rounded-lg shadow-sm flex items-center justify-center">
+                            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
+                            </svg>
+                        </div>
+                        <div class="flex-1">
+                            <h3 class="font-semibold text-gray-900">Apache Iceberg Table</h3>
+                            <p class="text-sm text-gray-600 mt-0.5">This directory contains table data and metadata files</p>
+                        </div>
+                        <button class="btn-secondary text-sm">View Table Info</button>
+                    </div>
+                </div>
+                
+                <!-- Loading State -->
+                <div x-show="loading" class="flex items-center justify-center h-96">
+                    <div class="text-center">
+                        <div class="loading-spinner mx-auto mb-4"></div>
+                        <p class="text-sm text-gray-500">Loading files...</p>
+                    </div>
+                </div>
+                
+                <!-- Error State -->
+                <div x-show="error && !loading" class="flex items-center justify-center h-96">
+                    <div class="text-center max-w-md">
+                        <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900 mb-2">Unable to load files</h3>
+                        <p class="text-sm text-gray-600 mb-4" x-text="error"></p>
+                        <button @click="loadContents()" class="btn-secondary">Try Again</button>
+                    </div>
+                </div>
+                
+                <!-- Empty State -->
+                <div x-show="!loading && !error && files.length === 0 && directories.length === 0" class="flex items-center justify-center h-96">
+                    <div class="text-center max-w-md">
+                        <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                            </svg>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900 mb-2">This folder is empty</h3>
+                        <p class="text-sm text-gray-600 mb-4">Upload files or create folders to get started</p>
+                        <button class="btn-primary">Upload Files</button>
+                    </div>
+                </div>
+                
+                <!-- Files Grid -->
+                <div x-show="!loading && !error && (files.length > 0 || directories.length > 0)" class="file-grid">
+                    <!-- Directories -->
+                    <template x-for="dir in directories" :key="dir.name">
+                        <div @click="navigateTo(currentPath ? currentPath + '/' + dir.name : dir.name)" 
+                             @contextmenu.prevent="showContextMenu($event, 'directory', dir)"
+                             class="file-item hover-lift relative group">
+                            <div class="w-16 h-16 mx-auto mb-3 flex items-center justify-center">
+                                <svg class="w-12 h-12 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                                </svg>
+                            </div>
+                            <p class="text-sm font-medium text-gray-900 truncate" x-text="dir.name"></p>
+                            <p class="text-xs text-gray-500 mt-1">Folder</p>
+                            <span x-show="dir.backend" 
+                                  :class="{
+                                      'aws': dir.backend === 's3',
+                                      'azure': dir.backend === 'azure',
+                                      'multi': dir.backend === 'multi'
+                                  }"
+                                  class="backend-badge" 
+                                  x-text="dir.backend === 's3' ? 'AWS' : dir.backend === 'azure' ? 'Azure' : 'Multi'"></span>
+                            <!-- More Options Button -->
+                            <button @click.stop="showContextMenu($event, 'directory', dir)" 
+                                    class="absolute top-2 right-2 p-1 rounded hover:bg-gray-200 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </template>
+                    
+                    <!-- Files -->
+                    <template x-for="file in files" :key="file.name">
+                        <div @click="selectedFile = file; showDetails = true" 
+                             @contextmenu.prevent="showContextMenu($event, 'file', file)"
+                             :class="selectedFile && selectedFile.name === file.name ? 'selected' : ''"
+                             class="file-item hover-lift relative group">
+                            <div class="w-16 h-16 mx-auto mb-3 flex items-center justify-center">
+                                <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                </svg>
+                            </div>
+                            <p class="text-sm font-medium text-gray-900 truncate" x-text="file.name"></p>
+                            <p class="text-xs text-gray-500 mt-1" x-text="formatFileSize(file.size)"></p>
+                            <span x-show="file.backend" 
+                                  :class="{
+                                      'aws': file.backend === 's3',
+                                      'azure': file.backend === 'azure',
+                                      'multi': file.backend === 'multi'
+                                  }"
+                                  class="backend-badge" 
+                                  x-text="file.backend === 's3' ? 'AWS' : file.backend === 'azure' ? 'Azure' : 'Multi'"></span>
+                            <!-- More Options Button -->
+                            <button @click.stop="showContextMenu($event, 'file', file)" 
+                                    class="absolute top-2 right-2 p-1 rounded hover:bg-gray-200 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </template>
+                </div>
+            </main>
+        </div>
+    </div>
+    
+    <!-- Details Panel -->
+    <div :class="showDetails ? 'open' : ''" class="slide-panel">
+        <div class="h-full flex flex-col">
+            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h2 class="text-lg font-semibold text-gray-900">File Details</h2>
+                <button @click="showDetails = false" class="p-2 hover:bg-gray-100 rounded-lg">
+                    <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <div x-show="selectedFile" class="flex-1 overflow-y-auto p-6">
+                <div class="space-y-6">
+                    <!-- Preview -->
+                    <div class="bg-gray-100 rounded-lg p-8 flex items-center justify-center">
+                        <svg class="w-24 h-24 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                    </div>
+                    
+                    <!-- Info -->
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-900 mb-3">Information</h3>
+                        <dl class="space-y-2">
+                            <div class="flex justify-between py-2 border-b border-gray-100">
+                                <dt class="text-sm text-gray-500">Name</dt>
+                                <dd class="text-sm font-medium text-gray-900" x-text="selectedFile?.name"></dd>
+                            </div>
+                            <div class="flex justify-between py-2 border-b border-gray-100">
+                                <dt class="text-sm text-gray-500">Size</dt>
+                                <dd class="text-sm font-medium text-gray-900" x-text="selectedFile ? formatFileSize(selectedFile.size) : ''"></dd>
+                            </div>
+                            <div class="flex justify-between py-2 border-b border-gray-100">
+                                <dt class="text-sm text-gray-500">Modified</dt>
+                                <dd class="text-sm font-medium text-gray-900" x-text="selectedFile ? formatDate(selectedFile.lastModified) : ''"></dd>
+                            </div>
+                            <div class="flex justify-between py-2 border-b border-gray-100">
+                                <dt class="text-sm text-gray-500">Storage Backend</dt>
+                                <dd class="text-sm font-medium">
+                                    <span x-show="selectedFile?.backend" 
+                                          :class="{
+                                              'aws': selectedFile?.backend === 's3',
+                                              'azure': selectedFile?.backend === 'azure'
+                                          }"
+                                          class="backend-badge" 
+                                          x-text="selectedFile?.backend === 's3' ? 'AWS S3' : selectedFile?.backend === 'azure' ? 'Azure Blob' : selectedFile?.backend"></span>
+                                </dd>
+                            </div>
+                        </dl>
+                    </div>
+                    
+                    <!-- Actions -->
+                    <div class="flex gap-3">
+                        <button @click="downloadFile(selectedFile)" class="btn-primary flex-1">Download</button>
+                        <button class="btn-secondary flex-1">Share</button>
+                        <button @click="deleteItem('file', selectedFile)" class="btn-secondary flex-1 text-red-600 hover:bg-red-50">Delete</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Context Menu -->
+    <div x-show="contextMenu.show" 
+         @click.away="contextMenu.show = false"
+         :style="{top: contextMenu.y + 'px', left: contextMenu.x + 'px'}"
+         class="fixed z-50 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[160px]"
+         x-transition>
+        <button @click="downloadItem()" 
+                x-show="contextMenu.type === 'file'"
+                class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"></path>
+            </svg>
+            Download
+        </button>
+        <button @click="deleteContextItem()" 
+                class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+            Delete
+        </button>
+    </div>
+    
+    <script>
+        function storageApp() {
+            return {
+                buckets: [],
+                bucketsWithBackends: [],
+                selectedBucket: '',
+                currentPath: '',
+                files: [],
+                directories: [],
+                loading: false,
+                error: null,
+                showDetails: false,
+                selectedFile: null,
+                isIcebergTable: false,
+                recursiveMode: false,
+                userEmail: localStorage.getItem('userEmail') || null,
+                contextMenu: {
+                    show: false,
+                    x: 0,
+                    y: 0,
+                    type: null,
+                    item: null
+                },
+                
+                async init() {
+                    // Check authentication
+                    const token = localStorage.getItem('token');
+                    if (!token && window.location.pathname !== '/ui/login') {
+                        window.location.href = '/ui/login';
+                        return;
+                    }
+                    
+                    await this.loadBuckets();
+                },
+                
+                async loadBuckets() {
+                    try {
+                        const response = await fetch('/');
+                        const text = await response.text();
+                        const parser = new DOMParser();
+                        const xml = parser.parseFromString(text, 'text/xml');
+                        
+                        const bucketElements = xml.querySelectorAll('Bucket');
+                        this.buckets = Array.from(bucketElements).map(b => 
+                            b.querySelector('Name').textContent
+                        );
+                        
+                        // Track which backends have each bucket
+                        const bucketBackends = {};
+                        
+                        // Get backend info from headers (if available)
+                        const backendHeader = response.headers.get('X-Backend-Mapping');
+                        if (backendHeader) {
+                            try {
+                                const mapping = JSON.parse(backendHeader);
+                                Object.assign(bucketBackends, mapping);
+                            } catch (e) {
+                                console.error('Failed to parse backend mapping', e);
+                            }
+                        }
+                        
+                        // Determine backend based on bucket name prefix
+                        this.bucketsWithBackends = this.buckets.map(bucket => {
+                            let backends = bucketBackends[bucket];
+                            
+                            // If no backend info from server, determine based on bucket name
+                            if (!backends) {
+                                if (bucket.startsWith('azure-')) {
+                                    backends = ['azure'];
+                                } else {
+                                    backends = ['s3'];
+                                }
+                            }
+                            
+                            return {
+                                name: bucket,
+                                backends: Array.isArray(backends) ? backends : [backends]
+                            };
+                        });
+                        
+                        if (this.buckets.length > 0 && !this.selectedBucket) {
+                            this.selectBucket(this.buckets[0]);
+                        }
+                    } catch (error) {
+                        console.error('Failed to load buckets:', error);
+                    }
+                },
+                
+                selectBucket(bucket) {
+                    this.selectedBucket = bucket;
+                    this.currentPath = '';
+                    this.loadContents();
+                },
+                
+                navigateTo(path) {
+                    this.currentPath = path;
+                    this.loadContents();
+                },
+                
+                async loadContents() {
+                    if (!this.selectedBucket) return;
+                    
+                    this.loading = true;
+                    this.error = null;
+                    
+                    console.log('loadContents called - currentPath:', this.currentPath, 'selectedBucket:', this.selectedBucket);
+                    
+                    try {
+                        const prefix = this.currentPath ? this.currentPath + '/' : '';
+                        // Don't use delimiter in recursive mode
+                        const delimiter = this.recursiveMode ? '' : '&delimiter=/';
+                        const url = `/${this.selectedBucket}?list-type=2&prefix=${encodeURIComponent(prefix)}${delimiter}`;
+                        
+                        console.log('Fetching URL:', url);
+                        const response = await fetch(url);
+                        
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        
+                        const text = await response.text();
+                        console.log('S3 ListObjects response for', url, ':', text);
+                        if (this.currentPath === 'foundation') {
+                            console.log('DEBUG: Foundation listing response:', text);
+                        }
+                        const parser = new DOMParser();
+                        const xml = parser.parseFromString(text, 'text/xml');
+                        
+                        // Check for XML parsing errors
+                        const parseError = xml.querySelector('parsererror');
+                        if (parseError) {
+                            console.error('XML parsing error:', parseError.textContent);
+                            throw new Error('Failed to parse server response');
+                        }
+                        
+                        // Log the raw XML content nodes
+                        console.log('CommonPrefixes found:', xml.querySelectorAll('CommonPrefixes').length);
+                        console.log('Contents found:', xml.querySelectorAll('Contents').length);
+                        
+                        // Check for Iceberg table
+                        this.checkForIcebergTable();
+                        
+                        // Parse directories (CommonPrefixes) - only in non-recursive mode
+                        if (!this.recursiveMode) {
+                            const prefixes = xml.querySelectorAll('CommonPrefixes');
+                            this.directories = Array.from(prefixes).map(p => {
+                                const fullPrefix = p.querySelector('Prefix').textContent;
+                                console.log('Processing CommonPrefix:', fullPrefix, 'Current prefix:', prefix);
+                                // Remove the current prefix and trailing slash
+                                let name = fullPrefix;
+                                if (name.startsWith(prefix)) {
+                                    name = name.substring(prefix.length);
+                                }
+                                if (name.endsWith('/')) {
+                                    name = name.substring(0, name.length - 1);
+                                }
+                                console.log('Directory parsed:', fullPrefix, '->', name);
+                                return {
+                                    name: name,
+                                    backend: this.selectedBucket.startsWith('azure-') ? 'azure' : 's3'
+                                };
+                            });
+                        } else {
+                            this.directories = [];
+                        }
+                        
+                        // Parse files - handle both files and directory objects
+                        const contents = xml.querySelectorAll('Contents');
+                        const allObjects = Array.from(contents).map(c => {
+                            const key = c.querySelector('Key').textContent;
+                            const name = key.replace(prefix, '');
+                            const size = parseInt(c.querySelector('Size').textContent);
+                            const backend = c.querySelector('Backend')?.textContent || 
+                                           response.headers.get(`X-Object-Backend-${name}`) || 
+                                           (this.selectedBucket.startsWith('azure-') ? 'azure' : 's3');
+                            
+                            return {
+                                key: key,
+                                name: name,
+                                size: size,
+                                lastModified: c.querySelector('LastModified').textContent,
+                                etag: c.querySelector('ETag').textContent,
+                                backend: backend,
+                                isDirectory: key.endsWith('/') || size === 0
+                            };
+                        });
+                        
+                        // Separate files and directories
+                        const filesAndDirs = allObjects.filter(obj => obj.key !== prefix);
+                        
+                        // Add directories that appear as objects (size 0 or ending with /)
+                        if (!this.recursiveMode) {
+                            const dirObjects = filesAndDirs.filter(obj => obj.isDirectory);
+                            dirObjects.forEach(dir => {
+                                let dirName = dir.name;
+                                if (dirName.endsWith('/')) {
+                                    dirName = dirName.substring(0, dirName.length - 1);
+                                }
+                                // Check if we already have this directory from CommonPrefixes
+                                if (!this.directories.some(d => d.name === dirName)) {
+                                    console.log('Directory object found:', dir.key, '->', dirName);
+                                    this.directories.push({
+                                        name: dirName,
+                                        backend: dir.backend
+                                    });
+                                }
+                            });
+                        }
+                        
+                        // Files are objects that don't end with / and have size > 0
+                        this.files = filesAndDirs
+                            .filter(obj => !obj.isDirectory)
+                            .map(obj => ({
+                                name: obj.name,
+                                size: obj.size,
+                                lastModified: obj.lastModified,
+                                etag: obj.etag,
+                                backend: obj.backend
+                            }));
+                        
+                        console.log('Final state - directories:', this.directories.length, this.directories);
+                        console.log('Final state - files:', this.files.length, this.files);
+                            
+                    } catch (error) {
+                        console.error('Error in loadContents:', error);
+                        this.error = error.message || 'Failed to load contents';
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                checkForIcebergTable() {
+                    // Check if this directory contains Iceberg metadata
+                    const hasMetadataJson = this.files.some(f => f.name === 'metadata.json');
+                    const hasMetadataDir = this.directories.some(d => d.name === 'metadata');
+                    const hasDataDir = this.directories.some(d => d.name === 'data');
+                    
+                    this.isIcebergTable = hasMetadataJson || (hasMetadataDir && hasDataDir);
+                },
+                
+                formatFileSize(bytes) {
+                    if (bytes === 0) return '0 Bytes';
+                    const k = 1024;
+                    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+                    const i = Math.floor(Math.log(bytes) / Math.log(k));
+                    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                },
+                
+                formatDate(dateString) {
+                    const date = new Date(dateString);
+                    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+                },
+                
+                logout() {
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('userEmail');
+                    window.location.href = '/ui/login';
+                },
+                
+                uploadFiles() {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.multiple = true;
+                    input.onchange = async (e) => {
+                        const files = e.target.files;
+                        for (const file of files) {
+                            if (!file) {
+                                console.warn('Skipping undefined file');
+                                continue;
+                            }
+                            await this.uploadFile(file, file.name);
+                        }
+                        this.loadContents();
+                    };
+                    input.click();
+                },
+                
+                uploadDirectory() {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.multiple = true;
+                    
+                    // Set directory attributes for different browsers
+                    input.setAttribute('webkitdirectory', '');
+                    input.setAttribute('directory', '');
+                    input.setAttribute('mozdirectory', '');
+                    
+                    input.onchange = async (e) => {
+                        const files = e.target.files;
+                        if (files.length === 0) return;
+                        
+                        // Check if directory upload is supported
+                        const firstFile = files[0];
+                        const hasPath = firstFile.webkitRelativePath || firstFile.relativePath;
+                        
+                        if (!hasPath) {
+                            alert('Directory upload is not supported in your browser. Please use Chrome, Edge, or Firefox.');
+                            return;
+                        }
+                        
+                        console.log(`Uploading ${files.length} files from directory...`);
+                        
+                        for (const file of files) {
+                            // Preserve directory structure
+                            const path = file.webkitRelativePath || file.relativePath || file.name;
+                            await this.uploadFile(file, path);
+                        }
+                        this.loadContents();
+                    };
+                    input.click();
+                },
+                
+                async uploadFile(file, path) {
+                    try {
+                        const fullPath = this.currentPath ? this.currentPath + '/' + path : path;
+                        const url = `/${this.selectedBucket}/${fullPath}`;
+                        
+                        const response = await fetch(url, {
+                            method: 'PUT',
+                            body: file,
+                            headers: {
+                                'Content-Type': file.type || 'application/octet-stream'
+                            }
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error(`Upload failed: ${response.statusText}`);
+                        }
+                    } catch (error) {
+                        console.error('Upload error:', error);
+                        this.error = `Failed to upload ${file.name}: ${error.message}`;
+                    }
+                },
+                
+                showContextMenu(event, type, item) {
+                    this.contextMenu.show = true;
+                    this.contextMenu.x = event.clientX;
+                    this.contextMenu.y = event.clientY;
+                    this.contextMenu.type = type;
+                    this.contextMenu.item = item;
+                },
+                
+                async deleteContextItem() {
+                    this.contextMenu.show = false;
+                    await this.deleteItem(this.contextMenu.type, this.contextMenu.item);
+                },
+                
+                async deleteItem(type, item) {
+                    const itemName = type === 'directory' ? `folder "${item.name}"` : `file "${item.name}"`;
+                    if (!confirm(`Are you sure you want to delete ${itemName}?`)) {
+                        return;
+                    }
+                    
+                    try {
+                        let path = this.currentPath ? this.currentPath + '/' + item.name : item.name;
+                        
+                        if (type === 'directory') {
+                            // For directories, we need to delete all contents recursively
+                            await this.deleteDirectory(path);
+                        } else {
+                            // For files, simple DELETE request
+                            const url = `/${this.selectedBucket}/${path}`;
+                            const response = await fetch(url, {
+                                method: 'DELETE'
+                            });
+                            
+                            if (!response.ok) {
+                                throw new Error(`Delete failed: ${response.statusText}`);
+                            }
+                        }
+                        
+                        // Refresh the listing
+                        await this.loadContents();
+                        
+                        // Close details panel if we deleted the selected file
+                        if (this.selectedFile && this.selectedFile.name === item.name) {
+                            this.showDetails = false;
+                            this.selectedFile = null;
+                        }
+                    } catch (error) {
+                        console.error('Delete error:', error);
+                        this.error = `Failed to delete ${itemName}: ${error.message}`;
+                    }
+                },
+                
+                async deleteDirectory(dirPath) {
+                    // List all objects with the directory prefix
+                    const prefix = dirPath.endsWith('/') ? dirPath : dirPath + '/';
+                    const url = `/${this.selectedBucket}?list-type=2&prefix=${encodeURIComponent(prefix)}`;
+                    
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        throw new Error(`Failed to list directory contents: ${response.statusText}`);
+                    }
+                    
+                    const text = await response.text();
+                    const parser = new DOMParser();
+                    const xml = parser.parseFromString(text, 'text/xml');
+                    
+                    // Get all objects to delete
+                    const contents = xml.querySelectorAll('Contents');
+                    const keysToDelete = Array.from(contents).map(c => c.querySelector('Key').textContent);
+                    
+                    // Add the directory itself if it exists as an object
+                    if (!keysToDelete.includes(prefix)) {
+                        keysToDelete.push(prefix);
+                    }
+                    
+                    // Delete all objects
+                    for (const key of keysToDelete) {
+                        const deleteUrl = `/${this.selectedBucket}/${key}`;
+                        const deleteResponse = await fetch(deleteUrl, {
+                            method: 'DELETE'
+                        });
+                        
+                        if (!deleteResponse.ok && deleteResponse.status !== 404) {
+                            console.warn(`Failed to delete ${key}: ${deleteResponse.statusText}`);
+                        }
+                    }
+                },
+                
+                downloadFile(file) {
+                    const path = this.currentPath ? this.currentPath + '/' + file.name : file.name;
+                    const url = `/${this.selectedBucket}/${path}`;
+                    
+                    // Create a temporary link and click it
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = file.name;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                },
+                
+                downloadItem() {
+                    this.contextMenu.show = false;
+                    if (this.contextMenu.type === 'file') {
+                        this.downloadFile(this.contextMenu.item);
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>

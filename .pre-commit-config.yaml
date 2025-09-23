@@ -1,0 +1,57 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.27.2
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+      - id: go-vet
+      - id: go-imports
+      - id: go-cyclo
+        args: [-over=15]
+      - id: golangci-lint
+      - id: go-mod-tidy
+      - id: go-unit-tests
+
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.3
+    hooks:
+      - id: bandit
+        args: ['-ll']
+        files: .py$
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+
+  - repo: local
+    hooks:
+      - id: go-security-check
+        name: Go Security Check
+        entry: bash -c 'command -v gosec >/dev/null 2>&1 && gosec -fmt json -out gosec-report.json ./... || echo "gosec not installed, skipping"'
+        language: system
+        pass_filenames: false
+        files: '\.go$'
+
+      - id: dockerfile-lint
+        name: Dockerfile Lint
+        entry: bash -c 'command -v hadolint >/dev/null 2>&1 && find . -name "Dockerfile*" -exec hadolint {} \; || echo "hadolint not installed, skipping"'
+        language: system
+        pass_filenames: false
+        files: 'Dockerfile'

@@ -1,0 +1,163 @@
+project_name: foundation-storage-engine
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: foundation-storage-engine
+    main: ./cmd/foundation-storage-engine
+    binary: foundation-storage-engine
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+      - -X main.builtBy=goreleaser
+
+archives:
+  - id: foundation-storage-engine
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE*
+      - .env.example
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+nfpms:
+  - id: foundation-storage-engine
+    package_name: foundation-storage-engine
+    vendor: Foundation Storage Engine
+    homepage: https://github.com/{{ .Env.GITHUB_REPOSITORY }}
+    maintainer: Foundation Storage Engine Team
+    description: High-performance S3-compatible proxy with encryption support
+    license: Apache 2.0
+    builds:
+      - foundation-storage-engine
+    formats:
+      - deb
+      - rpm
+    dependencies:
+      - systemd
+    bindir: /usr/bin
+    contents:
+      - src: config-test.yaml
+        dst: /etc/foundation-storage-engine/config.yaml.example
+        type: config
+      - src: ./systemd/foundation-storage-engine.service
+        dst: /lib/systemd/system/foundation-storage-engine.service
+    scripts:
+      postinstall: ./scripts/postinstall.sh
+      preremove: ./scripts/preremove.sh
+
+# Windows release is handled via archives section above
+# For installer support, consider using:
+# - MSI with WiX (requires .wxs file)
+# - Chocolatey package
+# - Scoop manifest
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: 'Features'
+      regexp: '^feat'
+    - title: 'Bug Fixes'
+      regexp: '^fix'
+    - title: 'Performance'
+      regexp: '^perf'
+    - title: 'Security'
+      regexp: '^security'
+    - title: 'Other'
+
+release:
+  github:
+    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
+    name: "foundation-storage-engine"
+  name_template: "{{.ProjectName}} v{{.Version}}"
+  header: |
+    ## Foundation Storage Engine {{.Version}}
+
+    High-performance S3-compatible proxy with support for multiple storage backends.
+
+  footer: |
+    ## Installation
+
+    ### Windows
+    Download and extract the Windows ZIP: `foundation-storage-engine_Windows_x86_64.zip`
+    ```powershell
+    # Extract and add to PATH
+    Expand-Archive foundation-storage-engine_Windows_x86_64.zip -DestinationPath C:\foundation-storage-engine
+    $env:Path += ";C:\foundation-storage-engine"
+    ```
+
+    ### Linux (Debian/Ubuntu)
+    ```bash
+    dpkg -i foundation-storage-engine_{{ .Version }}_amd64.deb
+    systemctl start foundation-storage-engine
+    ```
+
+    ### Linux (RHEL/CentOS)
+    ```bash
+    rpm -i foundation-storage-engine_{{ .Version }}_amd64.rpm
+    systemctl start foundation-storage-engine
+    ```
+
+    ## Docker Images
+
+    ```bash
+    docker pull ghcr.io/{{ .Env.GITHUB_REPOSITORY }}:{{ .Version }}
+    docker pull ghcr.io/{{ .Env.GITHUB_REPOSITORY }}:latest
+    ```
+
+    ## Helm Chart
+
+    ```bash
+    helm repo add foundation-storage-engine https://{{ .Env.GITHUB_REPOSITORY_OWNER }}.github.io/{{ .ProjectName }}
+    helm install foundation-storage-engine foundation-storage-engine/foundation-storage-engine --version {{ .Version }}
+    ```
+
+# Homebrew tap (optional - requires separate tap repository)
+# brews:
+#   - name: foundation-storage-engine
+#     homepage: https://github.com/{{ .Env.GITHUB_REPOSITORY }}
+#     description: "High-performance S3-compatible proxy"
+#     license: "Apache-2.0"
+#     tap:
+#       owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
+#       name: homebrew-tap
+#     folder: Formula

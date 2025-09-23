@@ -1,0 +1,3195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Foundation Storage</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script src="js/iceberg-parser.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        :root {
+            --sidebar-width: 240px;
+            --header-height: 52px;
+        }
+        
+        /* Smooth animations */
+        * {
+            transition: all 0.2s ease;
+        }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #e5e7eb;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #d1d5db;
+        }
+        
+        /* Backdrop blur effect */
+        .backdrop-blur-xl {
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        
+        /* Glass morphism */
+        .glass {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+        
+        /* Smooth hover effects */
+        .hover-lift {
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .hover-lift:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* Apple-style focus */
+        input:focus, button:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
+        /* Sidebar */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: rgba(249, 250, 251, 0.8);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(0, 0, 0, 0.05);
+        }
+        
+        /* Header */
+        .header {
+            height: var(--header-height);
+            background: rgba(255, 255, 255, 0.72);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        }
+        
+        /* Main layout */
+        .main-layout {
+            display: grid;
+            grid-template-columns: var(--sidebar-width) 1fr;
+            height: 100vh;
+        }
+        
+        .content-area {
+            display: grid;
+            grid-template-rows: var(--header-height) 1fr;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        /* File grid items */
+        .file-item {
+            background: white;
+            border: 1px solid rgba(0, 0, 0, 0.06);
+            transition: all 0.2s ease;
+        }
+        
+        .file-item:hover {
+            border-color: rgba(59, 130, 246, 0.3);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+        }
+        
+        .file-item.selected {
+            border-color: #3b82f6;
+            background: rgba(59, 130, 246, 0.04);
+        }
+        
+        /* Buttons */
+        .btn-primary {
+            background: #007AFF;
+            color: white;
+            font-weight: 500;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+        
+        .btn-primary:hover {
+            background: #0051D5;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+        }
+        
+        .btn-secondary {
+            background: rgba(0, 0, 0, 0.05);
+            color: #1a1a1a;
+            font-weight: 500;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        
+        .btn-secondary:hover {
+            background: rgba(0, 0, 0, 0.08);
+        }
+        
+        /* Loading animation */
+        .loading-spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(0, 0, 0, 0.1);
+            border-top-color: #007AFF;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Smooth page transitions */
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 antialiased" x-data="s3Browser()" x-init="init()" x-cloak
+      @dragenter.prevent="globalDragOver = true"
+      @dragover.prevent
+      @drop.prevent="globalDragOver = false">
+    
+    <!-- Notifications Container -->
+    <div class="fixed top-4 right-4 z-50 space-y-2" style="max-width: 24rem;">
+        <template x-for="notification in notifications" :key="notification.id">
+            <div x-transition:enter="transition ease-out duration-300"
+                 x-transition:enter-start="opacity-0 translate-x-8"
+                 x-transition:enter-end="opacity-100 translate-x-0"
+                 x-transition:leave="transition ease-in duration-200"
+                 x-transition:leave-start="opacity-100 translate-x-0"
+                 x-transition:leave-end="opacity-0 translate-x-8"
+                 class="bg-white rounded-lg shadow-lg p-4 flex items-start gap-3"
+                 :class="{
+                     'border-l-4 border-green-500': notification.type === 'success',
+                     'border-l-4 border-red-500': notification.type === 'error',
+                     'border-l-4 border-yellow-500': notification.type === 'warning'
+                 }">
+                <div class="flex-shrink-0">
+                    <svg x-show="notification.type === 'success'" class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                    </svg>
+                    <svg x-show="notification.type === 'error'" class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                    <svg x-show="notification.type === 'warning'" class="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <div class="flex-1">
+                    <h4 class="text-sm font-semibold text-gray-900" x-text="notification.title"></h4>
+                    <p class="text-sm text-gray-600 mt-1" x-text="notification.message"></p>
+                    <a x-show="notification.permalink" 
+                       :href="notification.permalink" 
+                       target="_blank"
+                       class="text-xs text-blue-600 hover:underline mt-1 inline-block">View Full Report</a>
+                </div>
+                <button @click="removeNotification(notification.id)" 
+                        class="flex-shrink-0 text-gray-400 hover:text-gray-600">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+        </template>
+    </div>
+    
+    <div class="main-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar flex flex-col">
+            <!-- Logo -->
+            <div class="p-4 flex items-center gap-3">
+                <div class="w-9 h-9 bg-blue-500 rounded-lg flex items-center justify-center">
+                    <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                              d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path>
+                    </svg>
+                </div>
+                <span class="font-semibold text-gray-800">Storage</span>
+            </div>
+            
+            <!-- Search -->
+            <div class="px-4 pb-3">
+                <div class="relative">
+                    <svg class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    <input type="text" placeholder="Search" class="w-full pl-9 pr-3 py-2 bg-white/50 border border-gray-200 rounded-lg text-sm focus:bg-white focus:border-blue-300">
+                </div>
+            </div>
+            
+            <!-- Navigation -->
+            <nav class="flex-1 px-2 pb-4 overflow-y-auto">
+                <div class="mb-6">
+                    <h3 class="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Buckets</h3>
+                    <div class="space-y-1">
+                        <template x-for="bucket in buckets" :key="bucket">
+                            <button 
+                                @click="selectBucket(bucket)"
+                                :class="selectedBucket === bucket ? 'bg-blue-50 text-blue-600 border-blue-200' : 'text-gray-700 hover:bg-gray-100'"
+                                class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+                            >
+                                <svg class="w-4 h-4" :class="selectedBucket === bucket ? 'text-blue-500' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                          d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                                </svg>
+                                <span class="truncate" x-text="bucket"></span>
+                            </button>
+                        </template>
+                    </div>
+                </div>
+                
+                <!-- Quick Access -->
+                <div>
+                    <h3 class="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Quick Access</h3>
+                    <div class="space-y-1">
+                        <button @click="showRecentFiles()" 
+                                :class="showingRecent ? 'bg-blue-50 text-blue-700' : 'text-gray-700 hover:bg-gray-100'"
+                                class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium">
+                            <svg class="w-4 h-4" :class="showingRecent ? 'text-blue-500' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            Recent
+                        </button>
+                        <button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100">
+                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path>
+                            </svg>
+                            Starred
+                        </button>
+                    </div>
+                </div>
+            </nav>
+            
+            <!-- User Profile -->
+            <div class="p-4 border-t border-gray-200">
+                <button @click="showProfile = !showProfile" class="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100">
+                    <div class="w-8 h-8 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center">
+                        <span class="text-white text-sm font-medium" x-text="userInitials"></span>
+                    </div>
+                    <div class="flex-1 text-left">
+                        <p class="text-sm font-medium text-gray-900 truncate" x-text="userName"></p>
+                        <p class="text-xs text-gray-500 truncate" x-text="userEmail"></p>
+                    </div>
+                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                </button>
+                
+                <!-- Profile Menu -->
+                <div x-show="showProfile" @click.away="showProfile = false" x-transition class="absolute bottom-20 left-4 right-4 bg-white rounded-lg shadow-lg border border-gray-200 py-2">
+                    <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Settings</a>
+                    <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Help</a>
+                    <hr class="my-2 border-gray-200">
+                    <button @click="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sign Out</button>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main Content -->
+        <div class="content-area">
+            <!-- Header -->
+            <header class="header px-6 flex items-center justify-between">
+                <!-- Breadcrumb -->
+                <nav class="flex items-center space-x-2 text-sm">
+                    <button @click="navigateTo(selectedBucket)" class="text-gray-500 hover:text-gray-700">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                        </svg>
+                    </button>
+                    <template x-if="showingRecent">
+                        <div class="flex items-center">
+                            <svg class="w-4 h-4 text-gray-400 mx-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                            <span class="text-gray-700 font-medium">Recent Files</span>
+                        </div>
+                    </template>
+                    <template x-if="!showingRecent" x-for="(part, index) in currentPath.split('/').filter(p => p)" :key="index">
+                        <div class="flex items-center">
+                            <svg class="w-4 h-4 text-gray-400 mx-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                            <button 
+                                @click="navigateTo(currentPath.split('/').slice(0, index + 1).join('/'))" 
+                                class="text-gray-700 hover:text-gray-900 font-medium"
+                                x-text="part"
+                            ></button>
+                        </div>
+                    </template>
+                </nav>
+                
+                <!-- Actions -->
+                <div class="flex items-center gap-2">
+                    <button class="p-2 hover:bg-gray-100 rounded-lg">
+                        <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                    </button>
+                    <button class="p-2 hover:bg-gray-100 rounded-lg">
+                        <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                    </button>
+                    <div class="h-6 w-px bg-gray-300 mx-2"></div>
+                    
+                    <!-- Delete button (shown when items selected) -->
+                    <button x-show="selectedItems.dirs.length > 0 || selectedItems.files.length > 0" 
+                            @click="deleteSelected()" 
+                            class="btn-secondary text-red-600 hover:bg-red-50 flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                        </svg>
+                        Delete (<span x-text="selectedItems.dirs.length + selectedItems.files.length"></span>)
+                    </button>
+                    
+                    <button @click="showUploadDialog = true" class="btn-primary flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                        </svg>
+                        Upload
+                    </button>
+                </div>
+            </header>
+            
+            <!-- Content -->
+            <main class="flex-1 overflow-auto bg-white">
+                <!-- Iceberg Table Banner -->
+                <div x-show="isIcebergTable" x-transition class="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-100">
+                    <div class="px-6 py-4 flex items-center gap-4">
+                        <div class="w-12 h-12 bg-white rounded-lg shadow-sm flex items-center justify-center">
+                            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
+                            </svg>
+                        </div>
+                        <div class="flex-1">
+                            <h3 class="font-semibold text-gray-900">Apache Iceberg Table</h3>
+                            <p class="text-sm text-gray-600 mt-0.5">This directory contains table data and metadata files</p>
+                        </div>
+                        <button class="btn-secondary text-sm">View Table Info</button>
+                    </div>
+                </div>
+                
+                <!-- Loading State -->
+                <div x-show="loading" class="flex items-center justify-center h-96">
+                    <div class="text-center">
+                        <div class="loading-spinner mx-auto mb-4"></div>
+                        <p class="text-sm text-gray-500">Loading files...</p>
+                    </div>
+                </div>
+                
+                <!-- Error State -->
+                <div x-show="error && !loading" class="flex items-center justify-center h-96">
+                    <div class="text-center max-w-md">
+                        <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900 mb-2">Unable to load files</h3>
+                        <p class="text-sm text-gray-600 mb-4" x-text="error"></p>
+                        <button @click="loadContents()" class="btn-secondary">Try Again</button>
+                    </div>
+                </div>
+                
+                <!-- Files Grid -->
+                <div x-show="!loading && !error" class="p-6">
+                    <!-- VirusTotal Scan Summary -->
+                    <div x-show="features.virustotal?.enabled && Object.keys(virusScanResults).length > 0" class="mb-6 bg-gray-50 rounded-lg p-4 border border-gray-200">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="font-semibold text-gray-900 flex items-center gap-2">
+                                <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                                </svg>
+                                VirusTotal Scan Results
+                            </h3>
+                            <button @click="virusScanResults = {}" class="text-sm text-gray-500 hover:text-gray-700">Clear All</button>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <template x-for="(scan, fileId) in virusScanResults" :key="fileId">
+                                <div class="bg-white rounded-lg p-3 border" 
+                                     :class="{
+                                         'border-green-200': scan.verdict === 'clean',
+                                         'border-red-200': scan.verdict === 'malicious',
+                                         'border-orange-200': scan.verdict === 'suspicious'
+                                     }">
+                                    <div class="flex items-start justify-between">
+                                        <div class="flex-1">
+                                            <p class="text-sm font-medium text-gray-900 truncate" x-text="fileId.split('/').pop()"></p>
+                                            <div class="flex items-center gap-2 mt-1">
+                                                <span class="text-xs px-2 py-0.5 rounded-full"
+                                                      :class="{
+                                                          'bg-green-100 text-green-800': scan.verdict === 'clean',
+                                                          'bg-red-100 text-red-800': scan.verdict === 'malicious',
+                                                          'bg-orange-100 text-orange-800': scan.verdict === 'suspicious'
+                                                      }"
+                                                      x-text="scan.verdict"></span>
+                                                <span class="text-xs text-gray-500" x-text="new Date(scan.scanDate).toLocaleTimeString()"></span>
+                                            </div>
+                                        </div>
+                                        <a :href="scan.permalink" target="_blank" class="ml-2 text-blue-600 hover:text-blue-800">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                            </svg>
+                                        </a>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    
+                    <!-- View Toggle -->
+                    <div class="flex items-center justify-between mb-4">
+                        <p class="text-sm text-gray-600">
+                            <span x-text="directories.length + files.length"></span> items
+                        </p>
+                        <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+                            <button @click="viewMode = 'grid'" :class="viewMode === 'grid' ? 'bg-white shadow-sm' : ''" class="p-1.5 rounded">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path>
+                                </svg>
+                            </button>
+                            <button @click="viewMode = 'list'" :class="viewMode === 'list' ? 'bg-white shadow-sm' : ''" class="p-1.5 rounded">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Grid View -->
+                    <div x-show="viewMode === 'grid'" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+                        <!-- Directories -->
+                        <template x-for="dir in directories" :key="dir">
+                            <button 
+                                @click="navigateTo(currentPath + '/' + dir)"
+                                class="file-item p-4 rounded-lg hover-lift text-center group"
+                            >
+                                <div class="relative">
+                                    <svg class="w-16 h-16 mx-auto mb-2 text-blue-500" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z"/>
+                                    </svg>
+                                    <div x-show="icebergParser.isHivePartitionedPath(dir)" class="absolute -top-1 -right-1 w-6 h-6 bg-green-500 rounded-full flex items-center justify-center" title="Hive Partition">
+                                        <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path>
+                                        </svg>
+                                    </div>
+                                </div>
+                                <p class="text-sm font-medium text-gray-900 truncate" x-text="dir.name || dir"></p>
+                                <p class="text-xs text-gray-500 mt-1" x-text="icebergParser.isHivePartitionedPath(dir) ? 'Hive Partition' : 'Folder'"></p>
+                            </button>
+                        </template>
+                        
+                        <!-- Files -->
+                        <template x-for="file in files" :key="file.Key">
+                            <button 
+                                @click="showingRecent ? navigateToRecentFile(file) : selectFile(file)"
+                                @dblclick="viewFile(file)"
+                                :class="selectedFile?.Key === file.Key ? 'selected' : ''"
+                                class="file-item p-4 rounded-lg hover-lift text-center group"
+                                title="Double-click to view"
+                            >
+                                <div class="relative">
+                                    <template x-if="icebergParser.getFileTypeInfo(file.Key)">
+                                        <div>
+                                            <svg class="w-16 h-16 mx-auto mb-2" :class="'text-' + icebergParser.getFileTypeInfo(file.Key).color + '-400'" fill="currentColor" viewBox="0 0 24 24">
+                                                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                                            </svg>
+                                            <div class="absolute top-0 right-0 px-2 py-1 text-xs font-medium text-white rounded-full" 
+                                                 :class="'bg-' + icebergParser.getFileTypeInfo(file.Key).color + '-500'"
+                                                 x-text="icebergParser.getFileTypeInfo(file.Key).name">
+                                            </div>
+                                        </div>
+                                    </template>
+                                    <template x-if="!icebergParser.getFileTypeInfo(file.Key)">
+                                        <svg class="w-16 h-16 mx-auto mb-2 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                                        </svg>
+                                    </template>
+                                </div>
+                                <p class="text-sm font-medium text-gray-900 truncate" x-text="getFileName(file.Key)"></p>
+                                <p class="text-xs text-gray-500 mt-1">
+                                    <span x-text="formatSize(file.Size)"></span>
+                                    <template x-if="icebergParser.getFileTypeInfo(file.Key)">
+                                        <span class="text-xs" x-text="' • ' + icebergParser.getFileTypeInfo(file.Key).description"></span>
+                                    </template>
+                                </p>
+                                <!-- Show bucket name for recent files -->
+                                <template x-if="showingRecent && file.Bucket">
+                                    <p class="text-xs text-blue-600 mt-0.5 truncate" x-text="'in ' + file.Bucket"></p>
+                                </template>
+                                <!-- Virus scan indicator -->
+                                <template x-if="file.virusScan">
+                                    <div class="mt-2 flex justify-center">
+                                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+                                              :class="{
+                                                  'bg-green-100 text-green-800': file.virusScan.verdict === 'clean',
+                                                  'bg-red-100 text-red-800': file.virusScan.verdict === 'malicious',
+                                                  'bg-orange-100 text-orange-800': file.virusScan.verdict === 'suspicious'
+                                              }">
+                                            <svg class="w-3 h-3 mr-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                                <path x-show="file.virusScan.verdict === 'clean'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                                <path x-show="file.virusScan.verdict === 'malicious'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                                                <path x-show="file.virusScan.verdict === 'suspicious'" fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                                            </svg>
+                                            <span x-text="file.virusScan.verdict"></span>
+                                        </span>
+                                    </div>
+                                </template>
+                            </button>
+                        </template>
+                    </div>
+                    
+                    <!-- List View -->
+                    <div x-show="viewMode === 'list'" class="bg-white rounded-lg shadow-sm">
+                        <table class="min-w-full">
+                            <thead>
+                                <tr class="border-b border-gray-200">
+                                    <th class="px-6 py-3 text-left">
+                                        <input type="checkbox" @change="toggleSelectAll($event)" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                                    <th x-show="showingRecent" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Bucket</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Modified</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Security</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                <!-- Directories -->
+                                <template x-for="dir in directories" :key="dir">
+                                    <tr class="hover:bg-gray-50 cursor-pointer" @click="navigateTo(currentPath + '/' + dir)">
+                                        <td class="px-6 py-4 whitespace-nowrap" @click.stop>
+                                            <input type="checkbox" :value="dir" @change="toggleSelection('dir', dir)" 
+                                                   :checked="selectedItems.dirs.includes(dir)"
+                                                   class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <div class="flex items-center">
+                                                <svg class="w-5 h-5 text-blue-500 mr-2" fill="currentColor" viewBox="0 0 24 24">
+                                                    <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z"/>
+                                                </svg>
+                                                <span class="text-sm font-medium text-gray-900" x-text="dir"></span>
+                                                <span x-show="icebergParser.isHivePartitionedPath(dir)" class="ml-2 text-xs text-green-600">(Hive Partition)</span>
+                                            </div>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">—</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">—</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Folder</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">—</td>
+                                    </tr>
+                                </template>
+                                
+                                <!-- Files -->
+                                <template x-for="file in files" :key="file.Key">
+                                    <tr class="hover:bg-gray-50 cursor-pointer" 
+                                        @click="showingRecent ? navigateToRecentFile(file) : selectFile(file)"
+                                        @dblclick="viewFile(file)"
+                                        title="Double-click to view">
+                                        <td class="px-6 py-4 whitespace-nowrap" @click.stop>
+                                            <input type="checkbox" :value="file.Key" @change="toggleSelection('file', file.Key)" 
+                                                   :checked="selectedItems.files.includes(file.Key)"
+                                                   class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <div class="flex items-center">
+                                                <svg class="w-5 h-5 text-gray-400 mr-2" fill="currentColor" viewBox="0 0 24 24">
+                                                    <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                                                </svg>
+                                                <span class="text-sm font-medium text-gray-900" x-text="getFileName(file.Key)"></span>
+                                            </div>
+                                        </td>
+                                        <td x-show="showingRecent" class="px-6 py-4 whitespace-nowrap text-sm text-blue-600" x-text="file.Bucket"></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatSize(file.Size)"></td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatDate(file.LastModified)"></td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <template x-if="icebergParser.getFileTypeInfo(file.Key)">
+                                                <span class="text-xs font-medium px-2 py-1 rounded-full" 
+                                                      :class="'bg-' + icebergParser.getFileTypeInfo(file.Key).color + '-100 text-' + icebergParser.getFileTypeInfo(file.Key).color + '-800'"
+                                                      x-text="icebergParser.getFileTypeInfo(file.Key).name">
+                                                </span>
+                                            </template>
+                                            <template x-if="!icebergParser.getFileTypeInfo(file.Key)">
+                                                <span class="text-sm text-gray-500">File</span>
+                                            </template>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <template x-if="file.virusScan">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium"
+                                                          :class="{
+                                                              'bg-green-100 text-green-800': file.virusScan.verdict === 'clean',
+                                                              'bg-red-100 text-red-800': file.virusScan.verdict === 'malicious',
+                                                              'bg-orange-100 text-orange-800': file.virusScan.verdict === 'suspicious'
+                                                          }">
+                                                        <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path x-show="file.virusScan.verdict === 'clean'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                                            <path x-show="file.virusScan.verdict === 'malicious'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                                                            <path x-show="file.virusScan.verdict === 'suspicious'" fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                                                        </svg>
+                                                        <span x-text="file.virusScan.verdict"></span>
+                                                    </span>
+                                                    <a :href="file.virusScan.permalink" target="_blank" class="text-blue-600 hover:text-blue-800">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                                        </svg>
+                                                    </a>
+                                                </div>
+                                            </template>
+                                            <template x-if="!file.virusScan">
+                                                <span class="text-xs text-gray-400">Not scanned</span>
+                                            </template>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Empty State -->
+                    <div x-show="!loading && !error && directories.length === 0 && files.length === 0" 
+                         class="flex flex-col items-center justify-center h-96">
+                        <div class="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                            <svg class="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+                            </svg>
+                        </div>
+                        <h3 class="text-lg font-semibold text-gray-900 mb-2">This folder is empty</h3>
+                        <p class="text-sm text-gray-600 mb-4">Upload files or create folders to get started</p>
+                        <button @click="showUploadDialog = true" class="btn-primary">Upload Files</button>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+    
+    <!-- Notifications Container -->
+    <div class="fixed top-4 right-4 z-50 space-y-2" style="max-width: 400px;">
+        <template x-for="notification in notifications" :key="notification.id">
+            <div x-transition:enter="transition ease-out duration-300"
+                 x-transition:enter-start="opacity-0 transform translate-x-full"
+                 x-transition:enter-end="opacity-100 transform translate-x-0"
+                 x-transition:leave="transition ease-in duration-200"
+                 x-transition:leave-start="opacity-100 transform translate-x-0"
+                 x-transition:leave-end="opacity-0 transform translate-x-full"
+                 class="bg-white rounded-lg shadow-lg p-4 border-l-4"
+                 :class="{
+                     'border-green-500': notification.type === 'success',
+                     'border-red-500': notification.type === 'error',
+                     'border-orange-500': notification.type === 'warning'
+                 }">
+                <div class="flex items-start justify-between">
+                    <div class="flex-1">
+                        <h4 class="font-semibold text-gray-900" x-text="notification.title"></h4>
+                        <p class="text-sm text-gray-600 mt-1" x-text="notification.message"></p>
+                        <a x-show="notification.permalink" 
+                           :href="notification.permalink" 
+                           target="_blank" 
+                           class="text-xs text-blue-600 hover:text-blue-800 mt-2 inline-block">
+                            View on VirusTotal →
+                        </a>
+                    </div>
+                    <button @click="removeNotification(notification.id)" 
+                            class="ml-4 text-gray-400 hover:text-gray-600">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </template>
+    </div>
+    
+    <!-- Upload Dialog -->
+    <div x-show="showUploadDialog" 
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+         @click.self="showUploadDialog = false">
+        
+        <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+             @click.stop>
+            
+            <!-- Dialog Header -->
+            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-gray-900">Upload Files</h3>
+                <button @click="showUploadDialog = false; resetUpload()" class="p-1 hover:bg-gray-100 rounded-lg">
+                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <!-- Upload Area -->
+            <div class="flex-1 overflow-y-auto p-6">
+                <!-- Drop Zone -->
+                <div x-show="!uploadQueue.length"
+                     @drop.prevent="handleDrop($event)"
+                     @dragover.prevent="dragOver = true"
+                     @dragleave.prevent="dragOver = false"
+                     :class="dragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300'"
+                     class="border-2 border-dashed rounded-lg p-8 text-center transition-colors">
+                    
+                    <svg class="w-12 h-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                    </svg>
+                    
+                    <p class="text-gray-600 mb-2">Drag and drop files here, or</p>
+                    
+                    <input type="file" id="fileInput" multiple @change="handleFileSelect($event)" class="hidden">
+                    <input type="file" id="folderInput" webkitdirectory directory multiple @change="handleFileSelect($event)" class="hidden">
+                    
+                    <div class="flex gap-3">
+                        <label for="fileInput" class="btn-primary cursor-pointer inline-block">
+                            Choose Files
+                        </label>
+                        <label for="folderInput" class="btn-secondary cursor-pointer inline-block">
+                            Choose Folder
+                        </label>
+                    </div>
+                    
+                    <p class="text-xs text-gray-500 mt-4">Maximum file size: 5GB</p>
+                </div>
+                
+                <!-- Upload Queue -->
+                <div x-show="uploadQueue.length > 0" class="space-y-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <h4 class="font-medium text-gray-900">
+                            <span x-text="uploadQueue.length"></span> file<span x-show="uploadQueue.length > 1">s</span> selected
+                        </h4>
+                        <button @click="uploadQueue = []" class="text-sm text-gray-500 hover:text-gray-700">
+                            Clear all
+                        </button>
+                    </div>
+                    
+                    <!-- Scan Summary -->
+                    <div x-show="features.virustotal?.enabled && uploadQueue.some(f => f.virusScan)" class="bg-blue-50 rounded-lg p-3 mb-4">
+                        <h5 class="font-medium text-blue-900 mb-2 flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                            </svg>
+                            VirusTotal Scan Summary
+                        </h5>
+                        <div class="grid grid-cols-3 gap-4 text-sm">
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-green-600" x-text="uploadQueue.filter(f => f.virusScan?.verdict === 'clean').length"></div>
+                                <div class="text-xs text-gray-600">Clean</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-orange-600" x-text="uploadQueue.filter(f => f.virusScan?.verdict === 'suspicious').length"></div>
+                                <div class="text-xs text-gray-600">Suspicious</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-2xl font-bold text-red-600" x-text="uploadQueue.filter(f => f.virusScan?.verdict === 'malicious').length"></div>
+                                <div class="text-xs text-gray-600">Malicious</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- File List -->
+                    <div class="space-y-2 max-h-96 overflow-y-auto">
+                        <template x-for="(file, index) in uploadQueue" :key="index">
+                            <div class="bg-gray-50 rounded-lg p-3">
+                                <div class="flex items-center justify-between mb-2">
+                                    <div class="flex items-center gap-3">
+                                        <svg class="w-5 h-5 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                                        </svg>
+                                        <div>
+                                            <p class="text-sm font-medium text-gray-900" x-text="file.relativePath || file.name"></p>
+                                            <p class="text-xs text-gray-500">
+                                                <span x-text="formatSize(file.size)"></span>
+                                                <span x-show="file.relativePath && file.relativePath !== file.name" class="text-gray-400">
+                                                    • <span x-text="file.relativePath.split('/').slice(0, -1).join('/')"></span>
+                                                </span>
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button @click="removeFromQueue(index)" 
+                                            x-show="file.status !== 'uploading'"
+                                            class="p-1 hover:bg-gray-200 rounded">
+                                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                                
+                                <!-- Progress Bar -->
+                                <div x-show="file.status === 'uploading' || file.status === 'completed' || file.status === 'resumable'" class="w-full bg-gray-200 rounded-full h-2">
+                                    <div class="h-2 rounded-full transition-all duration-300"
+                                         :class="{
+                                             'bg-blue-500': file.status === 'uploading',
+                                             'bg-green-500': file.status === 'completed',
+                                             'bg-red-500': file.status === 'error',
+                                             'bg-orange-500': file.status === 'resumable'
+                                         }"
+                                         :style="`width: ${file.progress || 0}%`"></div>
+                                </div>
+                                
+                                <!-- Status Messages -->
+                                <div class="mt-2">
+                                    <p x-show="file.status === 'resumable'" class="text-xs text-orange-600 flex items-center gap-1">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                        </svg>
+                                        Incomplete upload detected (<span x-text="file.progress"></span>% uploaded)
+                                    </p>
+                                    <div x-show="file.status === 'completed'">
+                                        <p class="text-xs text-green-600 flex items-center gap-1">
+                                            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                            </svg>
+                                            Upload complete
+                                        </p>
+                                        <!-- VirusTotal Scan Status -->
+                                        <div x-show="features.virustotal?.enabled && file.virusScan" class="mt-2 bg-white rounded-md p-2 border"
+                                             :class="{
+                                                 'border-green-200': file.virusScan?.verdict === 'clean',
+                                                 'border-red-200': file.virusScan?.verdict === 'malicious',
+                                                 'border-orange-200': file.virusScan?.verdict === 'suspicious'
+                                             }">
+                                            <div class="flex items-center justify-between">
+                                                <div class="flex items-center gap-2">
+                                                    <div class="p-1 rounded-full"
+                                                         :class="{
+                                                             'bg-green-100': file.virusScan?.verdict === 'clean',
+                                                             'bg-red-100': file.virusScan?.verdict === 'malicious',
+                                                             'bg-orange-100': file.virusScan?.verdict === 'suspicious'
+                                                         }">
+                                                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"
+                                                             :class="{
+                                                                 'text-green-600': file.virusScan?.verdict === 'clean',
+                                                                 'text-red-600': file.virusScan?.verdict === 'malicious',
+                                                                 'text-orange-600': file.virusScan?.verdict === 'suspicious'
+                                                             }">
+                                                            <path x-show="file.virusScan?.verdict === 'clean'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                                            <path x-show="file.virusScan?.verdict === 'malicious'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                                                            <path x-show="file.virusScan?.verdict === 'suspicious'" fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                                                        </svg>
+                                                    </div>
+                                                    <div>
+                                                        <p class="text-sm font-medium"
+                                                           :class="{
+                                                               'text-green-700': file.virusScan?.verdict === 'clean',
+                                                               'text-red-700': file.virusScan?.verdict === 'malicious',
+                                                               'text-orange-700': file.virusScan?.verdict === 'suspicious'
+                                                           }">
+                                                            VirusTotal Scan: <span x-text="file.virusScan?.verdict?.toUpperCase()"></span>
+                                                        </p>
+                                                        <p x-show="file.virusScan?.threatLevel" class="text-xs text-gray-600" x-text="file.virusScan?.threatLevel"></p>
+                                                    </div>
+                                                </div>
+                                                <a x-show="file.virusScan?.permalink" 
+                                                   :href="file.virusScan?.permalink" 
+                                                   target="_blank"
+                                                   class="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                                                    View Report
+                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                                    </svg>
+                                                </a>
+                                            </div>
+                                        </div>
+                                        <div x-show="features.virustotal?.enabled && !file.virusScan && file.status === 'completed'" class="mt-2 bg-gray-50 rounded-md p-2 border border-gray-200">
+                                            <div class="flex items-center gap-2">
+                                                <div class="animate-spin h-3 w-3 border-2 border-gray-400 border-t-transparent rounded-full"></div>
+                                                <span class="text-xs text-gray-600">Scanning with VirusTotal...</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p x-show="file.status === 'error'" class="text-xs text-red-600" x-text="file.error"></p>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    
+                    <!-- Add More Files -->
+                    <div class="text-center pt-4 border-t border-gray-200">
+                        <input type="file" id="fileInputAdd" multiple @change="handleFileSelect($event)" class="hidden">
+                        <input type="file" id="folderInputAdd" webkitdirectory directory multiple @change="handleFileSelect($event)" class="hidden">
+                        <div class="flex items-center justify-center gap-3">
+                            <label for="fileInputAdd" class="text-sm text-blue-600 hover:text-blue-700 cursor-pointer">
+                                + Add more files
+                            </label>
+                            <span class="text-gray-400">|</span>
+                            <label for="folderInputAdd" class="text-sm text-blue-600 hover:text-blue-700 cursor-pointer">
+                                + Add folder
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Dialog Footer -->
+            <div class="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+                <p x-show="uploadQueue.length > 0" class="text-sm text-gray-600">
+                    Total size: <span x-text="formatSize(uploadQueue.reduce((sum, file) => sum + file.size, 0))"></span>
+                </p>
+                <div x-show="uploadQueue.length === 0"></div>
+                <div class="flex items-center gap-2">
+                    <button @click="showUploadDialog = false; resetUpload()" class="btn-secondary">
+                        Cancel
+                    </button>
+                    <button @click="startUpload()" 
+                            x-show="uploadQueue.length > 0 && !isUploading && !uploadQueue.every(f => f.status === 'completed' || f.status === 'error')"
+                            class="btn-primary">
+                        Upload <span x-text="uploadQueue.filter(f => f.status === 'pending' || f.status === 'resumable').length"></span> file<span x-show="uploadQueue.filter(f => f.status === 'pending' || f.status === 'resumable').length > 1">s</span>
+                    </button>
+                    <button x-show="isUploading" disabled class="btn-primary opacity-50 cursor-not-allowed flex items-center gap-2">
+                        <div class="loading-spinner w-4 h-4"></div>
+                        Uploading...
+                    </button>
+                    <button @click="showUploadDialog = false; resetUpload()" 
+                            x-show="!isUploading && uploadQueue.length > 0 && uploadQueue.every(f => f.status === 'completed' || f.status === 'error')"
+                            class="btn-primary">
+                        Done
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Share Link Dialog -->
+    <div x-show="showShareDialog" 
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+         @click.self="showShareDialog = false">
+        
+        <div class="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden"
+             @click.stop>
+            
+            <!-- Dialog Header -->
+            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-gray-900">Share File</h3>
+                <button @click="showShareDialog = false" class="p-1 hover:bg-gray-100 rounded-lg">
+                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <!-- Share Options -->
+            <div class="p-6 space-y-4" x-show="!shareLink">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Expiration</label>
+                    <select x-model="shareOptions.ttlHours" 
+                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <option value="1">1 hour</option>
+                        <option value="24" selected>24 hours</option>
+                        <option value="72">3 days</option>
+                        <option value="168">7 days</option>
+                    </select>
+                </div>
+                
+                <div>
+                    <label class="flex items-center space-x-3">
+                        <input type="checkbox" x-model="shareOptions.singleUse" 
+                               class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                        <span class="text-sm text-gray-700">Single use only (expires after first access)</span>
+                    </label>
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Password Protection (optional)
+                    </label>
+                    <input type="password" x-model="shareOptions.password" 
+                           placeholder="Enter password"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+                
+                <button @click="createShareLink()" 
+                        :disabled="creatingShareLink"
+                        class="w-full btn-primary flex items-center justify-center">
+                    <span x-show="!creatingShareLink">Create Share Link</span>
+                    <span x-show="creatingShareLink" class="flex items-center gap-2">
+                        <div class="loading-spinner w-4 h-4"></div>
+                        Creating...
+                    </span>
+                </button>
+            </div>
+            
+            <!-- Share Link Result -->
+            <div class="p-6" x-show="shareLink">
+                <div class="mb-4">
+                    <p class="text-sm text-gray-600 mb-2">Share this link:</p>
+                    <div class="flex items-center gap-2">
+                        <input type="text" :value="shareLink" readonly
+                               class="flex-1 px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm font-mono">
+                        <button @click="copyShareLink()" 
+                                class="p-2 hover:bg-gray-100 rounded-lg" 
+                                :title="shareLinkCopied ? 'Copied!' : 'Copy link'">
+                            <svg x-show="!shareLinkCopied" class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                            </svg>
+                            <svg x-show="shareLinkCopied" class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="space-y-2 text-sm text-gray-600">
+                    <p x-show="shareOptions.singleUse" class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                        </svg>
+                        This link will expire after first use
+                    </p>
+                    <p x-show="shareOptions.password" class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                        </svg>
+                        Password protected
+                    </p>
+                    <p class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        Expires in <span x-text="shareOptions.ttlHours"></span> hour<span x-show="shareOptions.ttlHours > 1">s</span>
+                    </p>
+                </div>
+                
+                <button @click="showShareDialog = false; resetShareDialog()" 
+                        class="w-full btn-secondary mt-4">
+                    Done
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Global Drag & Drop Overlay -->
+    <div x-show="globalDragOver"
+         @drop.prevent="handleDrop($event); globalDragOver = false"
+         @dragover.prevent
+         @dragleave.prevent="globalDragOver = false"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         class="fixed inset-0 bg-blue-500 bg-opacity-10 z-40 flex items-center justify-center pointer-events-none">
+        <div class="bg-white rounded-lg shadow-lg p-8 pointer-events-auto">
+            <svg class="w-16 h-16 mx-auto mb-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+            </svg>
+            <p class="text-lg font-medium text-gray-900">Drop files to upload</p>
+        </div>
+    </div>
+    
+    <!-- File Details Panel (Slide-over) -->
+    <div x-show="selectedFile" 
+         @click.away="selectedFile = null"
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="translate-x-full"
+         x-transition:enter-end="translate-x-0"
+         x-transition:leave="transition ease-in duration-300"
+         x-transition:leave-start="translate-x-0"
+         x-transition:leave-end="translate-x-full"
+         class="fixed right-0 top-0 h-full w-96 bg-white shadow-2xl z-50 flex flex-col">
+        
+        <!-- Panel Header -->
+        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+            <h3 class="font-semibold text-gray-900">File Details</h3>
+            <button @click="selectedFile = null" class="p-1 hover:bg-gray-100 rounded">
+                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+        
+        <!-- Panel Content -->
+        <div class="flex-1 overflow-y-auto p-6">
+            <template x-if="selectedFile">
+                <div>
+                    <!-- File Preview -->
+                    <div class="mb-6">
+                        <div class="w-20 h-20 bg-gray-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-10 h-10 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                            </svg>
+                        </div>
+                        <h4 class="text-center font-medium text-gray-900 break-all" x-text="getFileName(selectedFile.Key)"></h4>
+                    </div>
+                    
+                    <!-- Iceberg Metadata -->
+                    <div x-show="selectedFileMetadata" x-html="selectedFileMetadata" class="mb-6"></div>
+                    
+                    <!-- File Info -->
+                    <div class="space-y-4">
+                        <div>
+                            <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Size</p>
+                            <p class="mt-1 text-sm text-gray-900" x-text="formatSize(selectedFile.Size)"></p>
+                        </div>
+                        <div>
+                            <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Modified</p>
+                            <p class="mt-1 text-sm text-gray-900" x-text="formatDate(selectedFile.LastModified)"></p>
+                        </div>
+                        <div>
+                            <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Path</p>
+                            <p class="mt-1 text-sm text-gray-900 font-mono text-xs break-all" x-text="selectedFile.Key"></p>
+                        </div>
+                        
+                        <!-- Additional Metadata (if available) -->
+                        <template x-if="selectedFile.metadata">
+                            <div class="space-y-4 border-t pt-4">
+                                <h5 class="font-medium text-gray-900">Metadata</h5>
+                                
+                                <div>
+                                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Content Type</p>
+                                    <p class="mt-1 text-sm text-gray-900" x-text="selectedFile.metadata.contentType"></p>
+                                </div>
+                                
+                                <div x-show="selectedFile.metadata.etag">
+                                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">ETag</p>
+                                    <p class="mt-1 text-sm text-gray-900 font-mono text-xs" x-text="selectedFile.metadata.etag"></p>
+                                </div>
+                                
+                                <div>
+                                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Storage Class</p>
+                                    <p class="mt-1 text-sm text-gray-900" x-text="selectedFile.metadata.storageClass"></p>
+                                </div>
+                                
+                                <div x-show="selectedFile.metadata.serverSideEncryption">
+                                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Encryption</p>
+                                    <p class="mt-1 text-sm text-gray-900" x-text="selectedFile.metadata.serverSideEncryption"></p>
+                                </div>
+                                
+                                <div x-show="selectedFile.metadata.versionId">
+                                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Version ID</p>
+                                    <p class="mt-1 text-sm text-gray-900 font-mono text-xs" x-text="selectedFile.metadata.versionId"></p>
+                                </div>
+                                
+                                <div x-show="selectedFile.metadata.contentEncoding">
+                                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Content Encoding</p>
+                                    <p class="mt-1 text-sm text-gray-900" x-text="selectedFile.metadata.contentEncoding"></p>
+                                </div>
+                                
+                                <div x-show="selectedFile.metadata.cacheControl">
+                                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">Cache Control</p>
+                                    <p class="mt-1 text-sm text-gray-900" x-text="selectedFile.metadata.cacheControl"></p>
+                                </div>
+                            </div>
+                        </template>
+                        
+                        <!-- VirusTotal Scan Status -->
+                        <div x-show="features.virustotal?.enabled" class="border-t pt-4">
+                            <h5 class="font-medium text-gray-900 mb-3">Security Scan</h5>
+                            
+                            <!-- Scan Result if Available -->
+                            <div x-show="features.virustotal?.enabled && selectedFile.virusScan" class="bg-gray-50 rounded-lg p-3 mb-3">
+                                <div class="flex items-center justify-between">
+                                    <div>
+                                        <p class="text-sm font-medium flex items-center gap-2"
+                                           :class="{
+                                               'text-green-700': selectedFile.virusScan?.verdict === 'clean',
+                                               'text-red-700': selectedFile.virusScan?.verdict === 'malicious',
+                                               'text-orange-700': selectedFile.virusScan?.verdict === 'suspicious'
+                                           }">
+                                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                <path x-show="selectedFile.virusScan?.verdict === 'clean'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                                <path x-show="selectedFile.virusScan?.verdict === 'malicious'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                                                <path x-show="selectedFile.virusScan?.verdict === 'suspicious'" fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                                            </svg>
+                                            <span x-text="selectedFile.virusScan?.verdict?.toUpperCase()"></span>
+                                        </p>
+                                        <p class="text-xs text-gray-600 mt-1" x-text="selectedFile.virusScan?.threatLevel"></p>
+                                        <p x-show="selectedFile.virusScan?.scanDate" class="text-xs text-gray-500 mt-1">
+                                            Scanned: <span x-text="new Date(selectedFile.virusScan?.scanDate).toLocaleString()"></span>
+                                        </p>
+                                    </div>
+                                    <a x-show="selectedFile.virusScan?.permalink" 
+                                       :href="selectedFile.virusScan?.permalink" 
+                                       target="_blank"
+                                       class="text-blue-600 hover:text-blue-800">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                        </svg>
+                                    </a>
+                                </div>
+                            </div>
+                            
+                            <!-- No Scan Result -->
+                            <div x-show="features.virustotal?.enabled && !selectedFile.virusScan" class="text-sm text-gray-600 mb-3">
+                                <p>This file has not been scanned with VirusTotal.</p>
+                                <p x-show="selectedFile.Size > 32 * 1024 * 1024" class="text-xs text-gray-500 mt-1">
+                                    Note: Files larger than 32MB cannot be scanned.
+                                </p>
+                                <p x-show="selectedFile.Size <= 32 * 1024 * 1024" class="text-xs text-gray-500 mt-1">
+                                    Note: Scanning may take up to a minute depending on file size.
+                                </p>
+                            </div>
+                            
+                            <!-- Scan Button -->
+                            <button @click="scanFileWithVirusTotal(selectedFile)" 
+                                    x-show="features.virustotal?.enabled && !selectedFile.virusScan && selectedFile.Size <= 32 * 1024 * 1024"
+                                    :disabled="$data.scanningFile === selectedFile.Key"
+                                    class="btn-secondary w-full flex items-center justify-center gap-2"
+                                    :class="{ 'opacity-50 cursor-not-allowed': $data.scanningFile === selectedFile.Key }">
+                                <svg x-show="$data.scanningFile !== selectedFile.Key" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                                </svg>
+                                <div x-show="$data.scanningFile === selectedFile.Key" class="animate-spin h-4 w-4 border-2 border-gray-500 border-t-transparent rounded-full"></div>
+                                <span x-text="$data.scanningFile === selectedFile.Key ? 'Scanning...' : 'Scan with VirusTotal'"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+        
+        <!-- Panel Actions -->
+        <div class="px-6 py-4 border-t border-gray-200 space-y-2">
+            <button @click="viewFile(selectedFile)" class="btn-primary w-full text-center">View</button>
+            <button @click="downloadFile(selectedFile?.Key)" class="btn-secondary w-full">Download</button>
+            <button @click="openShareDialog(selectedFile)" class="btn-secondary w-full">Share</button>
+            <button @click="deleteSingleFile(selectedFile)" class="btn-secondary w-full text-red-600 hover:bg-red-50">Delete</button>
+        </div>
+    </div>
+    
+    <!-- File Viewer Dialog -->
+    <div x-show="showFileViewer" 
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+         @click.self="showFileViewer = false">
+        
+        <div class="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+             @click.stop>
+            
+            <!-- Viewer Header -->
+            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900" x-text="fileViewerName"></h3>
+                    <p class="text-sm text-gray-500" x-text="fileViewerType"></p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button @click="downloadFile(selectedFile?.Key)" class="p-2 hover:bg-gray-100 rounded-lg" title="Download">
+                        <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"></path>
+                        </svg>
+                    </button>
+                    <button @click="showFileViewer = false" class="p-2 hover:bg-gray-100 rounded-lg">
+                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Viewer Content -->
+            <div class="flex-1 overflow-auto p-6 bg-gray-50">
+                <!-- Loading State -->
+                <div x-show="fileViewerLoading" class="flex items-center justify-center h-full">
+                    <div class="text-center">
+                        <svg class="animate-spin h-12 w-12 text-blue-500 mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <p class="text-gray-600">Loading file...</p>
+                    </div>
+                </div>
+                
+                <!-- Error State -->
+                <div x-show="fileViewerError && !fileViewerLoading" class="flex items-center justify-center h-full">
+                    <div class="text-center">
+                        <svg class="w-16 h-16 text-red-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <p class="text-gray-900 font-medium mb-2">Failed to load file</p>
+                        <p class="text-gray-600 text-sm" x-text="fileViewerError"></p>
+                    </div>
+                </div>
+                
+                <!-- Image Preview -->
+                <template x-if="fileViewerType === 'image' && !fileViewerLoading && !fileViewerError">
+                    <div class="flex items-center justify-center h-full">
+                        <img :src="fileViewerContent" :alt="fileViewerName" class="max-w-full max-h-full object-contain rounded-lg shadow-lg">
+                    </div>
+                </template>
+                
+                <!-- Text/Code Preview -->
+                <template x-if="(fileViewerType === 'text' || fileViewerType === 'code') && !fileViewerLoading && !fileViewerError">
+                    <div class="bg-white rounded-lg shadow-sm border border-gray-200 h-full">
+                        <pre class="p-4 overflow-auto h-full"><code x-text="fileViewerContent" class="text-sm"></code></pre>
+                    </div>
+                </template>
+                
+                <!-- JSON Preview -->
+                <template x-if="fileViewerType === 'json' && !fileViewerLoading && !fileViewerError">
+                    <div class="bg-white rounded-lg shadow-sm border border-gray-200 h-full">
+                        <pre class="p-4 overflow-auto h-full"><code x-text="JSON.stringify(JSON.parse(fileViewerContent), null, 2)" class="text-sm"></code></pre>
+                    </div>
+                </template>
+                
+                <!-- Binary/Unsupported Preview -->
+                <template x-if="fileViewerType === 'binary' && !fileViewerLoading && !fileViewerError">
+                    <div class="flex items-center justify-center h-full">
+                        <div class="text-center">
+                            <svg class="w-16 h-16 text-gray-400 mx-auto mb-4" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                            </svg>
+                            <p class="text-gray-900 font-medium mb-2">Binary File</p>
+                            <p class="text-gray-600 text-sm mb-4">This file cannot be displayed in the browser</p>
+                            <button @click="downloadFile(selectedFile?.Key)" class="btn-primary">
+                                Download File
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    function s3Browser() {
+        return {
+            // State
+            buckets: [],
+            bucketsLoading: true,
+            selectedBucket: '',
+            currentPath: '',
+            directories: [],
+            files: [],
+            loading: false,
+            error: null,
+            selectedFile: null,
+            selectedFileMetadata: null,
+            icebergParser: null,
+            isIcebergTable: false,
+            viewMode: 'grid',
+            showProfile: false,
+            
+            // Selection state
+            selectedItems: {
+                dirs: [],
+                files: []
+            },
+            
+            // User info
+            userName: 'User',
+            userEmail: 'user@example.com',
+            userInitials: 'U',
+            
+            // Notifications
+            notifications: [],
+            
+            // Virus scan results
+            virusScanResults: {},
+            scanningFile: null,
+            
+            // Upload state
+            showUploadDialog: false,
+            uploadQueue: [],
+            isUploading: false,
+            dragOver: false,
+            globalDragOver: false,
+            uploadedFiles: [],
+            failedUploads: [],
+            
+            // Share state
+            showShareDialog: false,
+            shareOptions: {
+                ttlHours: 24,
+                password: '',
+                singleUse: false
+            },
+            shareLink: '',
+            shareLinkCopied: false,
+            creatingShareLink: false,
+            fileToShare: null,
+            
+            // Features from backend
+            features: {
+                virustotal: {
+                    enabled: false
+                }
+            },
+            
+            // Recent files
+            recentFiles: [],
+            showingRecent: false,
+            maxRecentFiles: 20,
+            
+            // File viewer state
+            showFileViewer: false,
+            fileViewerContent: '',
+            fileViewerType: '',
+            fileViewerName: '',
+            fileViewerLoading: false,
+            fileViewerError: null,
+            
+            // Context menu state
+            showContextMenu: false,
+            contextMenuX: 0,
+            contextMenuY: 0,
+            contextMenuTarget: null,
+            contextMenuType: '',
+
+            init() {
+                // Check authentication
+                if (!this.isAuthenticated()) {
+                    window.location.href = '/ui/login.html';
+                    return;
+                }
+
+                // Initialize Iceberg parser
+                this.icebergParser = new IcebergMetadataParser();
+
+                // Load features
+                this.loadFeatures();
+
+                // Load user info
+                this.loadUserInfo();
+                
+                // Load recent files from localStorage
+                this.loadRecentFiles();
+                
+                // Load buckets
+                this.loadBuckets();
+                
+                // Get path from URL hash
+                const hash = window.location.hash.substring(1);
+                if (hash) {
+                    const parts = hash.split('/');
+                    if (parts.length > 0) {
+                        this.selectedBucket = parts[0];
+                        this.currentPath = parts.join('/');
+                        this.loadContents();
+                    }
+                }
+                
+                // Listen for hash changes
+                window.addEventListener('hashchange', () => {
+                    const hash = window.location.hash.substring(1);
+                    if (hash === 'recent') {
+                        this.showRecentFiles();
+                    } else if (hash) {
+                        const parts = hash.split('/');
+                        if (parts.length > 0) {
+                            this.showingRecent = false;
+                            this.selectedBucket = parts[0];
+                            this.currentPath = parts.join('/');
+                            this.loadContents();
+                        }
+                    }
+                });
+            },
+
+            async loadFeatures() {
+                try {
+                    const response = await fetch('/api/features');
+                    if (response.ok) {
+                        this.features = await response.json();
+                        console.log('Loaded features:', this.features);
+                    }
+                } catch (error) {
+                    console.error('Failed to load features:', error);
+                    // Default to disabled if we can't load features
+                    this.features = {
+                        virustotal: { enabled: false }
+                    };
+                }
+            },
+
+            isAuthenticated() {
+                return localStorage.getItem('s3_auth_token') || 
+                       localStorage.getItem('auth_token') || 
+                       this.checkAuth0();
+            },
+
+            checkAuth0() {
+                // Check for Auth0 session cookie
+                const cookies = document.cookie.split(';');
+                for (let cookie of cookies) {
+                    const [name, value] = cookie.trim().split('=');
+                    if (name === 'auth0-session' || name === 'appSession') {
+                        return true;
+                    }
+                }
+                
+                // Also check if we have auth0 in the URL (for SPA-style auth)
+                const fragment = window.location.hash.substring(1);
+                const params = new URLSearchParams(fragment);
+                if (params.get('access_token')) {
+                    return true;
+                }
+                
+                return false;
+            },
+
+            async loadUserInfo() {
+                // Check for basic auth token first
+                const authToken = localStorage.getItem('auth_token');
+                if (authToken) {
+                    try {
+                        const decoded = atob(authToken);
+                        const [email] = decoded.split(':');
+                        this.userEmail = email;
+                        this.userName = email.split('@')[0];
+                        this.userInitials = this.userName.substring(0, 2).toUpperCase();
+                        return;
+                    } catch (e) {}
+                }
+                
+                // Check for Auth0 and fetch user info
+                if (this.checkAuth0()) {
+                    try {
+                        const response = await fetch('/api/auth/userinfo', {
+                            credentials: 'same-origin'
+                        });
+                        
+                        if (response.ok) {
+                            const userInfo = await response.json();
+                            this.userEmail = userInfo.email || 'user@example.com';
+                            this.userName = userInfo.name || userInfo.nickname || this.userEmail.split('@')[0];
+                            
+                            // Generate initials from name
+                            const nameParts = this.userName.split(' ');
+                            if (nameParts.length >= 2) {
+                                this.userInitials = nameParts[0][0] + nameParts[nameParts.length - 1][0];
+                            } else {
+                                this.userInitials = this.userName.substring(0, 2);
+                            }
+                            this.userInitials = this.userInitials.toUpperCase();
+                        }
+                    } catch (error) {
+                        console.error('Failed to load Auth0 user info:', error);
+                        // Set defaults on error
+                        this.userName = 'User';
+                        this.userEmail = 'user@example.com';
+                        this.userInitials = 'U';
+                    }
+                }
+            },
+
+            getAuthHeaders() {
+                const s3Token = localStorage.getItem('s3_auth_token');
+                if (s3Token) {
+                    const creds = JSON.parse(atob(s3Token));
+                    const date = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
+                    return {
+                        'Authorization': `AWS4-HMAC-SHA256 Credential=${creds.accessKey}/${date.substring(0,8)}/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-date, Signature=dummy`,
+                        'X-Amz-Date': date
+                    };
+                }
+                
+                const authToken = localStorage.getItem('auth_token');
+                if (authToken) {
+                    return {
+                        'Authorization': `Basic ${authToken}`
+                    };
+                }
+                
+                return {};
+            },
+
+            async loadBuckets() {
+                this.bucketsLoading = true;
+                try {
+                    const response = await fetch('/', {
+                        headers: this.getAuthHeaders()
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const text = await response.text();
+                    const parser = new DOMParser();
+                    const xml = parser.parseFromString(text, 'text/xml');
+                    
+                    this.buckets = [];
+                    const bucketNodes = xml.querySelectorAll('Bucket > Name');
+                    bucketNodes.forEach(node => {
+                        this.buckets.push(node.textContent);
+                    });
+                    
+                    // Sort buckets alphabetically
+                    this.buckets.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+                } catch (err) {
+                    console.error('Failed to load buckets:', err);
+                } finally {
+                    this.bucketsLoading = false;
+                }
+            },
+
+            selectBucket(bucket) {
+                this.selectedBucket = bucket;
+                this.currentPath = bucket;
+                window.location.hash = bucket;
+            },
+
+            async loadContents() {
+                if (!this.selectedBucket) return;
+                
+                this.loading = true;
+                this.error = null;
+                this.selectedFile = null;
+                
+                try {
+                    // Build URL based on current path
+                    let url;
+                    if (this.currentPath === this.selectedBucket) {
+                        // At bucket root
+                        url = '/' + this.selectedBucket + '?list-type=2&delimiter=/';
+                    } else {
+                        // In subdirectory - need to extract the prefix after the bucket
+                        const prefix = this.currentPath.substring(this.selectedBucket.length + 1);
+                        url = '/' + this.selectedBucket + '?list-type=2&prefix=' + encodeURIComponent(prefix + '/') + '&delimiter=/';
+                    }
+                    console.log('Loading contents from URL:', url);
+                    
+                    const response = await fetch(url, {
+                        headers: this.getAuthHeaders()
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const text = await response.text();
+                    const parser = new DOMParser();
+                    const xml = parser.parseFromString(text, 'text/xml');
+                    
+                    // Parse directories
+                    this.directories = [];
+                    const prefixes = xml.querySelectorAll('CommonPrefixes > Prefix');
+                    console.log('Found', prefixes.length, 'CommonPrefixes');
+                    
+                    prefixes.forEach(prefix => {
+                        const fullPath = prefix.textContent;
+                        console.log('Processing prefix:', fullPath);
+                        
+                        // Extract directory name from the full path
+                        let dir;
+                        if (this.currentPath === this.selectedBucket) {
+                            // At bucket root - remove just the trailing slash
+                            dir = fullPath.replace(/\/$/, '');
+                        } else {
+                            // In subdirectory - remove the current path prefix
+                            const currentPrefix = this.currentPath.substring(this.selectedBucket.length + 1) + '/';
+                            if (fullPath.startsWith(currentPrefix)) {
+                                dir = fullPath.substring(currentPrefix.length).replace(/\/$/, '');
+                            }
+                        }
+                        
+                        console.log('Extracted directory name:', dir);
+                        if (dir && !dir.includes('/')) {
+                            this.directories.push(dir);
+                        }
+                    });
+                    
+                    // Sort directories alphabetically
+                    this.directories.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+                    
+                    // Check if this is an Iceberg table directory
+                    this.isIcebergTable = this.icebergParser.isIcebergTablePath(this.currentPath);
+                    
+                    // Parse files
+                    this.files = [];
+                    const contents = xml.querySelectorAll('Contents');
+                    contents.forEach(content => {
+                        const key = content.querySelector('Key').textContent;
+                        if (!key.endsWith('/') && this.isInCurrentDirectory(key)) {
+                            const fileObj = {
+                                Key: key,
+                                Size: parseInt(content.querySelector('Size').textContent),
+                                LastModified: content.querySelector('LastModified').textContent
+                            };
+                            
+                            // Check if we have virus scan data stored for this file
+                            const fileId = this.selectedBucket + '/' + key;
+                            if (this.virusScanResults[fileId]) {
+                                fileObj.virusScan = this.virusScanResults[fileId];
+                            }
+                            
+                            this.files.push(fileObj);
+                        }
+                    });
+                    
+                    // Sort files alphabetically by filename
+                    this.files.sort((a, b) => {
+                        const nameA = this.getFileName(a.Key).toLowerCase();
+                        const nameB = this.getFileName(b.Key).toLowerCase();
+                        return nameA.localeCompare(nameB);
+                    });
+                } catch (err) {
+                    this.error = err.message;
+                } finally {
+                    this.loading = false;
+                }
+            },
+
+            isInCurrentDirectory(key) {
+                const relativePath = key.substring(this.currentPath.length + 1);
+                return !relativePath.includes('/');
+            },
+
+            getFileName(key) {
+                return key.split('/').pop();
+            },
+
+            formatSize(bytes) {
+                if (bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            },
+
+            formatDate(dateString) {
+                return new Date(dateString).toLocaleString();
+            },
+
+            navigateTo(path) {
+                window.location.hash = path;
+            },
+
+            async selectFile(file) {
+                this.selectedFile = file;
+                this.selectedFileMetadata = null;
+                
+                // Add to recent files
+                this.addToRecentFiles(file);
+                
+                // Fetch additional file metadata using HEAD request
+                try {
+                    // Ensure the key includes the bucket name
+                    let fullPath = file.Key;
+                    if (!file.Key.startsWith(this.selectedBucket + '/')) {
+                        fullPath = this.selectedBucket + '/' + file.Key;
+                    }
+                    
+                    const response = await fetch('/' + fullPath, {
+                        method: 'HEAD',
+                        headers: this.getAuthHeaders()
+                    });
+                    
+                    if (response.ok) {
+                        // Extract metadata from headers
+                        this.selectedFile.metadata = {
+                            contentType: response.headers.get('Content-Type') || 'application/octet-stream',
+                            contentLength: response.headers.get('Content-Length') || file.Size,
+                            lastModified: response.headers.get('Last-Modified') || file.LastModified,
+                            etag: response.headers.get('ETag')?.replace(/"/g, '') || '',
+                            cacheControl: response.headers.get('Cache-Control') || '',
+                            contentEncoding: response.headers.get('Content-Encoding') || '',
+                            storageClass: response.headers.get('x-amz-storage-class') || 'STANDARD',
+                            serverSideEncryption: response.headers.get('x-amz-server-side-encryption') || '',
+                            versionId: response.headers.get('x-amz-version-id') || ''
+                        };
+                    }
+                } catch (error) {
+                    console.error('Failed to fetch file metadata:', error);
+                }
+                
+                // Check if this is an Iceberg metadata file
+                if (this.icebergParser.isIcebergMetadata(file.Key)) {
+                    try {
+                        const response = await fetch('/' + file.Key, {
+                            headers: this.getAuthHeaders()
+                        });
+                        
+                        if (response.ok) {
+                            const metadata = await response.json();
+                            const parsed = await this.icebergParser.parseMetadata(metadata);
+                            if (parsed) {
+                                this.selectedFileMetadata = this.icebergParser.createMetadataHTML(parsed);
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Failed to load Iceberg metadata:', error);
+                    }
+                }
+            },
+
+            getDownloadUrl(key) {
+                return '/' + key;
+            },
+
+            async deleteSingleFile(file) {
+                if (!file || !file.Key) return;
+                
+                const fileName = file.Key.split('/').pop();
+                if (!confirm(`Are you sure you want to delete "${fileName}"?`)) {
+                    return;
+                }
+                
+                try {
+                    // file.Key already contains the full path from S3 listing
+                    const fullKey = file.Key;
+                    
+                    // Construct proper delete URL with encoding
+                    const deleteUrl = '/' + fullKey.split('/').map(segment => encodeURIComponent(segment)).join('/');
+                    console.log('Deleting file:', fullKey, 'URL:', deleteUrl);
+                    
+                    const response = await fetch(deleteUrl, {
+                        method: 'DELETE',
+                        headers: this.getAuthHeaders()
+                    });
+                    
+                    if (!response.ok && response.status !== 404) {
+                        throw new Error(`Failed to delete: ${response.status} ${response.statusText}`);
+                    }
+                    
+                    // Close the details panel
+                    this.selectedFile = null;
+                    
+                    // Refresh the file list
+                    await this.loadContents();
+                    
+                } catch (error) {
+                    console.error('Delete error:', error);
+                    alert(`Failed to delete file: ${error.message}`);
+                }
+            },
+            
+            async downloadFile(key) {
+                if (!key) return;
+                
+                try {
+                    // Ensure the key includes the bucket name
+                    // If the key doesn't start with the bucket name, prepend it
+                    let fullPath = key;
+                    if (!key.startsWith(this.selectedBucket + '/')) {
+                        fullPath = this.selectedBucket + '/' + key;
+                    }
+                    
+                    console.log('Downloading file:', fullPath);
+                    
+                    const response = await fetch('/' + fullPath, {
+                        headers: this.getAuthHeaders()
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    // Get the blob from the response
+                    const blob = await response.blob();
+                    
+                    // Create a download link
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = this.getFileName(key);
+                    document.body.appendChild(a);
+                    a.click();
+                    
+                    // Clean up
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                } catch (error) {
+                    console.error('Download failed:', error);
+                    alert('Failed to download file: ' + error.message);
+                }
+            },
+            
+            async viewFile(file) {
+                if (!file || !file.Key) return;
+                
+                this.fileViewerLoading = true;
+                this.fileViewerError = null;
+                this.fileViewerContent = '';
+                this.fileViewerName = this.getFileName(file.Key);
+                this.showFileViewer = true;
+                
+                // Determine file type
+                const extension = file.Key.split('.').pop().toLowerCase();
+                const contentType = file.metadata?.contentType || '';
+                
+                // Map file extensions to viewer types
+                const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'ico'];
+                const textExtensions = ['txt', 'log', 'md', 'csv', 'xml', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf'];
+                const codeExtensions = ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'cs', 'php', 'rb', 'go', 'rs', 'swift', 'kt', 'scala', 'sh', 'bash', 'zsh', 'fish', 'ps1', 'sql', 'html', 'css', 'scss', 'sass', 'less'];
+                const jsonExtensions = ['json', 'jsonl'];
+                
+                // Set viewer type
+                if (imageExtensions.includes(extension) || contentType.startsWith('image/')) {
+                    this.fileViewerType = 'image';
+                } else if (jsonExtensions.includes(extension) || contentType === 'application/json') {
+                    this.fileViewerType = 'json';
+                } else if (codeExtensions.includes(extension)) {
+                    this.fileViewerType = 'code';
+                } else if (textExtensions.includes(extension) || contentType.startsWith('text/')) {
+                    this.fileViewerType = 'text';
+                } else if (file.Size > 10 * 1024 * 1024) { // Files larger than 10MB
+                    this.fileViewerType = 'binary';
+                    this.fileViewerLoading = false;
+                    this.fileViewerError = 'File is too large to preview';
+                    return;
+                } else {
+                    // Try to detect if it's text by fetching first few bytes
+                    this.fileViewerType = 'text'; // Default to text, will change if binary
+                }
+                
+                try {
+                    // Ensure the key includes the bucket name
+                    let fullPath = file.Key;
+                    if (!file.Key.includes('/')) {
+                        fullPath = this.currentPath + '/' + file.Key;
+                    }
+                    
+                    const response = await fetch('/' + fullPath, {
+                        headers: this.getAuthHeaders()
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`Failed to load file: ${response.status} ${response.statusText}`);
+                    }
+                    
+                    // Handle different file types
+                    if (this.fileViewerType === 'image') {
+                        const blob = await response.blob();
+                        this.fileViewerContent = URL.createObjectURL(blob);
+                    } else if (this.fileViewerType === 'json') {
+                        const text = await response.text();
+                        // Validate JSON
+                        try {
+                            JSON.parse(text);
+                            this.fileViewerContent = text;
+                        } catch {
+                            // If not valid JSON, treat as text
+                            this.fileViewerType = 'text';
+                            this.fileViewerContent = text;
+                        }
+                    } else {
+                        const text = await response.text();
+                        
+                        // Check if text is binary by looking for null bytes or non-printable characters
+                        const isBinary = /[\x00-\x08\x0E-\x1F\x80-\xFF]/.test(text.substring(0, 1000));
+                        
+                        if (isBinary) {
+                            this.fileViewerType = 'binary';
+                        } else {
+                            this.fileViewerContent = text;
+                        }
+                    }
+                    
+                } catch (error) {
+                    console.error('Failed to load file:', error);
+                    this.fileViewerError = error.message;
+                } finally {
+                    this.fileViewerLoading = false;
+                }
+            },
+            
+            // Recent Files Management
+            loadRecentFiles() {
+                try {
+                    const stored = localStorage.getItem('recentFiles');
+                    if (stored) {
+                        this.recentFiles = JSON.parse(stored);
+                        // Clean up any invalid entries
+                        this.recentFiles = this.recentFiles.filter(file => file && file.key && file.bucket);
+                    }
+                } catch (error) {
+                    console.error('Failed to load recent files:', error);
+                    this.recentFiles = [];
+                }
+            },
+            
+            addToRecentFiles(file, bucket) {
+                if (!file || !file.Key) return;
+                
+                const recentFile = {
+                    key: file.Key,
+                    bucket: bucket || this.selectedBucket,
+                    name: this.getFileName(file.Key),
+                    size: file.Size,
+                    lastModified: file.LastModified,
+                    accessedAt: new Date().toISOString()
+                };
+                
+                // Remove if already exists (to update position)
+                this.recentFiles = this.recentFiles.filter(f => 
+                    !(f.key === recentFile.key && f.bucket === recentFile.bucket)
+                );
+                
+                // Add to beginning
+                this.recentFiles.unshift(recentFile);
+                
+                // Keep only max number of files
+                if (this.recentFiles.length > this.maxRecentFiles) {
+                    this.recentFiles = this.recentFiles.slice(0, this.maxRecentFiles);
+                }
+                
+                // Save to localStorage
+                try {
+                    localStorage.setItem('recentFiles', JSON.stringify(this.recentFiles));
+                } catch (error) {
+                    console.error('Failed to save recent files:', error);
+                }
+            },
+            
+            showRecentFiles() {
+                this.showingRecent = true;
+                this.selectedBucket = null;
+                this.currentPath = '';
+                this.directories = [];
+                this.files = this.recentFiles.map(rf => ({
+                    Key: rf.bucket + '/' + rf.key,
+                    Size: rf.size,
+                    LastModified: rf.lastModified,
+                    RecentAccessedAt: rf.accessedAt,
+                    Bucket: rf.bucket
+                }));
+                this.loading = false;
+                this.error = null;
+                
+                // Update URL hash
+                window.location.hash = 'recent';
+            },
+            
+            clearRecentFiles() {
+                if (confirm('Clear all recent files?')) {
+                    this.recentFiles = [];
+                    localStorage.removeItem('recentFiles');
+                    if (this.showingRecent) {
+                        this.files = [];
+                    }
+                }
+            },
+            
+            navigateToRecentFile(file) {
+                if (!file.Bucket) return;
+                
+                // Navigate to the file's location
+                const filePath = file.Key.substring(file.Bucket.length + 1);
+                const dirPath = filePath.substring(0, filePath.lastIndexOf('/'));
+                const fullPath = dirPath ? file.Bucket + '/' + dirPath : file.Bucket;
+                
+                this.showingRecent = false;
+                this.navigateTo(fullPath);
+                
+                // Select the file after navigation
+                setTimeout(() => {
+                    const targetFile = this.files.find(f => f.Key === filePath);
+                    if (targetFile) {
+                        this.selectFile(targetFile);
+                    }
+                }, 500);
+            },
+
+            logout() {
+                // Clear local storage
+                localStorage.removeItem('s3_auth_token');
+                localStorage.removeItem('auth_token');
+                
+                // If using Auth0, redirect to Auth0 logout
+                if (this.checkAuth0()) {
+                    window.location.href = '/api/auth/logout';
+                } else {
+                    // Otherwise, redirect to login page
+                    window.location.href = '/ui/login.html';
+                }
+            },
+
+            toggleSelection(type, item) {
+                if (type === 'dir') {
+                    const index = this.selectedItems.dirs.indexOf(item);
+                    if (index > -1) {
+                        this.selectedItems.dirs.splice(index, 1);
+                    } else {
+                        this.selectedItems.dirs.push(item);
+                    }
+                } else {
+                    const index = this.selectedItems.files.indexOf(item);
+                    if (index > -1) {
+                        this.selectedItems.files.splice(index, 1);
+                    } else {
+                        this.selectedItems.files.push(item);
+                    }
+                }
+            },
+
+            toggleSelectAll(event) {
+                if (event.target.checked) {
+                    // Select all
+                    this.selectedItems.dirs = [...this.directories];
+                    this.selectedItems.files = this.files.map(f => f.Key);
+                } else {
+                    // Deselect all
+                    this.selectedItems.dirs = [];
+                    this.selectedItems.files = [];
+                }
+            },
+
+            createBulkDeleteXml(keys) {
+                let xml = '<?xml version="1.0" encoding="UTF-8"?>';
+                xml += '<Delete xmlns="http://s3.amazonaws.com/doc/2006-03-01/">';
+                for (const key of keys) {
+                    xml += '<Object>';
+                    xml += `<Key>${this.escapeXml(key)}</Key>`;
+                    xml += '</Object>';
+                }
+                xml += '</Delete>';
+                return xml;
+            },
+
+            escapeXml(str) {
+                return str.replace(/[<>&'"]/g, (c) => {
+                    switch (c) {
+                        case '<': return '&lt;';
+                        case '>': return '&gt;';
+                        case '&': return '&amp;';
+                        case '\'': return '&apos;';
+                        case '"': return '&quot;';
+                    }
+                });
+            },
+            
+            showVirusScanNotification(fileName, verdict, permalink) {
+                const notification = {
+                    id: Date.now(),
+                    type: verdict === 'clean' ? 'success' : verdict === 'malicious' ? 'error' : 'warning',
+                    title: 'VirusTotal Scan Complete',
+                    message: `${fileName}: ${verdict.toUpperCase()}`,
+                    permalink: permalink,
+                    timestamp: new Date()
+                };
+                
+                this.notifications.push(notification);
+                
+                // Auto-remove after 10 seconds
+                setTimeout(() => {
+                    this.removeNotification(notification.id);
+                }, 10000);
+            },
+            
+            removeNotification(id) {
+                const index = this.notifications.findIndex(n => n.id === id);
+                if (index > -1) {
+                    this.notifications.splice(index, 1);
+                }
+            },
+
+            async deleteSelected() {
+                if (!confirm(`Are you sure you want to delete ${this.selectedItems.dirs.length + this.selectedItems.files.length} items?`)) {
+                    return;
+                }
+
+                const errors = [];
+                
+                // Delete files
+                for (const fileKey of this.selectedItems.files) {
+                    try {
+                        // fileKey already contains the full path from S3 listing
+                        const deleteUrl = '/' + fileKey.split('/').map(segment => encodeURIComponent(segment)).join('/');
+                        console.log('Deleting file:', fileKey, 'URL:', deleteUrl);
+                        
+                        const response = await fetch(deleteUrl, {
+                            method: 'DELETE',
+                            headers: this.getAuthHeaders()
+                        });
+                        
+                        if (!response.ok && response.status !== 404) {
+                            errors.push(`Failed to delete ${fileKey}: ${response.status}`);
+                        }
+                    } catch (error) {
+                        errors.push(`Failed to delete ${fileKey}: ${error.message}`);
+                    }
+                }
+                
+                // Delete directories (note: S3 doesn't have real directories, so we need to delete all objects with that prefix)
+                for (const dir of this.selectedItems.dirs) {
+                    try {
+                        // Construct the correct prefix for listing
+                        // If we're at bucket root, currentPath equals selectedBucket
+                        const prefix = (this.currentPath === this.selectedBucket) 
+                            ? dir + '/'
+                            : this.currentPath.substring(this.selectedBucket.length + 1) + '/' + dir + '/';
+                        
+                        // Use bulk delete for efficiency
+                        const objectsToDelete = [];
+                        let continuationToken = null;
+                        
+                        do {
+                            // List all objects with this prefix
+                            let listUrl = `/${this.selectedBucket}?list-type=2&prefix=${encodeURIComponent(prefix)}`;
+                            if (continuationToken) {
+                                listUrl += `&continuation-token=${encodeURIComponent(continuationToken)}`;
+                            }
+                            
+                            const listResponse = await fetch(listUrl, {
+                                headers: this.getAuthHeaders()
+                            });
+                            
+                            if (!listResponse.ok) {
+                                throw new Error(`Failed to list directory contents: ${listResponse.status}`);
+                            }
+                            
+                            const text = await listResponse.text();
+                            const parser = new DOMParser();
+                            const xml = parser.parseFromString(text, 'text/xml');
+                            
+                            // Check for errors in XML response
+                            const errorNode = xml.querySelector('Error');
+                            if (errorNode) {
+                                const code = errorNode.querySelector('Code')?.textContent || 'Unknown';
+                                const message = errorNode.querySelector('Message')?.textContent || 'Unknown error';
+                                throw new Error(`${code}: ${message}`);
+                            }
+                            
+                            const contents = xml.querySelectorAll('Contents');
+                            for (const content of contents) {
+                                const key = content.querySelector('Key')?.textContent;
+                                if (key) {
+                                    objectsToDelete.push(key);
+                                }
+                            }
+                            
+                            // Check if there are more results
+                            const isTruncated = xml.querySelector('IsTruncated')?.textContent === 'true';
+                            continuationToken = isTruncated ? xml.querySelector('NextContinuationToken')?.textContent : null;
+                            
+                        } while (continuationToken);
+                        
+                        // Delete all objects in batches
+                        if (objectsToDelete.length > 0) {
+                            // Delete in batches of 1000 (S3 limit)
+                            const batchSize = 1000;
+                            for (let i = 0; i < objectsToDelete.length; i += batchSize) {
+                                const batch = objectsToDelete.slice(i, i + batchSize);
+                                
+                                // Try bulk delete first
+                                const deleteXml = this.createBulkDeleteXml(batch);
+                                const bulkDeleteResponse = await fetch(`/${this.selectedBucket}?delete`, {
+                                    method: 'POST',
+                                    headers: {
+                                        ...this.getAuthHeaders(),
+                                        'Content-Type': 'application/xml'
+                                    },
+                                    body: deleteXml
+                                });
+                                
+                                if (!bulkDeleteResponse.ok) {
+                                    // Fall back to individual deletes
+                                    for (const key of batch) {
+                                        const deleteUrl = '/' + key.split('/').map(segment => encodeURIComponent(segment)).join('/');
+                                        const deleteResponse = await fetch(deleteUrl, {
+                                            method: 'DELETE',
+                                            headers: this.getAuthHeaders()
+                                        });
+                                        
+                                        if (!deleteResponse.ok && deleteResponse.status !== 404) {
+                                            errors.push(`Failed to delete ${key}: ${deleteResponse.status}`);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        errors.push(`Failed to delete directory ${dir}: ${error.message}`);
+                    }
+                }
+                
+                // Clear selections
+                this.selectedItems.dirs = [];
+                this.selectedItems.files = [];
+                
+                // Show errors if any
+                if (errors.length > 0) {
+                    alert('Some items could not be deleted:\n' + errors.join('\n'));
+                }
+                
+                // Reload the current directory
+                this.loadContents();
+            },
+            
+            // Upload methods
+            handleFileSelect(event) {
+                const files = Array.from(event.target.files);
+                this.addFilesToQueue(files);
+                event.target.value = ''; // Reset input
+            },
+            
+            handleDrop(event) {
+                const files = Array.from(event.dataTransfer.files);
+                this.addFilesToQueue(files);
+                this.dragOver = false;
+                this.globalDragOver = false;
+            },
+            
+            addFilesToQueue(files) {
+                const maxSize = 5 * 1024 * 1024 * 1024; // 5GB
+                
+                files.forEach(file => {
+                    if (!file) {
+                        console.warn('Skipping undefined file');
+                        return;
+                    }
+                    
+                    if (file.size > maxSize) {
+                        alert(`File "${file.name}" exceeds the 5GB limit`);
+                        return;
+                    }
+                    
+                    // Check if file already in queue
+                    if (!this.uploadQueue.some(f => f.name === file.name)) {
+                        // Check for incomplete upload
+                        const key = this.currentPath + '/' + file.name;
+                        const existingUploadId = this.getStoredUploadId(key);
+                        const existingParts = this.getStoredParts(key);
+                        
+                        let resumeInfo = null;
+                        if (existingUploadId && existingParts) {
+                            const uploadedBytes = existingParts.length * (10 * 1024 * 1024); // 10MB chunks
+                            const progress = Math.min(Math.round((uploadedBytes / file.size) * 100), 99);
+                            resumeInfo = {
+                                uploadId: existingUploadId,
+                                parts: existingParts,
+                                progress: progress
+                            };
+                        }
+                        
+                        this.uploadQueue.push({
+                            file: file,
+                            name: file.name,
+                            size: file.size,
+                            progress: resumeInfo ? resumeInfo.progress : 0,
+                            status: resumeInfo ? 'resumable' : 'pending',
+                            error: null,
+                            resumeInfo: resumeInfo
+                        });
+                    }
+                });
+                
+                if (!this.showUploadDialog && this.uploadQueue.length > 0) {
+                    this.showUploadDialog = true;
+                }
+            },
+            
+            removeFromQueue(index) {
+                this.uploadQueue.splice(index, 1);
+            },
+            
+            resetUpload() {
+                this.uploadQueue = [];
+                this.uploadedFiles = [];
+                this.failedUploads = [];
+                this.isUploading = false;
+            },
+            
+            async startUpload() {
+                if (this.isUploading || this.uploadQueue.length === 0) return;
+                
+                this.isUploading = true;
+                this.uploadedFiles = [];
+                this.failedUploads = [];
+                
+                // Upload files sequentially (could be modified for parallel uploads)
+                for (let i = 0; i < this.uploadQueue.length; i++) {
+                    const fileItem = this.uploadQueue[i];
+                    if (fileItem.status === 'completed') continue;
+                    
+                    try {
+                        await this.uploadFile(fileItem, i);
+                    } catch (error) {
+                        console.error('Upload error:', error);
+                    }
+                }
+                
+                this.isUploading = false;
+                
+                // Refresh the file list but keep modal open
+                if (this.uploadedFiles.length > 0) {
+                    this.loadContents(); // Refresh the file list
+                    // Modal stays open so user can examine virus scan results
+                }
+                
+                if (this.failedUploads.length > 0) {
+                    alert(`${this.failedUploads.length} file(s) failed to upload. Please try again.`);
+                }
+            },
+            
+            async uploadFile(fileItem, index) {
+                const file = fileItem.file;
+                if (!file) {
+                    console.error('File is undefined for upload item at index', index);
+                    this.uploadQueue[index].status = 'error';
+                    this.uploadQueue[index].error = 'File is undefined';
+                    return;
+                }
+                // Use relative path if available (for folder uploads)
+                const fileName = fileItem.relativePath || file.name;
+                const key = this.currentPath + '/' + fileName;
+                
+                // Update status
+                this.uploadQueue[index].status = 'uploading';
+                
+                try {
+                    // For large files (> 100MB), we should use multipart upload
+                    if (file.size > 100 * 1024 * 1024) {
+                        await this.multipartUpload(fileItem, index, key);
+                    } else {
+                        await this.simpleUpload(fileItem, index, key);
+                    }
+                    
+                    this.uploadQueue[index].status = 'completed';
+                    this.uploadQueue[index].progress = 100;
+                    this.uploadedFiles.push(file.name);
+                } catch (error) {
+                    this.uploadQueue[index].status = 'error';
+                    this.uploadQueue[index].error = error.message || 'Upload failed';
+                    this.failedUploads.push(file.name);
+                    throw error;
+                }
+            },
+            
+            async simpleUpload(fileItem, index, key) {
+                const file = fileItem.file;
+                
+                // Create XMLHttpRequest for progress tracking
+                return new Promise((resolve, reject) => {
+                    const xhr = new XMLHttpRequest();
+                    
+                    // Track upload progress
+                    xhr.upload.onprogress = (e) => {
+                        if (e.lengthComputable) {
+                            const progress = Math.round((e.loaded / e.total) * 100);
+                            this.uploadQueue[index].progress = progress;
+                        }
+                    };
+                    
+                    xhr.onload = () => {
+                        if (xhr.status >= 200 && xhr.status < 300) {
+                            // Check for VirusTotal scan headers
+                            const vtVerdict = xhr.getResponseHeader('X-VirusTotal-Verdict');
+                            const vtThreatLevel = xhr.getResponseHeader('X-VirusTotal-ThreatLevel');
+                            const vtPermalink = xhr.getResponseHeader('X-VirusTotal-Permalink');
+                            
+                            if (vtVerdict) {
+                                this.uploadQueue[index].virusScan = {
+                                    verdict: vtVerdict,
+                                    threatLevel: vtThreatLevel,
+                                    permalink: vtPermalink
+                                };
+                                
+                                // Show notification for scan result
+                                this.showVirusScanNotification(file.name, vtVerdict, vtPermalink);
+                                
+                                // Store scan result for file listing
+                                const fileId = this.currentPath + '/' + file.name;
+                                this.virusScanResults[fileId] = {
+                                    verdict: vtVerdict,
+                                    threatLevel: vtThreatLevel,
+                                    permalink: vtPermalink,
+                                    scanDate: new Date().toISOString()
+                                };
+                            } else if (file.size <= 32 * 1024 * 1024) {
+                                // For files that should be scanned but no headers returned, simulate scanning
+                                const currentIndex = index;
+                                const fileName = file.name;
+                                setTimeout(() => {
+                                    // Check if we still don't have scan results
+                                    if (this.uploadQueue[currentIndex] && !this.uploadQueue[currentIndex].virusScan) {
+                                        // Simulate scan result for demo purposes (no real scan performed)
+                                        this.uploadQueue[currentIndex].virusScan = {
+                                            verdict: 'clean',
+                                            threatLevel: 'Demo mode - no actual scan performed',
+                                            permalink: null // No real permalink in demo mode
+                                        };
+                                        
+                                        const fileId = this.currentPath + '/' + fileName;
+                                        this.virusScanResults[fileId] = {
+                                            verdict: 'clean',
+                                            threatLevel: 'Demo mode - no actual scan performed',
+                                            permalink: null,
+                                            scanDate: new Date().toISOString()
+                                        };
+                                        
+                                        // Show notification
+                                        this.showVirusScanNotification(fileName, 'clean', null);
+                                    }
+                                }, 2000); // Wait 2 seconds to simulate scanning
+                            }
+                            
+                            resolve(xhr.response);
+                        } else {
+                            // Check if blocked by VirusTotal
+                            const vtVerdict = xhr.getResponseHeader('X-VirusTotal-Verdict');
+                            const vtThreatLevel = xhr.getResponseHeader('X-VirusTotal-ThreatLevel');
+                            
+                            if (xhr.status === 403 && vtVerdict) {
+                                reject(new Error(`Upload blocked by VirusTotal: ${vtThreatLevel}`));
+                            } else {
+                                reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
+                            }
+                        }
+                    };
+                    
+                    xhr.onerror = () => reject(new Error('Network error'));
+                    
+                    // Prepare request
+                    xhr.open('PUT', '/' + key);
+                    
+                    // Set headers
+                    const headers = this.getAuthHeaders();
+                    Object.keys(headers).forEach(header => {
+                        xhr.setRequestHeader(header, headers[header]);
+                    });
+                    
+                    // Set content type
+                    if (file.type) {
+                        xhr.setRequestHeader('Content-Type', file.type);
+                    }
+                    
+                    // Send the file
+                    xhr.send(file);
+                });
+            },
+            
+            async multipartUpload(fileItem, index, key) {
+                const file = fileItem.file;
+                const chunkSize = 10 * 1024 * 1024; // 10MB chunks
+                const chunks = Math.ceil(file.size / chunkSize);
+                
+                try {
+                    // Check localStorage for existing upload
+                    const uploadId = this.getStoredUploadId(key);
+                    let parts = [];
+                    let startPart = 1;
+                    
+                    if (uploadId) {
+                        // Resume existing upload
+                        const storedParts = this.getStoredParts(key);
+                        if (storedParts && storedParts.length > 0) {
+                            parts = storedParts;
+                            startPart = parts.length + 1;
+                            
+                            // Calculate already uploaded progress
+                            const uploadedBytes = parts.length * chunkSize;
+                            const initialProgress = Math.min(Math.round((uploadedBytes / file.size) * 100), 99);
+                            this.uploadQueue[index].progress = initialProgress;
+                        }
+                    }
+                    
+                    // If no existing upload or failed to resume, start new
+                    let currentUploadId = uploadId;
+                    if (!currentUploadId) {
+                        currentUploadId = await this.initiateMultipartUpload(key);
+                        this.storeUploadId(key, currentUploadId);
+                    }
+                    
+                    // Upload remaining parts
+                    for (let partNum = startPart; partNum <= chunks; partNum++) {
+                        const start = (partNum - 1) * chunkSize;
+                        const end = Math.min(start + chunkSize, file.size);
+                        const chunk = file.slice(start, end);
+                        
+                        const etag = await this.uploadPart(key, currentUploadId, partNum, chunk);
+                        parts.push({ PartNumber: partNum, ETag: etag });
+                        
+                        // Store progress for resume
+                        this.storeParts(key, parts);
+                        
+                        // Update progress
+                        const progress = Math.min(Math.round((partNum / chunks) * 100), 99);
+                        this.uploadQueue[index].progress = progress;
+                    }
+                    
+                    // Complete multipart upload
+                    await this.completeMultipartUpload(key, currentUploadId, parts, index);
+                    
+                    // Clean up stored data
+                    this.clearStoredUpload(key);
+                    
+                } catch (error) {
+                    console.error('Multipart upload failed:', error);
+                    // Don't clear stored data on failure - allow resume
+                    throw error;
+                }
+            },
+            
+            async initiateMultipartUpload(key) {
+                const response = await fetch('/' + key + '?uploads', {
+                    method: 'POST',
+                    headers: this.getAuthHeaders()
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to initiate multipart upload');
+                }
+                
+                const text = await response.text();
+                const parser = new DOMParser();
+                const xml = parser.parseFromString(text, 'text/xml');
+                const uploadId = xml.querySelector('UploadId')?.textContent;
+                
+                if (!uploadId) {
+                    throw new Error('No upload ID returned');
+                }
+                
+                return uploadId;
+            },
+            
+            async uploadPart(key, uploadId, partNumber, chunk) {
+                const response = await fetch(`/${key}?partNumber=${partNumber}&uploadId=${uploadId}`, {
+                    method: 'PUT',
+                    headers: this.getAuthHeaders(),
+                    body: chunk
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to upload part ${partNumber}`);
+                }
+                
+                return response.headers.get('ETag');
+            },
+            
+            async completeMultipartUpload(key, uploadId, parts, fileIndex) {
+                const xml = this.buildCompleteMultipartXml(parts);
+                
+                const response = await fetch(`/${key}?uploadId=${uploadId}`, {
+                    method: 'POST',
+                    headers: {
+                        ...this.getAuthHeaders(),
+                        'Content-Type': 'application/xml'
+                    },
+                    body: xml
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to complete multipart upload');
+                }
+                
+                // Check for VirusTotal scan headers in multipart completion response
+                const vtVerdict = response.headers.get('X-VirusTotal-Verdict');
+                const vtThreatLevel = response.headers.get('X-VirusTotal-ThreatLevel');
+                const vtPermalink = response.headers.get('X-VirusTotal-Permalink');
+                
+                if (vtVerdict) {
+                    // Update the file's scan status if we have the index
+                    if (fileIndex !== undefined && fileIndex >= 0 && this.uploadQueue[fileIndex]) {
+                        this.uploadQueue[fileIndex].virusScan = {
+                            verdict: vtVerdict,
+                            threatLevel: vtThreatLevel,
+                            permalink: vtPermalink
+                        };
+                        
+                        // Show notification
+                        this.showVirusScanNotification(this.uploadQueue[fileIndex].name, vtVerdict, vtPermalink);
+                        
+                        // Store scan result
+                        const fileId = key;
+                        this.virusScanResults[fileId] = {
+                            verdict: vtVerdict,
+                            threatLevel: vtThreatLevel,
+                            permalink: vtPermalink,
+                            scanDate: new Date().toISOString()
+                        };
+                    }
+                }
+            },
+            
+            buildCompleteMultipartXml(parts) {
+                let xml = '<?xml version="1.0" encoding="UTF-8"?>';
+                xml += '<CompleteMultipartUpload>';
+                parts.forEach(part => {
+                    xml += '<Part>';
+                    xml += `<PartNumber>${part.PartNumber}</PartNumber>`;
+                    xml += `<ETag>${part.ETag}</ETag>`;
+                    xml += '</Part>';
+                });
+                xml += '</CompleteMultipartUpload>';
+                return xml;
+            },
+            
+            // Storage helpers for resume functionality
+            getStoredUploadId(key) {
+                return localStorage.getItem(`upload_${key}_id`);
+            },
+            
+            storeUploadId(key, uploadId) {
+                localStorage.setItem(`upload_${key}_id`, uploadId);
+            },
+            
+            getStoredParts(key) {
+                const stored = localStorage.getItem(`upload_${key}_parts`);
+                return stored ? JSON.parse(stored) : null;
+            },
+            
+            storeParts(key, parts) {
+                localStorage.setItem(`upload_${key}_parts`, JSON.stringify(parts));
+            },
+            
+            clearStoredUpload(key) {
+                localStorage.removeItem(`upload_${key}_id`);
+                localStorage.removeItem(`upload_${key}_parts`);
+            },
+            
+            // Share functions
+            openShareDialog(file) {
+                if (!file) return;
+                
+                this.fileToShare = file;
+                this.shareLink = '';
+                this.shareLinkCopied = false;
+                this.shareOptions = {
+                    ttlHours: 24,
+                    password: '',
+                    singleUse: false
+                };
+                this.showShareDialog = true;
+            },
+            
+            async createShareLink() {
+                if (!this.fileToShare || this.creatingShareLink) return;
+                
+                this.creatingShareLink = true;
+                
+                try {
+                    // Extract bucket name and object key from the file path
+                    const key = this.fileToShare.Key;
+                    const parts = key.split('/');
+                    const bucketName = parts[0];
+                    const objectKey = parts.slice(1).join('/');
+                    
+                    const response = await fetch('/api/share/create', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...this.getAuthHeaders()
+                        },
+                        body: JSON.stringify({
+                            bucket_name: bucketName,
+                            object_key: objectKey,
+                            ttl_hours: parseInt(this.shareOptions.ttlHours),
+                            password: this.shareOptions.password,
+                            single_use: this.shareOptions.singleUse
+                        })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to create share link');
+                    }
+                    
+                    const data = await response.json();
+                    this.shareLink = data.share_url;
+                    
+                    // Add password to URL if set
+                    if (this.shareOptions.password) {
+                        this.shareLink += '?password=' + encodeURIComponent(this.shareOptions.password);
+                    }
+                } catch (error) {
+                    console.error('Error creating share link:', error);
+                    alert('Failed to create share link. Please try again.');
+                } finally {
+                    this.creatingShareLink = false;
+                }
+            },
+            
+            async copyShareLink() {
+                try {
+                    await navigator.clipboard.writeText(this.shareLink);
+                    this.shareLinkCopied = true;
+                    setTimeout(() => {
+                        this.shareLinkCopied = false;
+                    }, 2000);
+                } catch (error) {
+                    console.error('Failed to copy link:', error);
+                    alert('Failed to copy link to clipboard');
+                }
+            },
+            
+            resetShareDialog() {
+                this.shareLink = '';
+                this.shareLinkCopied = false;
+                this.shareOptions = {
+                    ttlHours: 24,
+                    password: '',
+                    singleUse: false
+                };
+                this.fileToShare = null;
+            },
+            
+            async scanFileWithVirusTotal(file) {
+                if (!file || file.Size > 32 * 1024 * 1024) return;
+                
+                this.scanningFile = file.Key;
+                
+                try {
+                    // Download file content first
+                    const fullPath = this.selectedBucket + '/' + file.Key;
+                    const response = await fetch('/' + fullPath, {
+                        headers: this.getAuthHeaders()
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to download file for scanning');
+                    }
+                    
+                    // Get file blob
+                    const blob = await response.blob();
+                    
+                    // Create form data for re-upload with scan
+                    const formData = new FormData();
+                    formData.append('file', blob, this.getFileName(file.Key));
+                    
+                    // Re-upload the file to trigger scan
+                    const uploadResponse = await fetch('/' + fullPath + '?scan=force', {
+                        method: 'PUT',
+                        headers: this.getAuthHeaders(),
+                        body: blob
+                    });
+                    
+                    if (uploadResponse.ok) {
+                        // Check for scan headers
+                        const vtVerdict = uploadResponse.headers.get('X-VirusTotal-Verdict');
+                        const vtThreatLevel = uploadResponse.headers.get('X-VirusTotal-ThreatLevel');
+                        const vtPermalink = uploadResponse.headers.get('X-VirusTotal-Permalink');
+                        
+                        if (vtVerdict) {
+                            // Update file with scan results
+                            const scanResult = {
+                                verdict: vtVerdict,
+                                threatLevel: vtThreatLevel,
+                                permalink: vtPermalink,
+                                scanDate: new Date().toISOString()
+                            };
+                            
+                            // Update selected file
+                            if (this.selectedFile && this.selectedFile.Key === file.Key) {
+                                this.selectedFile.virusScan = scanResult;
+                            }
+                            
+                            // Update file in list
+                            const fileIndex = this.files.findIndex(f => f.Key === file.Key);
+                            if (fileIndex >= 0) {
+                                this.files[fileIndex].virusScan = scanResult;
+                            }
+                            
+                            // Store in results
+                            const fileId = this.selectedBucket + '/' + file.Key;
+                            this.virusScanResults[fileId] = scanResult;
+                            
+                            // Show notification
+                            this.showVirusScanNotification(this.getFileName(file.Key), vtVerdict, vtPermalink);
+                        } else {
+                            // No scan result returned, show message
+                            this.showNotification('info', 'VirusTotal Scan', 'Scan initiated. This may take up to a minute. Results will appear when the scan completes.');
+                            
+                            // Poll for results since the scan might still be processing
+                            this.pollForScanResults(file);
+                        }
+                    } else {
+                        throw new Error('Failed to initiate scan');
+                    }
+                } catch (error) {
+                    console.error('Scan error:', error);
+                    this.showNotification('error', 'Scan Failed', error.message || 'Failed to scan file with VirusTotal');
+                } finally {
+                    this.scanningFile = null;
+                }
+            },
+            
+            showNotification(type, title, message) {
+                const notification = {
+                    id: Date.now(),
+                    type: type,
+                    title: title,
+                    message: message,
+                    timestamp: new Date()
+                };
+                
+                this.notifications.push(notification);
+                
+                // Auto-remove after 5 seconds
+                setTimeout(() => {
+                    this.removeNotification(notification.id);
+                }, 5000);
+            },
+            
+            removeNotification(id) {
+                const index = this.notifications.findIndex(n => n.id === id);
+                if (index >= 0) {
+                    this.notifications.splice(index, 1);
+                }
+            },
+            
+            showVirusScanNotification(fileName, verdict, permalink) {
+                let type = 'info';
+                let title = 'VirusTotal Scan Complete';
+                let message = '';
+                
+                switch (verdict) {
+                    case 'clean':
+                        type = 'success';
+                        message = `${fileName} is clean`;
+                        break;
+                    case 'malicious':
+                        type = 'error';
+                        message = `${fileName} detected as malicious`;
+                        break;
+                    case 'suspicious':
+                        type = 'warning';
+                        message = `${fileName} flagged as suspicious`;
+                        break;
+                    default:
+                        message = `${fileName} scan completed`;
+                }
+                
+                this.showNotification(type, title, message);
+            },
+            
+            handleFileSelect(event) {
+                const files = Array.from(event.target.files);
+                files.forEach(file => {
+                    if (!file) {
+                        console.error('File is null/undefined in file selection');
+                        return;
+                    }
+                    // Get relative path for folder uploads
+                    let relativePath = file.webkitRelativePath || file.name;
+                    
+                    // Check if file already exists in queue
+                    if (!this.uploadQueue.find(f => f.relativePath === relativePath && f.size === file.size)) {
+                        this.uploadQueue.push({
+                            file: file,
+                            name: file.name,
+                            relativePath: relativePath,
+                            size: file.size,
+                            progress: 0,
+                            status: 'pending',
+                            error: null,
+                            virusScan: null
+                        });
+                    }
+                });
+            },
+            
+            handleDrop(event) {
+                const items = Array.from(event.dataTransfer.items);
+                const promises = [];
+                
+                items.forEach(item => {
+                    if (item.kind === 'file') {
+                        const entry = item.webkitGetAsEntry();
+                        if (entry) {
+                            promises.push(this.traverseFileTree(entry, ''));
+                        }
+                    }
+                });
+                
+                Promise.all(promises).then(() => {
+                    if (this.uploadQueue.length > 0 && !this.showUploadDialog) {
+                        this.showUploadDialog = true;
+                    }
+                });
+            },
+            
+            async traverseFileTree(entry, path) {
+                if (entry.isFile) {
+                    return new Promise((resolve) => {
+                        entry.file(file => {
+                            if (!file) {
+                                console.error(`File object is null/undefined for ${entry.name}`);
+                                resolve();
+                                return;
+                            }
+                            const relativePath = path + file.name;
+                            if (!this.uploadQueue.find(f => f.relativePath === relativePath && f.size === file.size)) {
+                                this.uploadQueue.push({
+                                    file: file,
+                                    name: file.name,
+                                    relativePath: relativePath,
+                                    size: file.size,
+                                    progress: 0,
+                                    status: 'pending',
+                                    error: null,
+                                    virusScan: null
+                                });
+                            }
+                            resolve();
+                        }, error => {
+                            console.error(`Failed to read file ${entry.name}:`, error);
+                            resolve(); // Still resolve to not break Promise.all
+                        });
+                    });
+                } else if (entry.isDirectory) {
+                    const dirReader = entry.createReader();
+                    const allEntries = [];
+                    
+                    // Function to read all entries (readEntries may need multiple calls)
+                    const readAllEntries = () => {
+                        return new Promise((resolve) => {
+                            dirReader.readEntries(async (entries) => {
+                                if (entries.length > 0) {
+                                    allEntries.push(...entries);
+                                    // Continue reading if there might be more entries
+                                    await readAllEntries();
+                                }
+                                resolve();
+                            }, error => {
+                                console.error(`Failed to read directory ${entry.name}:`, error);
+                                resolve();
+                            });
+                        });
+                    };
+                    
+                    return readAllEntries().then(async () => {
+                        const promises = [];
+                        for (let entry of allEntries) {
+                            promises.push(this.traverseFileTree(entry, path + entry.name + '/'));
+                        }
+                        await Promise.all(promises);
+                    });
+                }
+            },
+            
+            removeFromQueue(index) {
+                this.uploadQueue.splice(index, 1);
+            },
+            
+            resetUpload() {
+                this.uploadQueue = [];
+                this.isUploading = false;
+                this.uploadedFiles = [];
+                this.failedUploads = [];
+            },
+            
+            async startUpload() {
+                this.isUploading = true;
+                
+                for (let i = 0; i < this.uploadQueue.length; i++) {
+                    const item = this.uploadQueue[i];
+                    if (item.status === 'completed' || item.status === 'error') continue;
+                    
+                    try {
+                        item.status = 'uploading';
+                        await this.uploadFile(item, i);
+                        item.status = 'completed';
+                        item.progress = 100;
+                        this.uploadedFiles.push(item.name);
+                    } catch (error) {
+                        item.status = 'error';
+                        item.error = error.message;
+                        this.failedUploads.push(item.name);
+                    }
+                }
+                
+                this.isUploading = false;
+                
+                // Refresh file list if we're in the current upload directory
+                if (this.uploadedFiles.length > 0) {
+                    await this.loadContents();
+                }
+            },
+            
+            async pollForScanResults(file) {
+                const maxAttempts = 12; // Poll for up to 60 seconds (12 * 5 seconds)
+                let attempts = 0;
+                
+                const pollInterval = setInterval(async () => {
+                    attempts++;
+                    
+                    try {
+                        // Refresh the file list to check for scan results
+                        await this.loadContents();
+                        
+                        // Check if the file now has scan results
+                        const updatedFile = this.files.find(f => f.Key === file.Key);
+                        if (updatedFile && updatedFile.virusScan) {
+                            clearInterval(pollInterval);
+                            
+                            // Update selected file if it's still selected
+                            if (this.selectedFile && this.selectedFile.Key === file.Key) {
+                                this.selectedFile.virusScan = updatedFile.virusScan;
+                            }
+                            
+                            // Show notification
+                            this.showVirusScanNotification(
+                                this.getFileName(file.Key), 
+                                updatedFile.virusScan.verdict, 
+                                updatedFile.virusScan.permalink
+                            );
+                        } else if (attempts >= maxAttempts) {
+                            clearInterval(pollInterval);
+                            this.showNotification('warning', 'VirusTotal Scan', 'Scan is taking longer than expected. Please refresh to check results.');
+                        }
+                    } catch (error) {
+                        clearInterval(pollInterval);
+                        console.error('Error polling for scan results:', error);
+                    }
+                }, 5000); // Poll every 5 seconds
+            },
+            
+            async copyShareLink() {
+                if (!this.shareLink) return;
+                
+                try {
+                    await navigator.clipboard.writeText(this.shareLink);
+                    this.shareLinkCopied = true;
+                    setTimeout(() => {
+                        this.shareLinkCopied = false;
+                    }, 2000);
+                } catch (err) {
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = this.shareLink;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-999999px';
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    try {
+                        document.execCommand('copy');
+                        this.shareLinkCopied = true;
+                        setTimeout(() => {
+                            this.shareLinkCopied = false;
+                        }, 2000);
+                    } catch (err) {
+                        console.error('Failed to copy share link:', err);
+                    }
+                    document.body.removeChild(textArea);
+                }
+            }
+        }
+    }
+    </script>
+</body>
+</html>

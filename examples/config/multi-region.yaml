@@ -1,0 +1,68 @@
+# Example configuration for S3 proxy with multi-region bucket mapping
+server:
+  listen: ":8080"
+  read_timeout: 60s
+  write_timeout: 60s
+
+s3:
+  region: us-east-1
+  path_style: true
+
+storage:
+  provider: s3
+  s3:
+    # Default configuration for buckets not explicitly configured
+    region: us-east-1
+    access_key: ${AWS_ACCESS_KEY_ID}
+    secret_key: ${AWS_SECRET_ACCESS_KEY}
+    use_path_style: false
+
+    # Simple bucket mapping (old style, uses default region)
+    bucket_mapping:
+      legacy-data: legacy-production-bucket
+      temp-storage: temp-bucket-2024
+
+    # Advanced per-bucket configuration (new style)
+    bucket_configs:
+      # US East bucket
+      analytics-data:
+        real_name: prod-analytics-bucket
+        region: us-east-1
+
+      # US West bucket
+      media-files:
+        real_name: prod-media-bucket-west
+        region: us-west-2
+
+      # EU bucket
+      eu-customer-data:
+        real_name: prod-eu-customer-bucket
+        region: eu-west-1
+
+      # Asia Pacific bucket
+      apac-content:
+        real_name: prod-apac-content-bucket
+        region: ap-southeast-1
+
+      # Different AWS account with specific credentials
+      partner-data:
+        real_name: partner-shared-bucket
+        region: us-east-2
+        access_key: ${PARTNER_AWS_ACCESS_KEY}
+        secret_key: ${PARTNER_AWS_SECRET_KEY}
+
+      # MinIO or custom S3-compatible storage
+      archive-data:
+        real_name: archive-bucket-001
+        region: us-east-1
+        endpoint: https://minio.internal.company.com:9000
+
+auth:
+  type: awsv4
+  # Credentials for authentication (can be different from backend storage)
+  identity: ${AUTH_ACCESS_KEY}
+  credential: ${AUTH_SECRET_KEY}
+
+# Optional encryption configuration
+encryption:
+  enabled: false

@@ -1,0 +1,27 @@
+[general]
+# Ignore certain rules
+ignore=body-is-missing,body-min-length
+
+# Enable specific rules
+contrib=contrib-title-conventional-commits
+
+[title-max-length]
+line-length=72
+
+[title-min-length]
+min-length=10
+
+[title-must-not-contain-word]
+# Comma-separated list of words that should not occur in the title
+words=wip,hack,fixup
+
+[title-match-regex]
+# Python regex that the commit title must match
+regex=^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)(\(.+\))?: .+$
+
+[body-max-line-length]
+line-length=80
+
+[contrib-title-conventional-commits]
+# List of allowed types
+types=feat,fix,docs,style,refactor,test,chore,perf,ci,build,revert

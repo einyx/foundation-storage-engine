@@ -1,0 +1,173 @@
+name: Cleanup Old Branches, Tags, and Releases
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run every Sunday at midnight UTC
+    - cron: '0 0 * * 0'
+
+jobs:
+  cleanup-branches:
+    runs-on: self-hosted
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Delete merged branches
+        run: |
+          echo "Fetching all branches..."
+          git fetch --all --prune
+          
+          echo "Finding merged branches..."
+          # Get all remote branches that are merged into main
+          MERGED_BRANCHES=$(git branch -r --merged origin/main | grep -v -E "(main|master|develop|HEAD)" | sed 's/origin\///')
+          
+          if [ -z "$MERGED_BRANCHES" ]; then
+            echo "No merged branches to delete"
+          else
+            echo "Merged branches to delete:"
+            echo "$MERGED_BRANCHES"
+            
+            for branch in $MERGED_BRANCHES; do
+              echo "Deleting branch: $branch"
+              git push origin --delete "$branch" || echo "Failed to delete $branch"
+            done
+          fi
+
+      - name: Delete old branches
+        run: |
+          echo "Finding old unmerged branches..."
+          # Delete branches older than 90 days
+          CUTOFF_DATE=$(date -d "90 days ago" +%s)
+          
+          git for-each-ref --format='%(refname:short) %(committerdate:unix)' refs/remotes/origin | \
+          grep -v -E "(main|master|develop|HEAD)" | \
+          while read branch date; do
+            branch_name=${branch#origin/}
+            if [ "$date" -lt "$CUTOFF_DATE" ]; then
+              echo "Deleting old branch: $branch_name (last commit: $(date -d @$date))"
+              git push origin --delete "$branch_name" || echo "Failed to delete $branch_name"
+            fi
+          done
+
+  cleanup-tags:
+    runs-on: self-hosted
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete old tags
+        run: |
+          echo "Fetching all tags..."
+          git fetch --tags
+          
+          # Keep only the last 50 tags (based on creation date)
+          echo "Finding old tags to delete..."
+          
+          # Get all tags sorted by date (newest first)
+          ALL_TAGS=$(git for-each-ref --sort=-creatordate --format='%(refname:short)' refs/tags)
+          TOTAL_TAGS=$(echo "$ALL_TAGS" | wc -l)
+          
+          if [ "$TOTAL_TAGS" -gt 50 ]; then
+            # Get tags to delete (all except the newest 50)
+            TAGS_TO_DELETE=$(echo "$ALL_TAGS" | tail -n +51)
+            
+            echo "Total tags: $TOTAL_TAGS"
+            echo "Tags to keep: 50"
+            echo "Tags to delete: $(echo "$TAGS_TO_DELETE" | wc -l)"
+            
+            for tag in $TAGS_TO_DELETE; do
+              echo "Deleting tag: $tag"
+              git push origin --delete "$tag" || echo "Failed to delete $tag"
+            done
+          else
+            echo "Total tags ($TOTAL_TAGS) is less than or equal to 50, no cleanup needed"
+          fi
+
+      - name: Delete tags older than date
+        run: |
+          # Alternative approach: Delete tags older than 30 days
+          echo "Finding tags older than 30 days..."
+          CUTOFF_DATE=$(date -d "30 days ago" +%s)
+          
+          git for-each-ref --format='%(refname:short) %(creatordate:unix)' refs/tags | \
+          while read tag date; do
+            if [ "$date" -lt "$CUTOFF_DATE" ]; then
+              echo "Deleting old tag: $tag (created: $(date -d @$date))"
+              git push origin --delete "$tag" || echo "Failed to delete $tag"
+            fi
+          done
+
+  cleanup-releases:
+    runs-on: self-hosted
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete old releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Fetching all releases..."
+          
+          # Keep only the last 20 releases
+          KEEP_RELEASES=20
+          
+          # Get all releases sorted by date (newest first)
+          ALL_RELEASES=$(gh release list --limit 100 --json tagName,createdAt,isDraft,isPrerelease | jq -r '.[] | select(.isDraft == false) | "\(.tagName) \(.createdAt)"' | sort -k2 -r)
+          TOTAL_RELEASES=$(echo "$ALL_RELEASES" | wc -l)
+          
+          if [ "$TOTAL_RELEASES" -gt "$KEEP_RELEASES" ]; then
+            # Get releases to delete (all except the newest N)
+            RELEASES_TO_DELETE=$(echo "$ALL_RELEASES" | tail -n +$((KEEP_RELEASES + 1)) | cut -d' ' -f1)
+            
+            echo "Total releases: $TOTAL_RELEASES"
+            echo "Keeping: $KEEP_RELEASES newest releases"
+            echo "Deleting: $(echo "$RELEASES_TO_DELETE" | wc -l) old releases"
+            
+            for release in $RELEASES_TO_DELETE; do
+              echo "Deleting release: $release"
+              gh release delete "$release" --yes || echo "Failed to delete release $release"
+            done
+          else
+            echo "Total releases ($TOTAL_RELEASES) is within limit ($KEEP_RELEASES), no cleanup needed"
+          fi
+          
+          # Alternative: Delete releases older than 30 days
+          echo ""
+          echo "Finding releases older than 30 days..."
+          CUTOFF_DATE=$(date -d "30 days ago" -u +"%Y-%m-%dT%H:%M:%SZ")
+          
+          OLD_RELEASES=$(gh release list --limit 100 --json tagName,createdAt,isDraft | \
+            jq -r --arg cutoff "$CUTOFF_DATE" '.[] | select(.isDraft == false and .createdAt < $cutoff) | .tagName')
+          
+          if [ -n "$OLD_RELEASES" ]; then
+            echo "Found old releases to delete:"
+            echo "$OLD_RELEASES"
+            
+            for release in $OLD_RELEASES; do
+              echo "Deleting old release: $release"
+              gh release delete "$release" --yes || echo "Failed to delete release $release"
+            done
+          else
+            echo "No releases older than 30 days found"
+          fi

@@ -1,0 +1,54 @@
+[extend]
+useDefault = true
+
+[allowlist]
+paths = [
+    '''vendor/''',
+    '''node_modules/''',
+    '''dist/''',
+    '''.git/''',
+    '''.*\.min\.js''',
+    '''.*\.min\.css''',
+    '''.secrets.baseline''',
+    '''.*_test\.go''',
+    '''README\.md''',
+    '''wiki/.*''',
+    '''docs/.*\.md''',
+    '''examples/.*\.yaml''',
+    '''scripts/.*\.sh''',
+    '''docker-compose.*\.yml''',
+    '''README-.*\.md''',
+]
+regexes = [
+    '''example\.com''',
+    '''test[_-]?key''',
+    '''dummy[_-]?secret''',
+    '''fake[_-]?token''',
+    '''AKIAIOSFODNN7EXAMPLE''',
+    '''wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY''',
+]
+commits = []
+
+[[rules]]
+id = "aws-access-key"
+description = "AWS Access Key"
+regex = '''(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}'''
+tags = ["key", "AWS"]
+
+[[rules]]
+id = "aws-secret-key"
+description = "AWS Secret Key"
+regex = '''(?i)aws(.{0,20})?(?-i)['\"]?[0-9a-zA-Z\/+]{40}['\"]?'''
+tags = ["key", "AWS"]
+
+[[rules]]
+id = "github-token"
+description = "GitHub Token"
+regex = '''ghp_[0-9a-zA-Z]{36}|github_pat_[0-9a-zA-Z]{22}_[0-9a-zA-Z]{59}'''
+tags = ["key", "GitHub"]
+
+[[rules]]
+id = "private-key"
+description = "Private Key"
+regex = '''-----BEGIN (RSA|OPENSSH|DSA|EC|PGP) PRIVATE KEY-----'''
+tags = ["key", "Private"]

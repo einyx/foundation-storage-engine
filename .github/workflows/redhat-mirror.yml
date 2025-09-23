@@ -1,0 +1,341 @@
+name: Update Red Hat Mirror
+
+on:
+  release:
+    types: [published]
+  repository_dispatch:
+    types: [update-redhat-mirror]
+  workflow_dispatch:  # Allow manual triggering
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write  # Required for AWS OIDC authentication
+
+jobs:
+  update-redhat-mirror:
+    runs-on: self-hosted
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install AWS CLI
+        run: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install
+          aws --version
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: me-central-1
+          audience: sts.amazonaws.com
+          
+      - name: Create redhat directory
+        run: mkdir -p redhat
+        
+      - name: Download all release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the latest release
+          RELEASE_TAG=$(gh release view --json tagName -q .tagName || echo "")
+          
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "No release found, checking all releases..."
+            # Get all releases and download .rpm files
+            gh release list --limit 10 --json tagName -q '.[].tagName' | while read -r tag; do
+              echo "Checking release: $tag"
+              gh release download "$tag" --pattern "*.rpm" --dir redhat --skip-existing || true
+            done
+          else
+            echo "Downloading from release: $RELEASE_TAG"
+            gh release download "$RELEASE_TAG" --pattern "*.rpm" --dir redhat --skip-existing || true
+          fi
+          
+      - name: Install repository tools
+        run: |
+          # Use Docker to run createrepo_c since it's not easily available on Ubuntu
+          docker pull fedora:latest
+          
+      - name: Generate repository metadata
+        run: |
+          cd redhat
+          
+          # Create repository directory structure
+          mkdir -p 8/{x86_64,aarch64}/Packages
+          mkdir -p 9/{x86_64,aarch64}/Packages
+          
+          # Move RPM files to appropriate directories based on architecture and EL version
+          for rpm in *.rpm; do
+            if [ -f "$rpm" ]; then
+              # Extract architecture and EL version from filename
+              if [[ "$rpm" =~ el8.*x86_64\.rpm$ ]]; then
+                mv "$rpm" 8/x86_64/Packages/
+              elif [[ "$rpm" =~ el8.*aarch64\.rpm$ ]]; then
+                mv "$rpm" 8/aarch64/Packages/
+              elif [[ "$rpm" =~ el9.*x86_64\.rpm$ ]]; then
+                mv "$rpm" 9/x86_64/Packages/
+              elif [[ "$rpm" =~ el9.*aarch64\.rpm$ ]]; then
+                mv "$rpm" 9/aarch64/Packages/
+              fi
+            fi
+          done
+          
+          # Create repository metadata for each version/arch
+          for version in 8 9; do
+            for arch in x86_64 aarch64; do
+              if [ -d "$version/$arch/Packages" ] && [ "$(ls -A $version/$arch/Packages)" ]; then
+                # Use Docker to run createrepo_c
+                docker run --rm -v "$(pwd)/$version/$arch:/data" fedora:latest bash -c "dnf install -y createrepo_c && createrepo_c /data"
+              fi
+            done
+          done
+          
+      - name: Create repository configuration files
+        run: |
+          # Create repo file for RHEL/CentOS 8
+          cat > redhat/foundation-storage-engine-el8.repo << 'EOF'
+          [foundation-storage-engine]
+          name=Foundation Storage Engine for Enterprise Linux 8 - $basearch
+          baseurl=https://yum.mirror.s3.amazonaws.com/8/$basearch
+          enabled=1
+          gpgcheck=0
+          repo_gpgcheck=0
+          EOF
+          
+          # Create repo file for RHEL/CentOS 9
+          cat > redhat/foundation-storage-engine-el9.repo << 'EOF'
+          [foundation-storage-engine]
+          name=Foundation Storage Engine for Enterprise Linux 9 - $basearch
+          baseurl=https://yum.mirror.s3.amazonaws.com/9/$basearch
+          enabled=1
+          gpgcheck=0
+          repo_gpgcheck=0
+          EOF
+          
+      - name: Create repository index page
+        run: |
+          cat > index.html << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Foundation Storage Engine - Red Hat/CentOS Repository</title>
+              <style>
+                  body {
+                      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                      line-height: 1.6;
+                      color: #333;
+                      max-width: 800px;
+                      margin: 0 auto;
+                      padding: 20px;
+                  }
+                  h1 { color: #cc0000; }
+                  h2, h3 { color: #2c3e50; }
+                  pre {
+                      background: #f4f4f4;
+                      border: 1px solid #ddd;
+                      padding: 10px;
+                      overflow-x: auto;
+                  }
+                  code {
+                      background: #f4f4f4;
+                      padding: 2px 5px;
+                      border-radius: 3px;
+                  }
+                  .warning {
+                      background: #fff3cd;
+                      border: 1px solid #ffeaa7;
+                      padding: 10px;
+                      border-radius: 5px;
+                      margin: 10px 0;
+                  }
+                  .tab-container {
+                      margin: 20px 0;
+                  }
+                  .tab {
+                      display: inline-block;
+                      padding: 10px 20px;
+                      background: #f0f0f0;
+                      border: 1px solid #ddd;
+                      cursor: pointer;
+                      margin-right: 5px;
+                  }
+                  .tab.active {
+                      background: #cc0000;
+                      color: white;
+                  }
+                  .tab-content {
+                      display: none;
+                      padding: 20px;
+                      border: 1px solid #ddd;
+                      background: #fafafa;
+                  }
+                  .tab-content.active {
+                      display: block;
+                  }
+              </style>
+              <script>
+                  function showTab(version) {
+                      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                      document.getElementById('tab-' + version).classList.add('active');
+                      document.getElementById('content-' + version).classList.add('active');
+                  }
+              </script>
+          </head>
+          <body>
+              <h1>Foundation Storage Engine - Red Hat/CentOS Repository</h1>
+              
+              <p>This is the official RPM package repository for Foundation Storage Engine, supporting RHEL, CentOS, Rocky Linux, and AlmaLinux.</p>
+              
+              <h2>Installation</h2>
+              
+              <div class="tab-container">
+                  <div class="tab active" id="tab-el9" onclick="showTab('el9')">RHEL/CentOS 9</div>
+                  <div class="tab" id="tab-el8" onclick="showTab('el8')">RHEL/CentOS 8</div>
+              </div>
+              
+              <div class="tab-content active" id="content-el9">
+                  <h3>For RHEL 9 / CentOS Stream 9 / Rocky Linux 9 / AlmaLinux 9:</h3>
+                  
+                  <pre><code># Add the repository
+          sudo curl -o /etc/yum.repos.d/foundation-storage-engine.repo \
+            https://yum.mirror.s3.amazonaws.com/foundation-storage-engine-el9.repo
+
+          # Install the package
+          sudo dnf install foundation-storage-engine</code></pre>
+                  
+                  <h4>Alternative one-liner:</h4>
+                  <pre><code>sudo dnf install -y https://yum.mirror.s3.amazonaws.com/9/$(uname -m)/Packages/foundation-storage-engine-*.rpm</code></pre>
+              </div>
+              
+              <div class="tab-content" id="content-el8">
+                  <h3>For RHEL 8 / CentOS 8 / Rocky Linux 8 / AlmaLinux 8:</h3>
+                  
+                  <pre><code># Add the repository
+          sudo curl -o /etc/yum.repos.d/foundation-storage-engine.repo \
+            https://yum.mirror.s3.amazonaws.com/foundation-storage-engine-el8.repo
+
+          # Install the package
+          sudo dnf install foundation-storage-engine</code></pre>
+                  
+                  <h4>Alternative one-liner:</h4>
+                  <pre><code>sudo dnf install -y https://yum.mirror.s3.amazonaws.com/8/$(uname -m)/Packages/foundation-storage-engine-*.rpm</code></pre>
+              </div>
+              
+              <div class="warning">
+                  <strong>Note:</strong> This repository is currently unsigned. You may need to use <code>--nogpgcheck</code> flag or set <code>gpgcheck=0</code> in the repo configuration.
+              </div>
+              
+              <h2>Browse Packages</h2>
+              
+              <p>You can browse and download packages directly:</p>
+              <ul>
+                  <li><strong>RHEL/CentOS 9:</strong>
+                      <ul>
+                          <li><a href="9/x86_64/">x86_64 packages</a></li>
+                          <li><a href="9/aarch64/">aarch64 packages</a></li>
+                      </ul>
+                  </li>
+                  <li><strong>RHEL/CentOS 8:</strong>
+                      <ul>
+                          <li><a href="8/x86_64/">x86_64 packages</a></li>
+                          <li><a href="8/aarch64/">aarch64 packages</a></li>
+                      </ul>
+                  </li>
+              </ul>
+              
+              <h2>Supported Distributions</h2>
+              <ul>
+                  <li>Red Hat Enterprise Linux 8 & 9</li>
+                  <li>CentOS Stream 8 & 9</li>
+                  <li>Rocky Linux 8 & 9</li>
+                  <li>AlmaLinux 8 & 9</li>
+                  <li>Oracle Linux 8 & 9</li>
+              </ul>
+              
+              <h2>Supported Architectures</h2>
+              <ul>
+                  <li>x86_64 (amd64)</li>
+                  <li>aarch64 (arm64)</li>
+              </ul>
+              
+              <h2>More Information</h2>
+              <ul>
+                  <li><a href="https://github.com/einyx/foundation-storage-engine">GitHub Repository</a></li>
+                  <li><a href="https://github.com/einyx/foundation-storage-engine/releases">All Releases</a></li>
+                  <li><a href="https://apt.mirror.s3.amazonaws.com/">Debian/Ubuntu Repository</a></li>
+              </ul>
+          </body>
+          </html>
+          HTMLEOF
+          
+          # Create directory listing pages
+          for version in 8 9; do
+            for arch in x86_64 aarch64; do
+              mkdir -p "redhat/$version/$arch"
+              cat > "redhat/$version/$arch/index.html" << HTMLEOF2
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Index of /$version/$arch/</title>
+              <style>
+                  body { font-family: monospace; margin: 20px; }
+                  a { text-decoration: none; color: #0066cc; }
+                  a:hover { text-decoration: underline; }
+                  hr { border: 0; border-top: 1px solid #ccc; }
+              </style>
+          </head>
+          <body>
+              <h1>Index of /$version/$arch/</h1>
+              <hr>
+              <pre>
+          <a href="../">../</a>
+          <a href="Packages/">Packages/</a>
+          <a href="repodata/">repodata/</a>
+              </pre>
+              <hr>
+          </body>
+          </html>
+          HTMLEOF2
+            done
+          done
+          
+      - name: Sync to S3
+        run: |
+          # Copy index.html to the root
+          cp index.html redhat/
+          
+          # Sync the entire redhat directory to S3
+          aws s3 sync redhat/ s3://yum.mirror/ \
+            --delete \
+            --cache-control "max-age=300"
+            
+          # Set proper content types
+          aws s3 cp s3://yum.mirror/ s3://yum.mirror/ \
+            --exclude "*" \
+            --include "*.rpm" \
+            --content-type "application/x-rpm" \
+            --metadata-directive REPLACE \
+            --recursive
+            
+          aws s3 cp s3://yum.mirror/ s3://yum.mirror/ \
+            --exclude "*" \
+            --include "*.xml" \
+            --content-type "application/xml" \
+            --metadata-directive REPLACE \
+            --recursive
+            
+          aws s3 cp s3://yum.mirror/ s3://yum.mirror/ \
+            --exclude "*" \
+            --include "*.xml.gz" \
+            --content-type "application/gzip" \
+            --metadata-directive REPLACE \
+            --recursive
