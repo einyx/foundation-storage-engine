@@ -188,7 +188,7 @@ func (s *Server) setSecurityHeaders(w http.ResponseWriter) {
 
 	// Content Security Policy - restrictive by default
 	// Allow self for scripts/styles, data: for images (base64), and 'unsafe-inline' for styles (needed by some UI frameworks)
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none';")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none';")
 
 	// Referrer Policy - don't leak referrer information
 	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
