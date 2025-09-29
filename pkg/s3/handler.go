@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -414,6 +415,14 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 	marker := r.URL.Query().Get("marker")
 	delimiter := r.URL.Query().Get("delimiter")
 	maxKeysStr := r.URL.Query().Get("max-keys")
+	
+	// For V2 requests, use continuation-token instead of marker
+	if isV2 {
+		continuationToken := r.URL.Query().Get("continuation-token")
+		if continuationToken != "" {
+			marker = continuationToken
+		}
+	}
 
 	maxKeys := 1000
 	if maxKeysStr != "" {
@@ -450,6 +459,16 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		logger.WithError(err).Error("Failed to list objects")
 		h.sendError(w, err, http.StatusInternalServerError)
 		return
+	}
+	
+	// Debug logging for pagination issues
+	if isV2 && result.IsTruncated {
+		logger.WithFields(logrus.Fields{
+			"marker": marker,
+			"nextMarker": result.NextMarker,
+			"resultCount": len(result.Contents),
+			"isTruncated": result.IsTruncated,
+		}).Debug("V2 list pagination state")
 	}
 
 	// logger.WithFields(logrus.Fields{
@@ -510,6 +529,22 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 
 	// Handle V2 format if requested
 	if isV2 {
+		// Safety check: Prevent infinite loops by detecting when NextMarker equals current marker
+		// Handle URL encoding differences
+		decodedMarker, _ := url.QueryUnescape(marker)
+		if result.IsTruncated && result.NextMarker != "" && 
+			(result.NextMarker == marker || result.NextMarker == decodedMarker) {
+			logrus.WithFields(logrus.Fields{
+				"bucket":       bucket,
+				"prefix":       prefix,
+				"marker":       marker,
+				"decodedMarker": decodedMarker,
+				"nextMarker":   result.NextMarker,
+			}).Warn("Detected same continuation token, breaking potential infinite loop")
+			result.IsTruncated = false
+			result.NextMarker = ""
+		}
+		
 		responseV2 := listBucketResultV2{
 			Name:        bucket,
 			Prefix:      prefix,

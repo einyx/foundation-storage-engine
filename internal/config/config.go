@@ -23,6 +23,7 @@ type Config struct {
 	VirusTotal VirusTotalConfig `mapstructure:"virustotal"`
 	ShareLinks ShareLinksConfig `mapstructure:"share_links"`
 	Monitoring MonitoringConfig `mapstructure:"monitoring"`
+	Sentry     SentryConfig     `mapstructure:"sentry"`
 }
 
 // ServerConfig contains HTTP server configuration settings
@@ -316,4 +317,20 @@ type ShareLinksConfig struct {
 type MonitoringConfig struct {
 	MetricsEnabled bool `mapstructure:"metrics_enabled" envconfig:"MONITORING_METRICS_ENABLED" default:"true"`
 	PprofEnabled   bool `mapstructure:"pprof_enabled" envconfig:"MONITORING_PPROF_ENABLED" default:"false"`
+}
+
+// SentryConfig contains Sentry error tracking configuration
+type SentryConfig struct {
+	Enabled              bool     `mapstructure:"enabled" envconfig:"SENTRY_ENABLED" default:"false"`
+	DSN                  string   `mapstructure:"dsn" envconfig:"SENTRY_DSN"`
+	Environment          string   `mapstructure:"environment" envconfig:"SENTRY_ENVIRONMENT" default:"production"`
+	SampleRate           float64  `mapstructure:"sample_rate" envconfig:"SENTRY_SAMPLE_RATE" default:"1.0"`
+	TracesSampleRate     float64  `mapstructure:"traces_sample_rate" envconfig:"SENTRY_TRACES_SAMPLE_RATE" default:"0.1"`
+	AttachStacktrace     bool     `mapstructure:"attach_stacktrace" envconfig:"SENTRY_ATTACH_STACKTRACE" default:"true"`
+	EnableTracing        bool     `mapstructure:"enable_tracing" envconfig:"SENTRY_ENABLE_TRACING" default:"true"`
+	Debug                bool     `mapstructure:"debug" envconfig:"SENTRY_DEBUG" default:"false"`
+	MaxBreadcrumbs       int      `mapstructure:"max_breadcrumbs" envconfig:"SENTRY_MAX_BREADCRUMBS" default:"30"`
+	IgnoreErrors         []string `mapstructure:"ignore_errors"`
+	ServerName           string   `mapstructure:"server_name" envconfig:"SENTRY_SERVER_NAME"`
+	Release              string   `mapstructure:"release" envconfig:"SENTRY_RELEASE"`
 }

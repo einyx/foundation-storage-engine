@@ -27,6 +27,45 @@ import (
 	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
+const (
+	// Buffer sizes
+	defaultBufferSize = 1 * 1024 * 1024 // 1MB
+	smallFileThreshold = 256 * 1024     // 256KB for MD5 calculation
+	
+	// Azure limits and configuration
+	azureBlockIDFormat = "%010d"
+	maxPagesToSearch = 10
+	maxConcurrentUploads = 4
+	minResultsToTruncate = 10 // Minimum results to continue pagination with blob path marker
+	
+	// Timeouts and delays
+	defaultClientTimeout = 300 * time.Second
+	defaultRetryDelay = 500 * time.Millisecond
+	maxRetryDelay = 5 * time.Second
+	maxRetries = 1
+	
+	// Special markers and identifiers
+	directoryMarkerSuffix = "/.dir"
+	emptyFileMD5 = "d41d8cd98f00b204e9800998ecf8427e" // MD5 of empty string
+	rootContainer = "$root"
+	
+	// Metadata keys
+	metadataKeyDirectoryMarker = "s3proxyDirectoryMarker"
+	metadataKeyOriginalKey = "s3proxyOriginalKey"
+	metadataKeyMD5 = "s3proxyMD5"
+)
+
+// wrapAzureError adds context to Azure storage errors
+func wrapAzureError(operation, bucket, key string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if key != "" {
+		return fmt.Errorf("%s failed for bucket=%s, key=%s: %w", operation, bucket, key, err)
+	}
+	return fmt.Errorf("%s failed for bucket=%s: %w", operation, bucket, err)
+}
+
 type AzureBackend struct {
 	client        *azblob.Client
 	accountName   string
@@ -51,13 +90,13 @@ func NewAzureBackend(cfg *config.AzureStorageConfig) (*AzureBackend, error) {
 	clientOptions := &azblob.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Retry: policy.RetryOptions{
-				MaxRetries:    1,                      // Minimal retries for multipart uploads
-				TryTimeout:    300 * time.Second,      // 5 minutes timeout
-				RetryDelay:    500 * time.Millisecond, // Fast retry
-				MaxRetryDelay: 5 * time.Second,        // Max delay
+				MaxRetries:    maxRetries,
+				TryTimeout:    defaultClientTimeout,
+				RetryDelay:    defaultRetryDelay,
+				MaxRetryDelay: maxRetryDelay,
 			},
 			Transport: &http.Client{
-				Timeout: 300 * time.Second,
+				Timeout: defaultClientTimeout,
 			},
 		},
 	}
@@ -94,7 +133,7 @@ func NewAzureBackend(cfg *config.AzureStorageConfig) (*AzureBackend, error) {
 
 	containerName := cfg.ContainerName
 	if containerName == "" {
-		containerName = "$root"
+		containerName = rootContainer
 	}
 
 	return &AzureBackend{
@@ -103,11 +142,11 @@ func NewAzureBackend(cfg *config.AzureStorageConfig) (*AzureBackend, error) {
 		containerName: containerName,
 		bufferPool: sync.Pool{
 			New: func() interface{} {
-				buf := make([]byte, 1024*1024) // 1MB buffers
+				buf := make([]byte, defaultBufferSize)
 				return &buf
 			},
 		},
-		uploadSem: make(chan struct{}, 4), // Limit concurrent uploads
+		uploadSem: make(chan struct{}, maxConcurrentUploads),
 	}, nil
 }
 
@@ -118,7 +157,7 @@ func (a *AzureBackend) ListBuckets(ctx context.Context) ([]BucketInfo, error) {
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list containers: %w", err)
+			return nil, wrapAzureError("list containers", "", "", err)
 		}
 
 		for _, container := range page.ContainerItems {
@@ -137,7 +176,7 @@ func (a *AzureBackend) CreateBucket(ctx context.Context, bucket string) error {
 		Access: nil, // Private access
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create container: %w", err)
+		return wrapAzureError("create container", bucket, "", err)
 	}
 	return nil
 }
@@ -145,7 +184,7 @@ func (a *AzureBackend) CreateBucket(ctx context.Context, bucket string) error {
 func (a *AzureBackend) DeleteBucket(ctx context.Context, bucket string) error {
 	_, err := a.client.DeleteContainer(ctx, bucket, nil)
 	if err != nil {
-		return fmt.Errorf("failed to delete container: %w", err)
+		return wrapAzureError("delete container", bucket, "", err)
 	}
 	return nil
 }
@@ -301,19 +340,56 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 		}(),
 	}
 	
+	// Fix for Azure marker issue: Some S3 clients (like Iceberg/Trino) use the last object key
+	// as the continuation token instead of the NextContinuationToken. This doesn't work with Azure.
+	// If the marker looks like a blob path, we need to handle it specially.
 	if marker != "" {
-		opts.Marker = &marker
+		if strings.Contains(marker, "/") {
+			// This is a blob path being used as a marker (common S3 client behavior)
+			// We need to find all blobs after this key
+			logrus.WithFields(logrus.Fields{
+				"marker": marker,
+				"bucket": bucket,
+				"prefix": prefix,
+			}).Debug("Detected blob path used as marker, will filter results")
+			
+			// Use a smarter prefix to reduce the search space
+			// Extract the directory part of the marker to use as a prefix hint
+			if lastSlash := strings.LastIndex(marker, "/"); lastSlash > 0 && prefix == "" {
+				// Use the directory of the marker as a prefix to narrow the search
+				markerDir := marker[:lastSlash+1]
+				if strings.HasPrefix(markerDir, prefix) {
+					opts.Prefix = &markerDir
+				}
+			}
+			
+			// Don't set the Azure marker - we'll filter results manually
+			// by skipping all blobs until we pass the marker key
+		} else {
+			// This looks like a valid Azure marker
+			opts.Marker = &marker
+		}
 	}
 
+	// Track if we're using a blob path as marker and need to skip entries
+	skipUntilAfterMarker := marker != "" && strings.Contains(marker, "/")
+	markerPath := marker
+	// Track if we found anything past the marker
+	foundItemsPastMarker := false
+	// Limit pages when searching for marker to prevent excessive API calls
+	pagesSearched := 0
+	
 	if delimiter != "" {
 		// Use hierarchical listing
 		pager := containerClient.NewListBlobsHierarchyPager(delimiter, opts)
 		
-		for pager.More() && len(result.Contents) < maxKeys {
+		// Continue paging if we need more items OR if we're still searching for items past the marker (with page limit)
+		for pager.More() && (len(result.Contents) < maxKeys || (skipUntilAfterMarker && !foundItemsPastMarker && pagesSearched < maxPagesToSearch)) {
 			page, err := pager.NextPage(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("failed to list blobs: %w", err)
+				return nil, wrapAzureError("list blobs", bucket, prefix, err)
 			}
+			pagesSearched++
 
 			// Process blobs
 			for _, blob := range page.Segment.BlobItems {
@@ -323,20 +399,30 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 				}
 
 				key := *blob.Name
+				
+				// Skip blobs until we pass the marker if using blob path as marker
+				if skipUntilAfterMarker {
+					if key <= markerPath {
+						continue
+					}
+					// We've passed the marker, stop skipping
+					skipUntilAfterMarker = false
+					foundItemsPastMarker = true
+				}
 				// Convert .dir blobs back to directory names
-				if strings.HasSuffix(key, "/.dir") && blob.Metadata != nil {
-					if isDir, exists := blob.Metadata["s3proxyDirectoryMarker"]; exists && isDir != nil && *isDir == "true" {
-						if origKey, exists := blob.Metadata["s3proxyOriginalKey"]; exists && origKey != nil {
+				if strings.HasSuffix(key, directoryMarkerSuffix) && blob.Metadata != nil {
+					if isDir, exists := blob.Metadata[metadataKeyDirectoryMarker]; exists && isDir != nil && *isDir == "true" {
+						if origKey, exists := blob.Metadata[metadataKeyOriginalKey]; exists && origKey != nil {
 							key = *origKey
 						} else {
-							key = strings.TrimSuffix(key, "/.dir") + "/"
+							key = strings.TrimSuffix(key, directoryMarkerSuffix) + "/"
 						}
 					}
 				}
 
 				etag := string(*blob.Properties.ETag)
 				if blob.Metadata != nil {
-					if md5Hash, exists := blob.Metadata["s3proxyMD5"]; exists && md5Hash != nil {
+					if md5Hash, exists := blob.Metadata[metadataKeyMD5]; exists && md5Hash != nil {
 						etag = fmt.Sprintf("\"%s\"", *md5Hash)
 					}
 				}
@@ -355,29 +441,87 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 				result.CommonPrefixes = append(result.CommonPrefixes, *prefix.Name)
 			}
 
-			if page.NextMarker != nil {
-				result.NextMarker = *page.NextMarker
+			// Handle pagination carefully when using blob paths as markers
+			if len(result.Contents) >= maxKeys {
+				// We hit the max keys limit, need to set next marker
 				result.IsTruncated = true
+				if len(result.Contents) > 0 {
+					// Use the last item as the next marker for blob path scenarios
+					result.NextMarker = result.Contents[len(result.Contents)-1].Key
+				}
+			} else if page.NextMarker != nil {
+				// Special handling when using a blob path as marker
+				if marker != "" && strings.Contains(marker, "/") {
+					// For blob path markers, check if we found any results after extensive searching
+					if len(result.Contents) == 0 || (pagesSearched >= maxPagesToSearch && len(result.Contents) < minResultsToTruncate) {
+						// No results or very few results after extensive search - end pagination
+						result.IsTruncated = false
+						result.NextMarker = ""
+						logrus.WithFields(logrus.Fields{
+							"bucket": bucket,
+							"prefix": prefix,
+							"marker": marker,
+							"results": len(result.Contents),
+							"pagesSearched": pagesSearched,
+						}).Info("Ending pagination: blob path marker with few results")
+					} else if len(result.Contents) > 0 {
+						// Check if we made progress
+						lastKey := result.Contents[len(result.Contents)-1].Key
+						if lastKey <= marker {
+							// No progress made - we're stuck
+							result.IsTruncated = false
+							result.NextMarker = ""
+							logrus.WithFields(logrus.Fields{
+								"bucket": bucket,
+								"prefix": prefix,
+								"marker": marker,
+								"lastKey": lastKey,
+							}).Warn("Preventing infinite loop: no progress from marker")
+						} else {
+							// Use the last key as the next marker
+							result.NextMarker = lastKey
+							result.IsTruncated = true
+						}
+					} else {
+						// No results found
+					result.IsTruncated = false
+					result.NextMarker = ""
+					}
+				} else if len(result.Contents) > 0 {
+					// Normal case: Azure has more pages and we have results
+					result.NextMarker = *page.NextMarker
+					result.IsTruncated = true
+				} else {
+					// No results found
+					result.IsTruncated = false
+					result.NextMarker = ""
+				}
 			}
 		}
 	} else {
 		// Flat listing
-		opts := &container.ListBlobsFlatOptions{
+		flatOpts := &container.ListBlobsFlatOptions{
 			Prefix: &prefix,
-			Marker: &marker,
 			MaxResults: func() *int32 { 
 				mk := int32(maxKeys)
 				return &mk 
 			}(),
 		}
-
-		pager := containerClient.NewListBlobsFlatPager(opts)
 		
-		for pager.More() && len(result.Contents) < maxKeys {
+		// Only set marker if it's a valid Azure marker (not a blob path)
+		if marker != "" && !strings.Contains(marker, "/") {
+			flatOpts.Marker = &marker
+		}
+		
+		pager := containerClient.NewListBlobsFlatPager(flatOpts)
+		
+		// Continue paging if we need more items OR if we're still searching for items past the marker (with page limit)
+		for pager.More() && (len(result.Contents) < maxKeys || (skipUntilAfterMarker && !foundItemsPastMarker && pagesSearched < maxPagesToSearch)) {
 			page, err := pager.NextPage(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("failed to list blobs: %w", err)
+				return nil, wrapAzureError("list blobs", bucket, prefix, err)
 			}
+			pagesSearched++
 
 			for _, blob := range page.Segment.BlobItems {
 				if len(result.Contents) >= maxKeys {
@@ -386,13 +530,23 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 				}
 
 				key := *blob.Name
+				
+				// Skip blobs until we pass the marker if using blob path as marker
+				if skipUntilAfterMarker {
+					if key <= markerPath {
+						continue
+					}
+					// We've passed the marker, stop skipping
+					skipUntilAfterMarker = false
+					foundItemsPastMarker = true
+				}
 				// Convert .dir blobs back to directory names
-				if strings.HasSuffix(key, "/.dir") && blob.Metadata != nil {
-					if isDir, exists := blob.Metadata["s3proxyDirectoryMarker"]; exists && isDir != nil && *isDir == "true" {
-						if origKey, exists := blob.Metadata["s3proxyOriginalKey"]; exists && origKey != nil {
+				if strings.HasSuffix(key, directoryMarkerSuffix) && blob.Metadata != nil {
+					if isDir, exists := blob.Metadata[metadataKeyDirectoryMarker]; exists && isDir != nil && *isDir == "true" {
+						if origKey, exists := blob.Metadata[metadataKeyOriginalKey]; exists && origKey != nil {
 							key = *origKey
 						} else {
-							key = strings.TrimSuffix(key, "/.dir") + "/"
+							key = strings.TrimSuffix(key, directoryMarkerSuffix) + "/"
 						}
 					}
 				}
@@ -406,9 +560,61 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 				})
 			}
 
-			if page.NextMarker != nil {
-				result.NextMarker = *page.NextMarker
+			// Handle pagination carefully when using blob paths as markers
+			if len(result.Contents) >= maxKeys {
+				// We hit the max keys limit, need to set next marker
 				result.IsTruncated = true
+				if len(result.Contents) > 0 {
+					// Use the last item as the next marker for blob path scenarios
+					result.NextMarker = result.Contents[len(result.Contents)-1].Key
+				}
+			} else if page.NextMarker != nil {
+				// Special handling when using a blob path as marker
+				if marker != "" && strings.Contains(marker, "/") {
+					// For blob path markers, check if we found any results after extensive searching
+					if len(result.Contents) == 0 || (pagesSearched >= maxPagesToSearch && len(result.Contents) < minResultsToTruncate) {
+						// No results or very few results after extensive search - end pagination
+						result.IsTruncated = false
+						result.NextMarker = ""
+						logrus.WithFields(logrus.Fields{
+							"bucket": bucket,
+							"prefix": prefix,
+							"marker": marker,
+							"results": len(result.Contents),
+							"pagesSearched": pagesSearched,
+						}).Info("Ending pagination: blob path marker with few results")
+					} else if len(result.Contents) > 0 {
+						// Check if we made progress
+						lastKey := result.Contents[len(result.Contents)-1].Key
+						if lastKey <= marker {
+							// No progress made - we're stuck
+							result.IsTruncated = false
+							result.NextMarker = ""
+							logrus.WithFields(logrus.Fields{
+								"bucket": bucket,
+								"prefix": prefix,
+								"marker": marker,
+								"lastKey": lastKey,
+							}).Warn("Preventing infinite loop: no progress from marker")
+						} else {
+							// Use the last key as the next marker
+							result.NextMarker = lastKey
+							result.IsTruncated = true
+						}
+					} else {
+						// No results found
+					result.IsTruncated = false
+					result.NextMarker = ""
+					}
+				} else if len(result.Contents) > 0 {
+					// Normal case: Azure has more pages and we have results
+					result.NextMarker = *page.NextMarker
+					result.IsTruncated = true
+				} else {
+					// No results found
+					result.IsTruncated = false
+					result.NextMarker = ""
+				}
 			}
 		}
 	}
@@ -420,7 +626,7 @@ func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 	// Handle directory-like objects
 	normalizedKey := key
 	if strings.HasSuffix(key, "/") && key != "/" {
-		normalizedKey = strings.TrimSuffix(key, "/") + "/.dir"
+		normalizedKey = strings.TrimSuffix(key, "/") + directoryMarkerSuffix
 	}
 
 	blobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlobClient(normalizedKey)
@@ -428,13 +634,13 @@ func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 	// Get properties first
 	props, err := blobClient.GetProperties(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get blob properties: %w", err)
+		return nil, wrapAzureError("get blob properties", bucket, normalizedKey, err)
 	}
 
 	// Download the blob
 	downloadResponse, err := blobClient.DownloadStream(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download blob: %w", err)
+		return nil, wrapAzureError("download blob", bucket, normalizedKey, err)
 	}
 
 	// Get metadata
@@ -445,7 +651,7 @@ func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 
 	// Use stored MD5 hash as ETag for S3 compatibility
 	etag := string(*props.ETag)
-	if md5Hash, exists := metadata["s3proxyMD5"]; exists {
+	if md5Hash, exists := metadata[metadataKeyMD5]; exists {
 		etag = fmt.Sprintf("\"%s\"", md5Hash)
 	}
 
@@ -473,14 +679,14 @@ func (a *AzureBackend) PutObject(ctx context.Context, bucket, key string, reader
 	normalizedKey := key
 	if strings.HasSuffix(key, "/") && key != "/" {
 		// For directory markers, create a special blob
-		normalizedKey = strings.TrimSuffix(key, "/") + "/.dir"
-		metadata["s3proxyDirectoryMarker"] = "true"
-		metadata["s3proxyOriginalKey"] = key
-		metadata["s3proxyMD5"] = "d41d8cd98f00b204e9800998ecf8427e" // MD5 of empty string
+		normalizedKey = strings.TrimSuffix(key, "/") + directoryMarkerSuffix
+		metadata[metadataKeyDirectoryMarker] = "true"
+		metadata[metadataKeyOriginalKey] = key
+		metadata[metadataKeyMD5] = emptyFileMD5
 	}
 
 	// For small files, calculate MD5
-	if size < 256*1024 { // < 256KB
+	if size < smallFileThreshold {
 		data, err := io.ReadAll(reader)
 		if err != nil {
 			return fmt.Errorf("failed to read data: %w", err)
@@ -489,7 +695,7 @@ func (a *AzureBackend) PutObject(ctx context.Context, bucket, key string, reader
 		// Calculate MD5
 		hash := md5.Sum(data)
 		md5Hash := hex.EncodeToString(hash[:])
-		metadata["s3proxyMD5"] = md5Hash
+		metadata[metadataKeyMD5] = md5Hash
 		
 		reader = bytes.NewReader(data)
 	}
@@ -511,7 +717,7 @@ func (a *AzureBackend) PutObject(ctx context.Context, bucket, key string, reader
 	// Upload the blob
 	_, err := a.client.UploadStream(ctx, bucket, normalizedKey, reader, uploadOptions)
 	if err != nil {
-		return fmt.Errorf("failed to upload blob: %w", err)
+		return wrapAzureError("upload blob", bucket, normalizedKey, err)
 	}
 
 	return nil
@@ -521,7 +727,7 @@ func (a *AzureBackend) DeleteObject(ctx context.Context, bucket, key string) err
 	// Handle directory-like objects
 	normalizedKey := key
 	if strings.HasSuffix(key, "/") && key != "/" {
-		normalizedKey = strings.TrimSuffix(key, "/") + "/.dir"
+		normalizedKey = strings.TrimSuffix(key, "/") + directoryMarkerSuffix
 	}
 
 	blobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlobClient(normalizedKey)
@@ -543,14 +749,14 @@ func (a *AzureBackend) HeadObject(ctx context.Context, bucket, key string) (*Obj
 	// Handle directory-like objects
 	normalizedKey := key
 	if strings.HasSuffix(key, "/") && key != "/" {
-		normalizedKey = strings.TrimSuffix(key, "/") + "/.dir"
+		normalizedKey = strings.TrimSuffix(key, "/") + directoryMarkerSuffix
 	}
 
 	blobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlobClient(normalizedKey)
 	
 	props, err := blobClient.GetProperties(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get blob properties: %w", err)
+		return nil, wrapAzureError("get blob properties", bucket, normalizedKey, err)
 	}
 
 	// Get metadata
@@ -561,7 +767,7 @@ func (a *AzureBackend) HeadObject(ctx context.Context, bucket, key string) (*Obj
 
 	// Use stored MD5 hash as ETag for S3 compatibility
 	etag := string(*props.ETag)
-	if md5Hash, exists := metadata["s3proxyMD5"]; exists {
+	if md5Hash, exists := metadata[metadataKeyMD5]; exists {
 		etag = fmt.Sprintf("\"%s\"", md5Hash)
 	}
 
@@ -635,7 +841,7 @@ func (a *AzureBackend) UploadPart(ctx context.Context, bucket, key, uploadID str
 	}).Info("Azure UploadPart called")
 
 	// Azure requires block IDs to be base64-encoded and of equal length
-	blockID := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%010d", partNumber)))
+	blockID := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(azureBlockIDFormat, partNumber)))
 	
 	logrus.WithFields(logrus.Fields{
 		"partNumber": partNumber,
@@ -694,7 +900,7 @@ func (a *AzureBackend) CompleteMultipartUpload(ctx context.Context, bucket, key,
 		// If the ETag doesn't look like a base64-encoded block ID, generate it from part number
 		// This handles backward compatibility or cases where ETag wasn't properly set
 		if len(blockID) < 10 || !isBase64(blockID) {
-			blockID = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%010d", part.PartNumber)))
+			blockID = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(azureBlockIDFormat, part.PartNumber)))
 			logrus.WithFields(logrus.Fields{
 				"partNumber": part.PartNumber,
 				"originalETag": part.ETag,

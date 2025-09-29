@@ -18,6 +18,7 @@ import (
 	"github.com/einyx/foundation-storage-engine/internal/config"
 	"github.com/einyx/foundation-storage-engine/internal/database"
 	"github.com/einyx/foundation-storage-engine/internal/metrics"
+	"github.com/einyx/foundation-storage-engine/internal/middleware"
 	"github.com/einyx/foundation-storage-engine/internal/storage"
 	"github.com/einyx/foundation-storage-engine/internal/virustotal"
 	"github.com/einyx/foundation-storage-engine/pkg/s3"
@@ -144,8 +145,15 @@ func NewServer(cfg *config.Config) (*Server, error) {
 
 	s.setupRoutes()
 
-	// Apply metrics middleware to all routes
+	// Apply middleware to all routes
 	s.router.Use(s.metrics.Middleware())
+	
+	// Apply Sentry middleware if enabled
+	if s.config.Sentry.Enabled {
+		s.router.Use(middleware.SentryRecoveryMiddleware())
+		s.router.Use(middleware.SentryMiddleware(false))
+		logrus.Info("Sentry middleware enabled")
+	}
 
 	return s, nil
 }

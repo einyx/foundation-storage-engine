@@ -61,6 +61,15 @@ func (w *AzureWrapper) removePrefix(bucket, key string) string {
 	return key
 }
 
+// executeWithContainer executes a function with a temporary container context
+func (w *AzureWrapper) executeWithContainer(container string, fn func() error) error {
+	oldContainer := w.backend.containerName
+	w.backend.containerName = container
+	defer func() { w.backend.containerName = oldContainer }()
+	return fn()
+}
+
+
 func (w *AzureWrapper) ListBuckets(ctx context.Context) ([]BucketInfo, error) {
 	// For Azure, we return the configured bucket aliases
 	var buckets []BucketInfo
@@ -76,21 +85,16 @@ func (w *AzureWrapper) ListBuckets(ctx context.Context) ([]BucketInfo, error) {
 func (w *AzureWrapper) CreateBucket(ctx context.Context, bucket string) error {
 	// Translate bucket alias to real container name
 	container := w.translateBucketToContainer(bucket)
-	// Temporarily set the container name in the backend
-	oldContainer := w.backend.containerName
-	w.backend.containerName = container
-	defer func() { w.backend.containerName = oldContainer }()
-	
-	return w.backend.CreateBucket(ctx, container)
+	return w.executeWithContainer(container, func() error {
+		return w.backend.CreateBucket(ctx, container)
+	})
 }
 
 func (w *AzureWrapper) DeleteBucket(ctx context.Context, bucket string) error {
 	container := w.translateBucketToContainer(bucket)
-	oldContainer := w.backend.containerName
-	w.backend.containerName = container
-	defer func() { w.backend.containerName = oldContainer }()
-	
-	return w.backend.DeleteBucket(ctx, container)
+	return w.executeWithContainer(container, func() error {
+		return w.backend.DeleteBucket(ctx, container)
+	})
 }
 
 func (w *AzureWrapper) BucketExists(ctx context.Context, bucket string) (bool, error) {
@@ -98,7 +102,6 @@ func (w *AzureWrapper) BucketExists(ctx context.Context, bucket string) (bool, e
 	oldContainer := w.backend.containerName
 	w.backend.containerName = container
 	defer func() { w.backend.containerName = oldContainer }()
-	
 	return w.backend.BucketExists(ctx, container)
 }
 
@@ -166,22 +169,18 @@ func (w *AzureWrapper) PutObject(ctx context.Context, bucket, key string, reader
 	container := w.translateBucketToContainer(bucket)
 	fullKey := w.addPrefix(bucket, key)
 	
-	oldContainer := w.backend.containerName
-	w.backend.containerName = container
-	defer func() { w.backend.containerName = oldContainer }()
-	
-	return w.backend.PutObject(ctx, container, fullKey, reader, size, metadata)
+	return w.executeWithContainer(container, func() error {
+		return w.backend.PutObject(ctx, container, fullKey, reader, size, metadata)
+	})
 }
 
 func (w *AzureWrapper) DeleteObject(ctx context.Context, bucket, key string) error {
 	container := w.translateBucketToContainer(bucket)
 	fullKey := w.addPrefix(bucket, key)
 	
-	oldContainer := w.backend.containerName
-	w.backend.containerName = container
-	defer func() { w.backend.containerName = oldContainer }()
-	
-	return w.backend.DeleteObject(ctx, container, fullKey)
+	return w.executeWithContainer(container, func() error {
+		return w.backend.DeleteObject(ctx, container, fullKey)
+	})
 }
 
 func (w *AzureWrapper) HeadObject(ctx context.Context, bucket, key string) (*ObjectInfo, error) {
