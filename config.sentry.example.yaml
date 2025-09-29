@@ -1,0 +1,55 @@
+# Example configuration for foundation-storage-engine with Sentry enabled
+
+server:
+  listen: ":8080"
+  read_timeout: 60s
+  write_timeout: 60s
+
+storage:
+  provider: "s3"  # or "azure", "filesystem", "multi"
+  s3:
+    endpoint: "http://localhost:9000"
+    access_key: "minioadmin"
+    secret_key: "minioadmin"
+    use_path_style: true
+
+auth:
+  type: "awsv4"  # or "none", "basic", "database"
+
+# Sentry Configuration
+sentry:
+  enabled: true
+  dsn: "https://your-public-key@sentry.io/your-project-id"
+  environment: "production"  # or "development", "staging"
+  
+  # Error sampling (0.0 to 1.0)
+  sample_rate: 1.0  # Capture 100% of errors
+  
+  # Performance monitoring
+  traces_sample_rate: 0.1  # Capture 10% of transactions for performance monitoring
+  enable_tracing: true
+  
+  # Debug mode - enables breadcrumbs and additional logging
+  debug: false
+  max_breadcrumbs: 30
+  
+  # Attach stack traces to all events
+  attach_stacktrace: true
+  
+  # Ignore specific errors (substring matching)
+  ignore_errors:
+    - "context canceled"
+    - "EOF"
+    - "broken pipe"
+    - "connection reset by peer"
+  
+  # Optional: Override server name (defaults to hostname)
+  # server_name: "storage-engine-1"
+  
+  # Optional: Set release version (defaults to version from build)
+  # release: "foundation-storage-engine@1.2.3"
+
+# Monitoring
+monitoring:
+  metrics_enabled: true
+  pprof_enabled: false  # Enable CPU/memory profiling endpoints

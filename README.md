@@ -488,6 +488,37 @@ curl -X POST http://grafana:3000/api/dashboards/import \
   -d @grafana/foundation-storage-engine-dashboard.json
 ```
 
+### Error Tracking with Sentry
+
+Foundation Storage Engine includes built-in Sentry integration for error tracking and performance monitoring:
+
+```yaml
+# config.yaml
+sentry:
+  enabled: true
+  dsn: "https://your-key@sentry.io/your-project"
+  environment: "production"
+  sample_rate: 1.0
+  traces_sample_rate: 0.1
+```
+
+Or via environment variables:
+
+```bash
+export SENTRY_ENABLED=true
+export SENTRY_DSN="https://your-key@sentry.io/your-project"
+export SENTRY_ENVIRONMENT=production
+export SENTRY_TRACES_SAMPLE_RATE=0.1
+```
+
+Features:
+- Automatic error capture with stack traces
+- Performance monitoring for S3 operations
+- Request context (method, path, bucket, key)
+- Configurable error filtering
+- Breadcrumb tracking for debugging
+- Integration with logrus logging
+
 ## 🎯 Performance Tuning
 
 ### Connection Pooling

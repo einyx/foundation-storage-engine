@@ -204,11 +204,19 @@ func (m *MultiBackend) ListObjects(ctx context.Context, bucket, prefix, marker s
 	// Merge results from multiple backends
 	allObjects := make(map[string]ObjectInfo)
 	commonPrefixes := make(map[string]bool)
+	var backendNextMarker string
+	var backendIsTruncated bool
 	
 	for _, backend := range backends {
 		result, err := backend.ListObjects(ctx, bucket, prefix, marker, maxKeys)
 		if err != nil {
 			continue // Skip failed backends
+		}
+		
+		// Preserve backend-specific continuation tokens
+		if result.IsTruncated && result.NextMarker != "" {
+			backendNextMarker = result.NextMarker
+			backendIsTruncated = true
 		}
 		
 		// Add backend source to each object
@@ -265,8 +273,14 @@ func (m *MultiBackend) ListObjects(ctx context.Context, bucket, prefix, marker s
 		CommonPrefixes: prefixList,
 	}
 	
-	if result.IsTruncated && len(filteredObjects) > 0 {
-		result.NextMarker = filteredObjects[len(filteredObjects)-1].Key
+	// Use backend-specific NextMarker if available, otherwise fall back to key-based marker
+	if result.IsTruncated || backendIsTruncated {
+		if backendNextMarker != "" {
+			result.NextMarker = backendNextMarker
+			result.IsTruncated = true
+		} else if len(filteredObjects) > 0 {
+			result.NextMarker = filteredObjects[len(filteredObjects)-1].Key
+		}
 	}
 	
 	return result, nil
@@ -283,11 +297,19 @@ func (m *MultiBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 	// Merge results from multiple backends
 	allObjects := make(map[string]ObjectInfo)
 	commonPrefixes := make(map[string]bool)
+	var backendNextMarker string
+	var backendIsTruncated bool
 	
 	for _, backend := range backends {
 		result, err := backend.ListObjectsWithDelimiter(ctx, bucket, prefix, marker, delimiter, maxKeys)
 		if err != nil {
 			continue // Skip failed backends
+		}
+		
+		// Preserve backend-specific continuation tokens
+		if result.IsTruncated && result.NextMarker != "" {
+			backendNextMarker = result.NextMarker
+			backendIsTruncated = true
 		}
 		
 		// Add backend source to each object
@@ -344,8 +366,14 @@ func (m *MultiBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 		CommonPrefixes: prefixList,
 	}
 	
-	if result.IsTruncated && len(filteredObjects) > 0 {
-		result.NextMarker = filteredObjects[len(filteredObjects)-1].Key
+	// Use backend-specific NextMarker if available, otherwise fall back to key-based marker
+	if result.IsTruncated || backendIsTruncated {
+		if backendNextMarker != "" {
+			result.NextMarker = backendNextMarker
+			result.IsTruncated = true
+		} else if len(filteredObjects) > 0 {
+			result.NextMarker = filteredObjects[len(filteredObjects)-1].Key
+		}
 	}
 	
 	return result, nil

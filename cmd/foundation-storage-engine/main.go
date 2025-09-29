@@ -8,13 +8,16 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/logging"
 	"github.com/einyx/foundation-storage-engine/internal/proxy"
 )
 
@@ -63,6 +66,39 @@ func run(cmd *cobra.Command, _ []string) error {
 	cfg, err := config.Load(configFile)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Initialize Sentry
+	if cfg.Sentry.Enabled {
+		if err := initSentry(cfg); err != nil {
+			logrus.WithError(err).Error("Failed to initialize Sentry")
+			// Don't fail startup if Sentry init fails
+		} else {
+			defer sentry.Flush(2 * time.Second)
+			logrus.Info("Sentry initialized successfully")
+			
+			// Add Sentry hooks to logrus - capture all levels
+			logrus.AddHook(logging.NewSentryHook([]logrus.Level{
+				logrus.PanicLevel,
+				logrus.FatalLevel,
+				logrus.ErrorLevel,
+				logrus.WarnLevel,
+				logrus.InfoLevel,
+				logrus.DebugLevel,
+				logrus.TraceLevel,
+			}))
+			
+			// Optionally add breadcrumb hook for better debugging context
+			if cfg.Sentry.Debug || cfg.Sentry.MaxBreadcrumbs > 0 {
+				logrus.AddHook(logging.NewBreadcrumbHook([]logrus.Level{
+					logrus.InfoLevel,
+					logrus.WarnLevel,
+					logrus.ErrorLevel,
+					logrus.DebugLevel,
+					logrus.TraceLevel,
+				}))
+			}
+		}
 	}
 
 	listenAddr, _ := cmd.Flags().GetString("listen")
@@ -141,4 +177,54 @@ func run(cmd *cobra.Command, _ []string) error {
 	<-ctx.Done()
 	logrus.Info("Server stopped")
 	return nil
+}
+
+func initSentry(cfg *config.Config) error {
+	options := sentry.ClientOptions{
+		Dsn:              cfg.Sentry.DSN,
+		Environment:      cfg.Sentry.Environment,
+		Release:          cfg.Sentry.Release,
+		SampleRate:       cfg.Sentry.SampleRate,
+		TracesSampleRate: cfg.Sentry.TracesSampleRate,
+		AttachStacktrace: cfg.Sentry.AttachStacktrace,
+		EnableTracing:    cfg.Sentry.EnableTracing,
+		Debug:            cfg.Sentry.Debug,
+		MaxBreadcrumbs:   cfg.Sentry.MaxBreadcrumbs,
+		ServerName:       cfg.Sentry.ServerName,
+	}
+
+	// Set release version if not provided in config
+	if options.Release == "" {
+		options.Release = fmt.Sprintf("foundation-storage-engine@%s", version)
+	}
+
+	// Note: BeforeSendTimeout and FlushTimeout are not directly configurable in the current SDK version
+	// The SDK uses reasonable defaults for these timeouts
+
+	// Configure ignored errors
+	if len(cfg.Sentry.IgnoreErrors) > 0 {
+		options.BeforeSend = func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
+			if hint.OriginalException != nil {
+				errMsg := hint.OriginalException.Error()
+				for _, ignore := range cfg.Sentry.IgnoreErrors {
+					if strings.Contains(errMsg, ignore) {
+						return nil // Drop the event
+					}
+				}
+			}
+			return event
+		}
+	}
+
+	// Add server tags
+	options.Tags = map[string]string{
+		"server.version": version,
+		"server.commit":  commit,
+		"server.date":    date,
+	}
+
+	// Note: ProfilesSampleRate requires the profiling integration
+	// which needs to be enabled separately
+
+	return sentry.Init(options)
 }
