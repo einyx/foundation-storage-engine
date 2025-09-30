@@ -34,6 +34,63 @@ class IcebergMetadataParser {
         return /\w+=\w+/.test(path);
     }
 
+    // Get color hex value for file types
+    getFileTypeColorHex(color, shade = '500') {
+        const colors = {
+            blue: {
+                '100': '#dbeafe',
+                '400': '#60a5fa',
+                '500': '#3b82f6',
+                '600': '#2563eb',
+                '800': '#1e40af'
+            },
+            green: {
+                '100': '#dcfce7',
+                '400': '#4ade80',
+                '500': '#22c55e',
+                '600': '#16a34a',
+                '800': '#166534'
+            },
+            purple: {
+                '100': '#f3e8ff',
+                '400': '#c084fc',
+                '500': '#a855f7',
+                '600': '#9333ea',
+                '800': '#6b21a8'
+            },
+            yellow: {
+                '100': '#fef3c7',
+                '400': '#facc15',
+                '500': '#eab308',
+                '600': '#ca8a04',
+                '800': '#854d0e'
+            },
+            gray: {
+                '100': '#f3f4f6',
+                '400': '#9ca3af',
+                '500': '#6b7280',
+                '600': '#4b5563',
+                '800': '#1f2937'
+            },
+            red: {
+                '100': '#fee2e2',
+                '400': '#f87171',
+                '500': '#ef4444',
+                '600': '#dc2626',
+                '800': '#991b1b'
+            },
+            orange: {
+                '100': '#fed7aa',
+                '400': '#fb923c',
+                '500': '#f97316',
+                '600': '#ea580c',
+                '800': '#9a3412'
+            }
+        };
+        
+        return colors[color] && colors[color][shade] || '#6b7280'; // Default to gray
+    },
+
     // Get file type and metadata
     getFileTypeInfo(key) {
         const lowerKey = key.toLowerCase();

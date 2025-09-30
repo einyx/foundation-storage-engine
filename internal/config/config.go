@@ -333,4 +333,5 @@ type SentryConfig struct {
 	IgnoreErrors         []string `mapstructure:"ignore_errors"`
 	ServerName           string   `mapstructure:"server_name" envconfig:"SENTRY_SERVER_NAME"`
 	Release              string   `mapstructure:"release" envconfig:"SENTRY_RELEASE"`
+	EnableLogs           bool     `mapstructure:"enable_logs" envconfig:"SENTRY_ENABLE_LOGS" default:"true"`
 }

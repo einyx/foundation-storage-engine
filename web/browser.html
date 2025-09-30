@@ -4,6 +4,79 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Foundation Storage - Multi-Provider</title>
+    
+    <!-- Sentry Error Tracking -->
+    <script
+      src="https://browser.sentry-cdn.com/7.119.2/bundle.tracing.min.js"
+      crossorigin="anonymous"
+    ></script>
+    <script>
+      // Sentry configuration will be injected by the server at runtime
+      // These placeholders will be replaced with actual environment variable values
+      const SENTRY_ENABLED = '{{SENTRY_ENABLED}}';
+      const SENTRY_DSN = '{{SENTRY_DSN}}';
+      const SENTRY_ENVIRONMENT = '{{SENTRY_ENVIRONMENT}}';
+      
+      // Initialize Sentry only if enabled
+      if (SENTRY_ENABLED === 'true' && SENTRY_DSN && SENTRY_DSN !== '{{SENTRY_DSN}}' && typeof Sentry !== 'undefined') {
+        Sentry.init({
+          dsn: SENTRY_DSN,
+          integrations: [
+            Sentry.browserTracingIntegration(),
+            Sentry.replayIntegration(),
+          ],
+          environment: SENTRY_ENVIRONMENT || 'production',
+          tracesSampleRate: 0.1,
+          replaysSessionSampleRate: 0.1,
+          replaysOnErrorSampleRate: 1.0,
+          beforeSend(event, hint) {
+            // Add more context
+            if (event.exception) {
+              console.log('Sentry: Sending exception to Sentry', event.exception);
+            }
+            
+            // Filter out some common non-critical errors
+            if (event.exception && event.exception.values && event.exception.values[0]) {
+              const error = event.exception.values[0];
+              // Skip network errors from metrics endpoint
+              if (error.value && error.value.includes('Failed to fetch')) {
+                if (event.request && event.request.url && event.request.url.includes('/metrics')) {
+                  return null;
+                }
+              }
+            }
+            return event;
+          }
+        });
+        
+        // Set user context if available
+        const userEmail = localStorage.getItem('userEmail');
+        if (userEmail) {
+          Sentry.setUser({ email: userEmail });
+        }
+        
+        // Add global error handler
+        window.addEventListener('error', (event) => {
+          console.error('Global error caught:', event.error);
+        });
+        
+        window.addEventListener('unhandledrejection', (event) => {
+          console.error('Unhandled promise rejection:', event.reason);
+        });
+        
+        console.log('Sentry initialized for frontend error tracking with DSN:', SENTRY_DSN.substring(0, 20) + '...');
+        window.SENTRY_INITIALIZED = true;
+      } else {
+        console.log('Sentry is disabled, skipping frontend initialization', {
+          enabled: SENTRY_ENABLED,
+          hasDSN: !!SENTRY_DSN,
+          isPlaceholder: SENTRY_DSN === '{{SENTRY_DSN}}',
+          sentryDefined: typeof Sentry !== 'undefined'
+        });
+        window.SENTRY_INITIALIZED = false;
+      }
+    </script>
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
     <script src="/ui/js/iceberg-parser.js"></script>
@@ -345,18 +418,20 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
                         </svg>
                     </button>
-                    <template x-for="(part, index) in currentPath.split('/').filter(p => p)" :key="index">
-                        <div class="flex items-center">
-                            <svg class="w-4 h-4 text-gray-400 mx-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
-                            </svg>
-                            <button 
-                                @click="navigateTo(currentPath.split('/').slice(0, index + 1).join('/'))" 
-                                class="text-gray-700 hover:text-gray-900 font-medium"
-                                x-text="part"
-                            ></button>
-                        </div>
-                    </template>
+                    <div class="flex items-center" x-show="currentPath">
+                        <template x-for="(segment, idx) in currentPath.split('/').filter(p => p)">
+                            <div class="flex items-center" :key="idx">
+                                <svg class="w-4 h-4 text-gray-400 mx-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                </svg>
+                                <button 
+                                    @click="navigateTo(currentPath.split('/').slice(0, idx + 1).join('/'))" 
+                                    class="text-gray-700 hover:text-gray-900 font-medium"
+                                    x-text="segment"
+                                ></button>
+                            </div>
+                        </template>
+                    </div>
                 </nav>
                 
                 <!-- Actions -->
@@ -709,6 +784,11 @@
                         }
                     } catch (error) {
                         console.error('Failed to load buckets:', error);
+                        if (typeof Sentry !== 'undefined') {
+                            Sentry.captureException(error, {
+                                tags: { component: 'browser', action: 'loadBuckets' }
+                            });
+                        }
                     }
                 },
                 
@@ -841,7 +921,8 @@
                                 size: obj.size,
                                 lastModified: obj.lastModified,
                                 etag: obj.etag,
-                                backend: obj.backend
+                                backend: obj.backend,
+                                bucket: this.selectedBucket  // Store bucket with file
                             }));
                         
                         console.log('Final state - directories:', this.directories.length, this.directories);
@@ -850,6 +931,12 @@
                     } catch (error) {
                         console.error('Error in loadContents:', error);
                         this.error = error.message || 'Failed to load contents';
+                        if (typeof Sentry !== 'undefined') {
+                            Sentry.captureException(error, {
+                                tags: { component: 'browser', action: 'loadContents' },
+                                extra: { bucket: this.selectedBucket, path: this.currentPath }
+                            });
+                        }
                     } finally {
                         this.loading = false;
                     }
@@ -955,6 +1042,12 @@
                     } catch (error) {
                         console.error('Upload error:', error);
                         this.error = `Failed to upload ${file.name}: ${error.message}`;
+                        if (typeof Sentry !== 'undefined') {
+                            Sentry.captureException(error, {
+                                tags: { component: 'browser', action: 'uploadFile' },
+                                extra: { fileName: file.name, filePath: path, bucket: this.selectedBucket }
+                            });
+                        }
                     }
                 },
                 
@@ -973,10 +1066,53 @@
                 
                 async deleteItem(type, item) {
                     const itemName = type === 'directory' ? `folder "${item.name}"` : `file "${item.name}"`;
-                    if (!confirm(`Are you sure you want to delete ${itemName}?`)) {
+                    
+                    // Debug: Log the current state
+                    const debugInfo = {
+                        type,
+                        item,
+                        selectedBucket: this.selectedBucket,
+                        buckets: this.buckets,
+                        selectedFile: this.selectedFile
+                    };
+                    console.log('deleteItem called:', debugInfo);
+                    
+                    // Add breadcrumb for Sentry
+                    if (window.SENTRY_INITIALIZED && typeof Sentry !== 'undefined') {
+                        Sentry.addBreadcrumb({
+                            message: 'Delete item initiated',
+                            category: 'user-action',
+                            level: 'info',
+                            data: debugInfo
+                        });
+                    }
+                    
+                    // Ensure we have a selected bucket
+                    let bucketToUse = this.selectedBucket;
+                    
+                    if (!bucketToUse && item.bucket) {
+                        // Use bucket stored with the item
+                        bucketToUse = item.bucket;
+                        console.log('Using bucket from item:', bucketToUse);
+                    }
+                    
+                    if (!bucketToUse) {
+                        // Try to infer from current state
+                        if (this.buckets.length === 1) {
+                            bucketToUse = this.buckets[0];
+                            console.log('Auto-selected single bucket:', bucketToUse);
+                        } else {
+                            this.error = 'No bucket selected. Please select a bucket first.';
+                            console.error('Delete failed: no bucket selected');
+                            return;
+                        }
+                    }
+                    
+                    if (!confirm(`Are you sure you want to delete ${itemName} from bucket "${bucketToUse}"?`)) {
                         return;
                     }
                     
+                    let url = '';
                     try {
                         let path = this.currentPath ? this.currentPath + '/' + item.name : item.name;
                         
@@ -985,13 +1121,50 @@
                             await this.deleteDirectory(path);
                         } else {
                             // For files, simple DELETE request
-                            const url = `/${this.selectedBucket}/${path}`;
+                            if (!bucketToUse) {
+                                const error = new Error('No bucket selected for delete operation');
+                                console.error('Delete error - no bucket:', { 
+                                    item, 
+                                    path, 
+                                    selectedBucket: this.selectedBucket,
+                                    allData: {
+                                        buckets: this.buckets,
+                                        currentPath: this.currentPath,
+                                        files: this.files
+                                    }
+                                });
+                                throw error;
+                            }
+                            url = `/${bucketToUse}/${path}`;
+                            const deleteDetails = {
+                                bucketToUse: bucketToUse,
+                                selectedBucket: this.selectedBucket,
+                                itemBucket: item.bucket,
+                                path: path,
+                                item: item,
+                                currentPath: this.currentPath,
+                                url: url
+                            };
+                            console.log('Deleting file:', item.name, 'URL:', url, deleteDetails);
+                            
+                            // Add breadcrumb before making the request
+                            if (window.SENTRY_INITIALIZED && typeof Sentry !== 'undefined') {
+                                Sentry.addBreadcrumb({
+                                    message: `Attempting to delete file: ${item.name}`,
+                                    category: 'file-operation',
+                                    level: 'info',
+                                    data: deleteDetails
+                                });
+                            }
+                            
                             const response = await fetch(url, {
                                 method: 'DELETE'
                             });
                             
                             if (!response.ok) {
-                                throw new Error(`Delete failed: ${response.statusText}`);
+                                const text = await response.text();
+                                const errorMsg = `Failed to delete: ${response.status}${text ? ' - ' + text : ''}`;
+                                throw new Error(errorMsg);
                             }
                         }
                         
@@ -1006,6 +1179,21 @@
                     } catch (error) {
                         console.error('Delete error:', error);
                         this.error = `Failed to delete ${itemName}: ${error.message}`;
+                        if (window.SENTRY_INITIALIZED && typeof Sentry !== 'undefined') {
+                            console.log('Sending error to Sentry:', error.message);
+                            Sentry.captureException(error, {
+                                tags: { component: 'browser', action: 'deleteItem' },
+                                extra: { 
+                                    itemType: type, 
+                                    itemName: item.name, 
+                                    bucket: this.selectedBucket,
+                                    path: this.currentPath,
+                                    fullUrl: url
+                                }
+                            });
+                        } else {
+                            console.log('Sentry not initialized, error not sent:', error.message);
+                        }
                     }
                 },
                 

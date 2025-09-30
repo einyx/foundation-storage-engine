@@ -26,7 +26,11 @@ require (
 	golang.org/x/time v0.11.0
 )
 
-require github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.1 // indirect
+require (
+	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.1 // indirect
+	github.com/getsentry/sentry-go/logrus v0.35.3 // indirect
+	github.com/getsentry/sentry-go/slog v0.35.3 // indirect
+)
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.2

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	slogsentry "github.com/getsentry/sentry-go/slog"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
@@ -77,16 +79,32 @@ func run(cmd *cobra.Command, _ []string) error {
 			defer sentry.Flush(2 * time.Second)
 			logrus.Info("Sentry initialized successfully")
 			
-			// Add Sentry hooks to logrus - capture all levels
-			logrus.AddHook(logging.NewSentryHook([]logrus.Level{
+			// Set up slog with Sentry handler for proper log support
+			sentryHandler := slogsentry.Option{
+				Level: slog.LevelInfo,  // Send info and above as logs
+				Hub: sentry.CurrentHub(),
+			}.NewSentryHandler(context.Background())
+			
+			// Create a multi-handler that sends to both console and Sentry
+			logger := slog.New(sentryHandler)
+			slog.SetDefault(logger)
+			
+			// Test slog logging to Sentry
+			slog.Info("Foundation Storage Engine started", 
+				"version", version,
+				"commit", commit,
+				"sentry", "enabled")
+			
+			// Also send logrus errors to Sentry as events (for backwards compatibility)
+			sentryLevels := []logrus.Level{
 				logrus.PanicLevel,
 				logrus.FatalLevel,
 				logrus.ErrorLevel,
 				logrus.WarnLevel,
-				logrus.InfoLevel,
-				logrus.DebugLevel,
-				logrus.TraceLevel,
-			}))
+			}
+			
+			// Add our custom Sentry hook for logrus events
+			logrus.AddHook(logging.NewSentryHook(sentryLevels))
 			
 			// Optionally add breadcrumb hook for better debugging context
 			if cfg.Sentry.Debug || cfg.Sentry.MaxBreadcrumbs > 0 {
@@ -94,8 +112,6 @@ func run(cmd *cobra.Command, _ []string) error {
 					logrus.InfoLevel,
 					logrus.WarnLevel,
 					logrus.ErrorLevel,
-					logrus.DebugLevel,
-					logrus.TraceLevel,
 				}))
 			}
 		}
@@ -191,6 +207,7 @@ func initSentry(cfg *config.Config) error {
 		Debug:            cfg.Sentry.Debug,
 		MaxBreadcrumbs:   cfg.Sentry.MaxBreadcrumbs,
 		ServerName:       cfg.Sentry.ServerName,
+		EnableLogs:       true,
 	}
 
 	// Set release version if not provided in config
@@ -201,19 +218,34 @@ func initSentry(cfg *config.Config) error {
 	// Note: BeforeSendTimeout and FlushTimeout are not directly configurable in the current SDK version
 	// The SDK uses reasonable defaults for these timeouts
 
-	// Configure ignored errors
-	if len(cfg.Sentry.IgnoreErrors) > 0 {
-		options.BeforeSend = func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
-			if hint.OriginalException != nil {
-				errMsg := hint.OriginalException.Error()
-				for _, ignore := range cfg.Sentry.IgnoreErrors {
-					if strings.Contains(errMsg, ignore) {
-						return nil // Drop the event
-					}
+	// Configure BeforeSend to filter events
+	options.BeforeSend = func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
+		// Filter out metrics endpoint logs unless they're errors
+		if event.Level != sentry.LevelError && event.Level != sentry.LevelFatal {
+			for _, breadcrumb := range event.Breadcrumbs {
+				if path, ok := breadcrumb.Data["path"].(string); ok && path == "/metrics" {
+					return nil // Drop metrics events that aren't errors
 				}
 			}
-			return event
+			if event.Request != nil && event.Request.URL == "/metrics" {
+				return nil // Drop metrics events
+			}
+			// Check tags
+			if path, ok := event.Tags["http.path"]; ok && path == "/metrics" {
+				return nil
+			}
 		}
+		
+		// Check for ignored errors
+		if hint.OriginalException != nil {
+			errMsg := hint.OriginalException.Error()
+			for _, ignore := range cfg.Sentry.IgnoreErrors {
+				if strings.Contains(errMsg, ignore) {
+					return nil // Drop the event
+				}
+			}
+		}
+		return event
 	}
 
 	// Add server tags

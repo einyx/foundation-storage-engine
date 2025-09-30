@@ -276,10 +276,9 @@ func (s *Server) setupRoutes() {
 			"staticPath": s.config.UI.StaticPath,
 		}).Info("Web UI enabled")
 
-		// Serve static files from the UI path
-		fileServer := http.FileServer(http.Dir(s.config.UI.StaticPath))
+		// Serve static files from the UI path with HTML processing for env vars
 		s.router.PathPrefix(s.config.UI.BasePath + "/").Handler(
-			http.StripPrefix(s.config.UI.BasePath, fileServer),
+			http.StripPrefix(s.config.UI.BasePath, s.uiHandler()),
 		).Methods("GET")
 
 		// Redirect /ui to /ui/
@@ -421,8 +420,69 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) healthCheck(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	
+	// Add Sentry status header if Sentry is enabled
+	if s.config.Sentry.Enabled {
+		w.Header().Set("X-Sentry-Enabled", "true")
+	} else {
+		w.Header().Set("X-Sentry-Enabled", "false")
+	}
+	
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"healthy"}`))
+}
+
+// uiHandler returns a handler that serves static files and processes HTML files
+// to inject environment variables
+func (s *Server) uiHandler() http.Handler {
+	fileServer := http.FileServer(http.Dir(s.config.UI.StaticPath))
+	
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check if this is an HTML file
+		if strings.HasSuffix(r.URL.Path, ".html") || r.URL.Path == "/" || r.URL.Path == "" {
+			// Read the file
+			filePath := r.URL.Path
+			if filePath == "/" || filePath == "" {
+				filePath = "/index.html"
+			}
+			
+			fullPath := s.config.UI.StaticPath + filePath
+			content, err := os.ReadFile(fullPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					http.NotFound(w, r)
+					return
+				}
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			
+			// Replace placeholders with actual values
+			html := string(content)
+			html = strings.ReplaceAll(html, "{{SENTRY_ENABLED}}", strconv.FormatBool(s.config.Sentry.Enabled))
+			html = strings.ReplaceAll(html, "{{SENTRY_DSN}}", s.config.Sentry.DSN)
+			html = strings.ReplaceAll(html, "{{SENTRY_ENVIRONMENT}}", s.config.Sentry.Environment)
+			
+			// Add version timestamp for cache busting
+			version := fmt.Sprintf("%d", time.Now().Unix())
+			html = strings.ReplaceAll(html, "alpinejs@3.x.x/dist/cdn.min.js", "alpinejs@3.x.x/dist/cdn.min.js?v="+version)
+			
+			// Set content type and cache headers
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, private, max-age=0")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			w.Header().Set("X-Accel-Expires", "0") // For nginx
+			w.Header().Set("Surrogate-Control", "no-store") // For CDN/frontdoor
+			w.Header().Set("Vary", "*") // Prevent caching based on any header
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(html))
+			return
+		}
+		
+		// For non-HTML files, serve them directly
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
 // validateCredentials validates S3-compatible credentials
