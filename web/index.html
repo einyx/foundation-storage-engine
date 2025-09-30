@@ -4,6 +4,79 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Foundation Storage</title>
+    
+    <!-- Sentry Error Tracking -->
+    <script
+      src="https://browser.sentry-cdn.com/7.119.2/bundle.tracing.min.js"
+      crossorigin="anonymous"
+    ></script>
+    <script>
+      // Sentry configuration will be injected by the server at runtime
+      // These placeholders will be replaced with actual environment variable values
+      const SENTRY_ENABLED = '{{SENTRY_ENABLED}}';
+      const SENTRY_DSN = '{{SENTRY_DSN}}';
+      const SENTRY_ENVIRONMENT = '{{SENTRY_ENVIRONMENT}}';
+      
+      // Initialize Sentry only if enabled
+      if (SENTRY_ENABLED === 'true' && SENTRY_DSN && SENTRY_DSN !== '{{SENTRY_DSN}}' && typeof Sentry !== 'undefined') {
+        Sentry.init({
+          dsn: SENTRY_DSN,
+          integrations: [
+            Sentry.browserTracingIntegration(),
+            Sentry.replayIntegration(),
+          ],
+          environment: SENTRY_ENVIRONMENT || 'production',
+          tracesSampleRate: 0.1,
+          replaysSessionSampleRate: 0.1,
+          replaysOnErrorSampleRate: 1.0,
+          beforeSend(event, hint) {
+            // Add more context
+            if (event.exception) {
+              console.log('Sentry: Sending exception to Sentry', event.exception);
+            }
+            
+            // Filter out some common non-critical errors
+            if (event.exception && event.exception.values && event.exception.values[0]) {
+              const error = event.exception.values[0];
+              // Skip network errors from metrics endpoint
+              if (error.value && error.value.includes('Failed to fetch')) {
+                if (event.request && event.request.url && event.request.url.includes('/metrics')) {
+                  return null;
+                }
+              }
+            }
+            return event;
+          }
+        });
+        
+        // Set user context if available
+        const userEmail = localStorage.getItem('userEmail');
+        if (userEmail) {
+          Sentry.setUser({ email: userEmail });
+        }
+        
+        // Add global error handler
+        window.addEventListener('error', (event) => {
+          console.error('Global error caught:', event.error);
+        });
+        
+        window.addEventListener('unhandledrejection', (event) => {
+          console.error('Unhandled promise rejection:', event.reason);
+        });
+        
+        console.log('Sentry initialized for frontend error tracking with DSN:', SENTRY_DSN.substring(0, 20) + '...');
+        window.SENTRY_INITIALIZED = true;
+      } else {
+        console.log('Sentry is disabled, skipping frontend initialization', {
+          enabled: SENTRY_ENABLED,
+          hasDSN: !!SENTRY_DSN,
+          isPlaceholder: SENTRY_DSN === '{{SENTRY_DSN}}',
+          sentryDefined: typeof Sentry !== 'undefined'
+        });
+        window.SENTRY_INITIALIZED = false;
+      }
+    </script>
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
     <script src="js/iceberg-parser.js"></script>
@@ -277,8 +350,13 @@
                             </svg>
                             Recent
                         </button>
-                        <button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100">
-                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <button @click="showStarredFiles()" 
+                                :class="starredFilter && !showingRecent ? 'bg-yellow-50 text-yellow-700' : 'text-gray-700 hover:bg-gray-100'"
+                                class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium">
+                            <svg class="w-4 h-4" 
+                                 :class="starredFilter && !showingRecent ? 'text-yellow-500 fill-current' : 'text-gray-400'"
+                                 :fill="starredFilter && !showingRecent ? 'currentColor' : 'none'" 
+                                 stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path>
                             </svg>
                             Starred
@@ -331,17 +409,19 @@
                             <span class="text-gray-700 font-medium">Recent Files</span>
                         </div>
                     </template>
-                    <template x-if="!showingRecent" x-for="(part, index) in currentPath.split('/').filter(p => p)" :key="index">
-                        <div class="flex items-center">
-                            <svg class="w-4 h-4 text-gray-400 mx-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
-                            </svg>
-                            <button 
-                                @click="navigateTo(currentPath.split('/').slice(0, index + 1).join('/'))" 
-                                class="text-gray-700 hover:text-gray-900 font-medium"
-                                x-text="part"
-                            ></button>
-                        </div>
+                    <template x-if="!showingRecent">
+                        <template x-for="(part, index) in currentPath.split('/').filter(p => p)" :key="index">
+                            <div class="flex items-center">
+                                <svg class="w-4 h-4 text-gray-400 mx-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                </svg>
+                                <button 
+                                    @click="navigateTo(currentPath.split('/').slice(0, index + 1).join('/'))" 
+                                    class="text-gray-700 hover:text-gray-900 font-medium"
+                                    x-text="part"
+                                ></button>
+                            </div>
+                        </template>
                     </template>
                 </nav>
                 
@@ -467,9 +547,24 @@
                     
                     <!-- View Toggle -->
                     <div class="flex items-center justify-between mb-4">
-                        <p class="text-sm text-gray-600">
-                            <span x-text="directories.length + files.length"></span> items
-                        </p>
+                        <div class="flex items-center gap-3">
+                            <p class="text-sm text-gray-600">
+                                <span x-text="(starredFilter ? files.filter(f => isStarred(f)).length : directories.length + files.length)"></span> items
+                                <span x-show="starredFilter" class="text-yellow-600">(starred only)</span>
+                            </p>
+                            <button @click="starredFilter = !starredFilter" 
+                                    class="flex items-center gap-1 px-2 py-1 rounded-lg text-sm transition-colors"
+                                    :class="starredFilter ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'">
+                                <svg class="w-4 h-4" 
+                                     :class="starredFilter ? 'text-yellow-500 fill-current' : ''"
+                                     :fill="starredFilter ? 'currentColor' : 'none'" 
+                                     stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                          d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path>
+                                </svg>
+                                <span x-text="starredFilter ? 'Show all' : 'Starred'"></span>
+                            </button>
+                        </div>
                         <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
                             <button @click="viewMode = 'grid'" :class="viewMode === 'grid' ? 'bg-white shadow-sm' : ''" class="p-1.5 rounded">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -487,7 +582,7 @@
                     <!-- Grid View -->
                     <div x-show="viewMode === 'grid'" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
                         <!-- Directories -->
-                        <template x-for="dir in directories" :key="dir">
+                        <template x-for="dir in (starredFilter ? [] : directories)" :key="dir">
                             <button 
                                 @click="navigateTo(currentPath + '/' + dir)"
                                 class="file-item p-4 rounded-lg hover-lift text-center group"
@@ -508,22 +603,36 @@
                         </template>
                         
                         <!-- Files -->
-                        <template x-for="file in files" :key="file.Key">
+                        <template x-for="file in (starredFilter ? files.filter(f => isStarred(f)) : files)" :key="file.Key">
                             <button 
                                 @click="showingRecent ? navigateToRecentFile(file) : selectFile(file)"
                                 @dblclick="viewFile(file)"
                                 :class="selectedFile?.Key === file.Key ? 'selected' : ''"
-                                class="file-item p-4 rounded-lg hover-lift text-center group"
+                                class="file-item p-4 rounded-lg hover-lift text-center group relative"
                                 title="Double-click to view"
                             >
+                                <!-- Star button -->
+                                <button @click.stop="toggleStar(file)" 
+                                        class="absolute top-2 right-2 p-1 rounded-full bg-white/80 hover:bg-white shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
+                                        :class="{'opacity-100': isStarred(file)}">
+                                    <svg class="w-4 h-4 transition-colors" 
+                                         :class="isStarred(file) ? 'text-yellow-500 fill-current' : 'text-gray-400'" 
+                                         :fill="isStarred(file) ? 'currentColor' : 'none'" 
+                                         stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                              d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path>
+                                    </svg>
+                                </button>
                                 <div class="relative">
                                     <template x-if="icebergParser.getFileTypeInfo(file.Key)">
                                         <div>
-                                            <svg class="w-16 h-16 mx-auto mb-2" :class="'text-' + icebergParser.getFileTypeInfo(file.Key).color + '-400'" fill="currentColor" viewBox="0 0 24 24">
+                                            <svg class="w-16 h-16 mx-auto mb-2" 
+                                                 :style="{ color: icebergParser.getFileTypeColorHex(icebergParser.getFileTypeInfo(file.Key).color, '400') }"
+                                                 fill="currentColor" viewBox="0 0 24 24">
                                                 <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
                                             </svg>
                                             <div class="absolute top-0 right-0 px-2 py-1 text-xs font-medium text-white rounded-full" 
-                                                 :class="'bg-' + icebergParser.getFileTypeInfo(file.Key).color + '-500'"
+                                                 :style="{ backgroundColor: icebergParser.getFileTypeColorHex(icebergParser.getFileTypeInfo(file.Key).color, '500') }"
                                                  x-text="icebergParser.getFileTypeInfo(file.Key).name">
                                             </div>
                                         </div>
@@ -585,7 +694,7 @@
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200">
                                 <!-- Directories -->
-                                <template x-for="dir in directories" :key="dir">
+                                <template x-for="dir in (starredFilter ? [] : directories)" :key="dir">
                                     <tr class="hover:bg-gray-50 cursor-pointer" @click="navigateTo(currentPath + '/' + dir)">
                                         <td class="px-6 py-4 whitespace-nowrap" @click.stop>
                                             <input type="checkbox" :value="dir" @change="toggleSelection('dir', dir)" 
@@ -609,7 +718,7 @@
                                 </template>
                                 
                                 <!-- Files -->
-                                <template x-for="file in files" :key="file.Key">
+                                <template x-for="file in (starredFilter ? files.filter(f => isStarred(f)) : files)" :key="file.Key">
                                     <tr class="hover:bg-gray-50 cursor-pointer" 
                                         @click="showingRecent ? navigateToRecentFile(file) : selectFile(file)"
                                         @dblclick="viewFile(file)"
@@ -625,6 +734,16 @@
                                                     <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
                                                 </svg>
                                                 <span class="text-sm font-medium text-gray-900" x-text="getFileName(file.Key)"></span>
+                                                <button @click.stop="toggleStar(file)" 
+                                                        class="ml-2 p-1 rounded-full hover:bg-gray-100 transition-colors">
+                                                    <svg class="w-4 h-4 transition-colors" 
+                                                         :class="isStarred(file) ? 'text-yellow-500 fill-current' : 'text-gray-400'" 
+                                                         :fill="isStarred(file) ? 'currentColor' : 'none'" 
+                                                         stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                                              d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path>
+                                                    </svg>
+                                                </button>
                                             </div>
                                         </td>
                                         <td x-show="showingRecent" class="px-6 py-4 whitespace-nowrap text-sm text-blue-600" x-text="file.Bucket"></td>
@@ -633,7 +752,10 @@
                                         <td class="px-6 py-4 whitespace-nowrap">
                                             <template x-if="icebergParser.getFileTypeInfo(file.Key)">
                                                 <span class="text-xs font-medium px-2 py-1 rounded-full" 
-                                                      :class="'bg-' + icebergParser.getFileTypeInfo(file.Key).color + '-100 text-' + icebergParser.getFileTypeInfo(file.Key).color + '-800'"
+                                                      :style="{ 
+                                                          backgroundColor: icebergParser.getFileTypeColorHex(icebergParser.getFileTypeInfo(file.Key).color, '100'), 
+                                                          color: icebergParser.getFileTypeColorHex(icebergParser.getFileTypeInfo(file.Key).color, '800') 
+                                                      }"
                                                       x-text="icebergParser.getFileTypeInfo(file.Key).name">
                                                 </span>
                                             </template>
@@ -1386,6 +1508,45 @@
     <script>
     function s3Browser() {
         return {
+            // Helper function to capture errors to Sentry with context
+            captureError(error, context = {}) {
+                console.error(`Error in ${context.operation || 'unknown operation'}:`, error);
+                
+                if (window.SENTRY_INITIALIZED && typeof Sentry !== 'undefined') {
+                    Sentry.withScope((scope) => {
+                        // Add context
+                        scope.setContext('operation', {
+                            name: context.operation || 'unknown',
+                            bucket: this.selectedBucket || 'none',
+                            path: this.currentPath || 'none',
+                            file: context.file || 'none',
+                            ...context
+                        });
+                        
+                        // Add user context
+                        scope.setUser({
+                            email: this.userEmail || localStorage.getItem('userEmail') || 'unknown',
+                            username: this.userName || 'unknown'
+                        });
+                        
+                        // Add tags
+                        scope.setTag('component', 'storage-browser');
+                        scope.setTag('view', this.viewMode);
+                        
+                        // Add breadcrumb
+                        Sentry.addBreadcrumb({
+                            category: 'storage',
+                            message: `Error in ${context.operation}`,
+                            level: 'error',
+                            data: context
+                        });
+                        
+                        // Capture the error
+                        Sentry.captureException(error);
+                    });
+                }
+            },
+            
             // State
             buckets: [],
             bucketsLoading: true,
@@ -1401,6 +1562,11 @@
             isIcebergTable: false,
             viewMode: 'grid',
             showProfile: false,
+            
+            // Starred items state
+            starredItems: {},
+            starredFilter: false,
+            loadingStarred: false,
             
             // Selection state
             selectedItems: {
@@ -1518,6 +1684,76 @@
                 });
             },
 
+            // Starred items management
+            async loadStarredItems() {
+                if (!this.selectedBucket) return;
+                
+                try {
+                    this.loadingStarred = true;
+                    const starredPath = `${this.selectedBucket}/.starred.json`;
+                    const response = await fetch('/' + starredPath, {
+                        headers: this.getAuthHeaders()
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.starredItems = data || {};
+                    } else if (response.status === 404) {
+                        // No starred items file yet
+                        this.starredItems = {};
+                    }
+                } catch (error) {
+                    this.captureError(error, { operation: 'loadStarredItems' });
+                    this.starredItems = {};
+                } finally {
+                    this.loadingStarred = false;
+                }
+            },
+            
+            async saveStarredItems() {
+                if (!this.selectedBucket) return;
+                
+                try {
+                    const starredPath = `${this.selectedBucket}/.starred.json`;
+                    const response = await fetch('/' + starredPath, {
+                        method: 'PUT',
+                        headers: {
+                            ...this.getAuthHeaders(),
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(this.starredItems)
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`Failed to save starred items: ${response.status}`);
+                    }
+                } catch (error) {
+                    this.captureError(error, { operation: 'saveStarredItems' });
+                    alert('Failed to save starred items. Please try again.');
+                }
+            },
+            
+            isStarred(file) {
+                if (!file || !file.Key) return false;
+                const fileId = `${this.selectedBucket}/${file.Key}`;
+                return this.starredItems[fileId] === true;
+            },
+            
+            async toggleStar(file) {
+                if (!file || !file.Key) return;
+                
+                const fileId = `${this.selectedBucket}/${file.Key}`;
+                
+                if (this.starredItems[fileId]) {
+                    delete this.starredItems[fileId];
+                } else {
+                    this.starredItems[fileId] = true;
+                }
+                
+                // Save starred items to S3
+                await this.saveStarredItems();
+            },
+
             async loadFeatures() {
                 try {
                     const response = await fetch('/api/features');
@@ -1526,7 +1762,7 @@
                         console.log('Loaded features:', this.features);
                     }
                 } catch (error) {
-                    console.error('Failed to load features:', error);
+                    this.captureError(error, { operation: 'loadFeatures' });
                     // Default to disabled if we can't load features
                     this.features = {
                         virustotal: { enabled: false }
@@ -1596,7 +1832,7 @@
                             this.userInitials = this.userInitials.toUpperCase();
                         }
                     } catch (error) {
-                        console.error('Failed to load Auth0 user info:', error);
+                        this.captureError(error, { operation: 'loadAuth0UserInfo' });
                         // Set defaults on error
                         this.userName = 'User';
                         this.userEmail = 'user@example.com';
@@ -1650,7 +1886,7 @@
                     // Sort buckets alphabetically
                     this.buckets.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
                 } catch (err) {
-                    console.error('Failed to load buckets:', err);
+                    this.captureError(err, { operation: 'loadBuckets' });
                 } finally {
                     this.bucketsLoading = false;
                 }
@@ -1664,6 +1900,19 @@
 
             async loadContents() {
                 if (!this.selectedBucket) return;
+                
+                // Add Sentry breadcrumb for navigation
+                if (window.SENTRY_INITIALIZED && typeof Sentry !== 'undefined') {
+                    Sentry.addBreadcrumb({
+                        category: 'navigation',
+                        message: `Loading contents`,
+                        level: 'info',
+                        data: {
+                            bucket: this.selectedBucket,
+                            path: this.currentPath
+                        }
+                    });
+                }
                 
                 this.loading = true;
                 this.error = null;
@@ -1733,15 +1982,22 @@
                     const contents = xml.querySelectorAll('Contents');
                     contents.forEach(content => {
                         const key = content.querySelector('Key').textContent;
+                        
                         if (!key.endsWith('/') && this.isInCurrentDirectory(key)) {
+                            // Remove bucket prefix from key if it exists
+                            let fileKey = key;
+                            if (key.startsWith(this.selectedBucket + '/')) {
+                                fileKey = key.substring(this.selectedBucket.length + 1);
+                            }
+                            
                             const fileObj = {
-                                Key: key,
+                                Key: fileKey,
                                 Size: parseInt(content.querySelector('Size').textContent),
                                 LastModified: content.querySelector('LastModified').textContent
                             };
                             
                             // Check if we have virus scan data stored for this file
-                            const fileId = this.selectedBucket + '/' + key;
+                            const fileId = this.selectedBucket + '/' + fileKey;
                             if (this.virusScanResults[fileId]) {
                                 fileObj.virusScan = this.virusScanResults[fileId];
                             }
@@ -1756,16 +2012,36 @@
                         const nameB = this.getFileName(b.Key).toLowerCase();
                         return nameA.localeCompare(nameB);
                     });
+                    
+                    // Load starred items for this bucket
+                    await this.loadStarredItems();
                 } catch (err) {
                     this.error = err.message;
+                    this.captureError(err, { operation: 'loadContents' });
                 } finally {
                     this.loading = false;
                 }
             },
 
             isInCurrentDirectory(key) {
-                const relativePath = key.substring(this.currentPath.length + 1);
-                return !relativePath.includes('/');
+                // Remove bucket prefix from key if it exists
+                let cleanKey = key;
+                if (key.startsWith(this.selectedBucket + '/')) {
+                    cleanKey = key.substring(this.selectedBucket.length + 1);
+                }
+                
+                if (this.currentPath === this.selectedBucket) {
+                    // At bucket root - key should not contain any slashes
+                    return !cleanKey.includes('/');
+                } else {
+                    // In subdirectory - key should start with our prefix and have no additional slashes
+                    const prefix = this.currentPath.substring(this.selectedBucket.length + 1) + '/';
+                    if (!cleanKey.startsWith(prefix)) {
+                        return false;
+                    }
+                    const relativePath = cleanKey.substring(prefix.length);
+                    return !relativePath.includes('/');
+                }
             },
 
             getFileName(key) {
@@ -1823,13 +2099,18 @@
                         };
                     }
                 } catch (error) {
-                    console.error('Failed to fetch file metadata:', error);
+                    this.captureError(error, { 
+                        operation: 'fetchFileMetadata', 
+                        file: file.Key 
+                    });
                 }
                 
                 // Check if this is an Iceberg metadata file
                 if (this.icebergParser.isIcebergMetadata(file.Key)) {
                     try {
-                        const response = await fetch('/' + file.Key, {
+                        // Need to prepend bucket to file key
+                        const fullPath = this.selectedBucket + '/' + file.Key;
+                        const response = await fetch('/' + fullPath, {
                             headers: this.getAuthHeaders()
                         });
                         
@@ -1841,7 +2122,10 @@
                             }
                         }
                     } catch (error) {
-                        console.error('Failed to load Iceberg metadata:', error);
+                        this.captureError(error, { 
+                            operation: 'loadIcebergMetadata', 
+                            file: file.Key 
+                        });
                     }
                 }
             },
@@ -1859,12 +2143,16 @@
                 }
                 
                 try {
-                    // file.Key already contains the full path from S3 listing
-                    const fullKey = file.Key;
+                    // file.Key contains path but not bucket, need to prepend bucket
+                    const bucket = this.selectedBucket || this.currentBucket;
+                    if (!bucket) {
+                        throw new Error('No bucket selected');
+                    }
+                    const fullKey = bucket + '/' + file.Key;
                     
                     // Construct proper delete URL with encoding
                     const deleteUrl = '/' + fullKey.split('/').map(segment => encodeURIComponent(segment)).join('/');
-                    console.log('Deleting file:', fullKey, 'URL:', deleteUrl);
+                    console.log('Deleting file:', file.Key, 'from bucket:', bucket, 'URL:', deleteUrl);
                     
                     const response = await fetch(deleteUrl, {
                         method: 'DELETE',
@@ -1967,11 +2255,13 @@
                 }
                 
                 try {
-                    // Ensure the key includes the bucket name
-                    let fullPath = file.Key;
-                    if (!file.Key.includes('/')) {
-                        fullPath = this.currentPath + '/' + file.Key;
+                    // file.Key contains path but not bucket, need to prepend bucket
+                    const bucket = this.selectedBucket || this.currentBucket;
+                    if (!bucket) {
+                        throw new Error('No bucket selected');
                     }
+                    const fullPath = bucket + '/' + file.Key;
+                    console.log('Viewing file:', file.Key, 'from bucket:', bucket, 'Full path:', fullPath);
                     
                     const response = await fetch('/' + fullPath, {
                         headers: this.getAuthHeaders()
@@ -2067,6 +2357,7 @@
             
             showRecentFiles() {
                 this.showingRecent = true;
+                this.starredFilter = false;
                 this.selectedBucket = null;
                 this.currentPath = '';
                 this.directories = [];
@@ -2082,6 +2373,19 @@
                 
                 // Update URL hash
                 window.location.hash = 'recent';
+            },
+            
+            showStarredFiles() {
+                this.starredFilter = true;
+                this.showingRecent = false;
+                
+                if (!this.selectedBucket && this.buckets.length > 0) {
+                    // Select the first bucket if none selected
+                    this.selectBucket(this.buckets[0]);
+                } else if (this.selectedBucket) {
+                    // Reload current path with starred filter
+                    this.loadContents();
+                }
             },
             
             clearRecentFiles() {
@@ -2429,7 +2733,11 @@
                     try {
                         await this.uploadFile(fileItem, i);
                     } catch (error) {
-                        console.error('Upload error:', error);
+                        this.captureError(error, { 
+                            operation: 'uploadFile', 
+                            file: fileItem ? fileItem.file.name : 'unknown',
+                            index: i
+                        });
                     }
                 }
                 
