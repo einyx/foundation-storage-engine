@@ -534,3 +534,21 @@ func (m *MultiBackend) ListParts(ctx context.Context, bucket, key, uploadID stri
 	}
 	return backend.ListParts(ctx, bucket, key, uploadID, maxParts, partNumberMarker)
 }
+
+// ListDeletedObjects lists soft-deleted objects from the appropriate backend
+func (m *MultiBackend) ListDeletedObjects(ctx context.Context, bucket, prefix, marker string, maxKeys int) (*ListObjectsResult, error) {
+	backend, err := m.getBackendForBucket(bucket)
+	if err != nil {
+		return nil, err
+	}
+	return backend.ListDeletedObjects(ctx, bucket, prefix, marker, maxKeys)
+}
+
+// RestoreObject restores a soft-deleted object using the appropriate backend
+func (m *MultiBackend) RestoreObject(ctx context.Context, bucket, key, versionID string) error {
+	backend, err := m.getBackendForBucket(bucket)
+	if err != nil {
+		return err
+	}
+	return backend.RestoreObject(ctx, bucket, key, versionID)
+}

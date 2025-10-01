@@ -278,3 +278,27 @@ func (w *AzureWrapper) ListParts(ctx context.Context, bucket, key, uploadID stri
 	
 	return w.backend.ListParts(ctx, container, fullKey, uploadID, maxParts, partNumberMarker)
 }
+
+// ListDeletedObjects delegates to the wrapped Azure backend
+func (w *AzureWrapper) ListDeletedObjects(ctx context.Context, bucket, prefix, marker string, maxKeys int) (*ListObjectsResult, error) {
+	container := w.translateBucketToContainer(bucket)
+	fullPrefix := w.addPrefix(bucket, prefix)
+	
+	oldContainer := w.backend.containerName
+	w.backend.containerName = container
+	defer func() { w.backend.containerName = oldContainer }()
+	
+	return w.backend.ListDeletedObjects(ctx, container, fullPrefix, marker, maxKeys)
+}
+
+// RestoreObject delegates to the wrapped Azure backend
+func (w *AzureWrapper) RestoreObject(ctx context.Context, bucket, key, versionID string) error {
+	container := w.translateBucketToContainer(bucket)
+	fullKey := w.addPrefix(bucket, key)
+	
+	oldContainer := w.backend.containerName
+	w.backend.containerName = container
+	defer func() { w.backend.containerName = oldContainer }()
+	
+	return w.backend.RestoreObject(ctx, container, fullKey, versionID)
+}

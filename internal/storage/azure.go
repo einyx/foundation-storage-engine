@@ -622,6 +622,234 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 	return result, nil
 }
 
+// ListDeletedObjects lists soft-deleted blobs in Azure Blob Storage
+func (a *AzureBackend) ListDeletedObjects(ctx context.Context, bucket, prefix, marker string, maxKeys int) (*ListObjectsResult, error) {
+	logrus.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"prefix": prefix,
+		"marker": marker,
+		"maxKeys": maxKeys,
+	}).Debug("ListDeletedObjects called")
+	
+	result := &ListObjectsResult{
+		CommonPrefixes: []string{},
+		Contents:       []ObjectInfo{},
+	}
+
+	containerClient := a.client.ServiceClient().NewContainerClient(bucket)
+	
+	// Create options with Include for deleted blobs
+	// Include all possible states to debug
+	includeStates := container.ListBlobsInclude{
+		Deleted:   true,
+		Metadata:  true,
+		Snapshots: false, // Don't include snapshots as they might confuse the listing
+		Tags:      true,
+		Versions:  true, // Re-enable versions to see all blob states
+	}
+	
+	opts := &container.ListBlobsFlatOptions{
+		Prefix: &prefix,
+		MaxResults: func() *int32 { 
+			mk := int32(maxKeys)
+			return &mk 
+		}(),
+		Include: includeStates,
+	}
+	
+	if marker != "" {
+		opts.Marker = &marker
+	}
+
+	// Use flat listing for deleted blobs
+	pager := containerClient.NewListBlobsFlatPager(opts)
+	
+	totalBlobsProcessed := 0
+	deletedBlobsFound := 0
+	
+	for pager.More() && len(result.Contents) < maxKeys {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, wrapAzureError("list deleted blobs", bucket, prefix, err)
+		}
+
+		logrus.WithFields(logrus.Fields{
+			"pageSize": len(page.Segment.BlobItems),
+			"bucket": bucket,
+			"totalProcessed": totalBlobsProcessed,
+			"deletedFound": deletedBlobsFound,
+		}).Info("Processing page of blobs for soft delete listing")
+		
+		// Process blobs - only include deleted ones
+		for _, blob := range page.Segment.BlobItems {
+			if len(result.Contents) >= maxKeys {
+				result.IsTruncated = true
+				if page.NextMarker != nil && *page.NextMarker != "" {
+					result.NextMarker = *page.NextMarker
+				}
+				break
+			}
+
+			// Log first few blobs to debug
+			if totalBlobsProcessed < 5 && blob.Name != nil {
+				fields := logrus.Fields{
+					"name": *blob.Name,
+					"hasDeleted": blob.Deleted != nil,
+					"hasIsCurrentVersion": blob.IsCurrentVersion != nil,
+					"hasVersionID": blob.VersionID != nil,
+				}
+				
+				if blob.Deleted != nil {
+					fields["deleted"] = *blob.Deleted
+				}
+				if blob.IsCurrentVersion != nil {
+					fields["isCurrentVersion"] = *blob.IsCurrentVersion
+				}
+				if blob.VersionID != nil {
+					fields["versionID"] = *blob.VersionID
+				}
+				
+				logrus.WithFields(fields).Info("Sample blob properties for debugging")
+			}
+			
+			totalBlobsProcessed++
+			
+			// Check if blob is deleted
+			// Azure SDK issue: blob.Deleted is not populated when versioning is enabled
+			// We need to check multiple conditions
+			isDeleted := false
+			
+			// Method 1: Check the Deleted flag (might not work with versioning)
+			if blob.Deleted != nil && *blob.Deleted {
+				isDeleted = true
+				logrus.WithField("method", "DeletedFlag").Debug("Found deleted blob via Deleted flag")
+			}
+			
+			// Method 2: Check if DeletedTime is set
+			if !isDeleted && blob.Properties != nil && blob.Properties.DeletedTime != nil {
+				isDeleted = true
+				logrus.WithField("method", "DeletedTime").Debug("Found deleted blob via DeletedTime")
+			}
+			
+			// Method 3: When versioning is enabled, check if this is not the current version
+			// Previous versions are soft-deleted blobs when versioning + soft delete are enabled
+			if !isDeleted && blob.VersionID != nil {
+				// If IsCurrentVersion is explicitly false, it's a previous version
+				if blob.IsCurrentVersion != nil && !*blob.IsCurrentVersion {
+					isDeleted = true
+					logrus.WithFields(logrus.Fields{
+						"name": *blob.Name,
+						"versionID": *blob.VersionID,
+						"method": "PreviousVersion-ExplicitFalse",
+					}).Info("Found deleted blob via previous version detection")
+				} else if blob.IsCurrentVersion == nil {
+					// When IsCurrentVersion is not set (nil), it's also a previous version!
+					// Azure doesn't set this property for non-current versions
+					isDeleted = true
+					logrus.WithFields(logrus.Fields{
+						"name": *blob.Name,
+						"versionID": *blob.VersionID,
+						"method": "PreviousVersion-NilFlag",
+					}).Info("Found deleted blob via previous version detection (nil IsCurrentVersion)")
+				}
+			}
+			
+			// Method 4: Check for any deletion properties for debugging
+			if blob.Properties != nil {
+				deletionInfo := logrus.Fields{
+					"name": *blob.Name,
+				}
+				
+				hasAnyIndicator := false
+				if blob.Properties.DeletedTime != nil {
+					deletionInfo["deletedTime"] = *blob.Properties.DeletedTime
+					hasAnyIndicator = true
+				}
+				if blob.Properties.RemainingRetentionDays != nil {
+					deletionInfo["remainingRetentionDays"] = *blob.Properties.RemainingRetentionDays
+					hasAnyIndicator = true
+				}
+				if blob.Deleted != nil {
+					deletionInfo["deletedFlag"] = *blob.Deleted
+				}
+				if blob.IsCurrentVersion != nil {
+					deletionInfo["isCurrentVersion"] = *blob.IsCurrentVersion
+				}
+				if blob.VersionID != nil {
+					deletionInfo["versionID"] = *blob.VersionID
+				}
+				
+				// Log for debugging
+				if hasAnyIndicator || (blob.IsCurrentVersion != nil && !*blob.IsCurrentVersion) {
+					logrus.WithFields(deletionInfo).Debug("Blob version info")
+				}
+			}
+			
+			// Only include deleted blobs
+			if isDeleted {
+				deletedBlobsFound++
+				key := *blob.Name
+				etag := ""
+				if blob.Properties.ETag != nil {
+					etag = string(*blob.Properties.ETag)
+					etag = strings.Trim(etag, `"`)
+				}
+
+				size := int64(0)
+				if blob.Properties.ContentLength != nil {
+					size = *blob.Properties.ContentLength
+				}
+
+				lastModified := time.Time{}
+				if blob.Properties.LastModified != nil {
+					lastModified = *blob.Properties.LastModified
+				}
+
+				// Get deleted time - use LastModified as DeletedOn might not be available
+				deletedTime := time.Time{}
+				if blob.Properties.LastModified != nil {
+					deletedTime = *blob.Properties.LastModified
+				}
+
+				// Get version ID if available
+				versionID := ""
+				if blob.VersionID != nil {
+					versionID = *blob.VersionID
+				}
+
+				result.Contents = append(result.Contents, ObjectInfo{
+					Key:          key,
+					Size:         size,
+					ETag:         etag,
+					LastModified: lastModified,
+					StorageClass: "STANDARD",
+					Metadata: map[string]string{
+						"DeletedTime": deletedTime.Format(time.RFC3339),
+						"VersionID":   versionID,
+						"IsDeleted":   "true",
+					},
+				})
+			}
+		}
+
+		// Check if we have a next marker
+		if page.NextMarker != nil && *page.NextMarker != "" {
+			result.NextMarker = *page.NextMarker
+			if len(result.Contents) >= maxKeys {
+				result.IsTruncated = true
+			}
+		}
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"deletedCount": len(result.Contents),
+		"isTruncated": result.IsTruncated,
+	}).Info("ListDeletedObjects completed")
+	
+	return result, nil
+}
+
 func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Object, error) {
 	// Handle directory-like objects
 	normalizedKey := key
@@ -730,18 +958,76 @@ func (a *AzureBackend) DeleteObject(ctx context.Context, bucket, key string) err
 		normalizedKey = strings.TrimSuffix(key, "/") + directoryMarkerSuffix
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    normalizedKey,
+	}).Info("Azure DeleteObject called")
+
 	blobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlobClient(normalizedKey)
 	
+	// First try to delete with default options
 	_, err := blobClient.Delete(ctx, nil)
 	if err != nil {
 		// Check if it's a 404 error - S3 returns success for non-existent objects
 		var respErr *azcore.ResponseError
-		if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
-			return nil
+		if errors.As(err, &respErr) {
+			if respErr.StatusCode == http.StatusNotFound {
+				return nil
+			}
+			
+			// If we get a 409 Conflict, it might be because of snapshots
+			// Try deleting with snapshots included
+			if respErr.StatusCode == http.StatusConflict {
+				logrus.WithFields(logrus.Fields{
+					"bucket": bucket,
+					"key":    normalizedKey,
+					"error":  err.Error(),
+				}).Warn("Delete failed with conflict, trying to delete including snapshots")
+				
+				// Try again with delete snapshots option
+				deleteOptions := &blob.DeleteOptions{
+					DeleteSnapshots: func() *blob.DeleteSnapshotsOptionType {
+						val := blob.DeleteSnapshotsOptionTypeInclude
+						return &val
+					}(),
+				}
+				_, err = blobClient.Delete(ctx, deleteOptions)
+				if err != nil {
+					return fmt.Errorf("failed to delete blob with snapshots: %w", err)
+				}
+				return nil
+			}
 		}
 		return fmt.Errorf("failed to delete blob: %w", err)
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    normalizedKey,
+	}).Info("Azure DeleteObject succeeded - blob should be soft-deleted")
+
+	return nil
+}
+
+// RestoreObject restores a soft-deleted blob
+func (a *AzureBackend) RestoreObject(ctx context.Context, bucket, key, versionID string) error {
+	blobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlockBlobClient(key)
+	
+	// Create undelete options
+	opts := &blob.UndeleteOptions{}
+	
+	// Undelete the blob
+	_, err := blobClient.Undelete(ctx, opts)
+	if err != nil {
+		return wrapAzureError("restore blob", bucket, key, err)
+	}
+	
+	logrus.WithFields(logrus.Fields{
+		"bucket":    bucket,
+		"key":       key,
+		"versionID": versionID,
+	}).Info("Restored soft-deleted blob")
+	
 	return nil
 }
 

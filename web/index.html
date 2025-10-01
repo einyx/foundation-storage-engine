@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Foundation Storage</title>
+    <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="pragma" content="no-cache">
+    <meta http-equiv="expires" content="0">
+    <title>Foundation Storage v2</title>
     
     <!-- Sentry Error Tracking -->
     <script
@@ -18,17 +21,33 @@
       const SENTRY_ENVIRONMENT = '{{SENTRY_ENVIRONMENT}}';
       
       // Initialize Sentry only if enabled
-      if (SENTRY_ENABLED === 'true' && SENTRY_DSN && SENTRY_DSN !== '{{SENTRY_DSN}}' && typeof Sentry !== 'undefined') {
+      if (SENTRY_ENABLED === 'true' && SENTRY_DSN && SENTRY_DSN.indexOf('{{') === -1 && typeof Sentry !== 'undefined') {
         Sentry.init({
           dsn: SENTRY_DSN,
           integrations: [
             Sentry.browserTracingIntegration(),
             Sentry.replayIntegration(),
+            /*Sentry.feedbackIntegration({
+              colorScheme: "system",
+              showBranding: false,
+              showName: true,
+              showEmail: true,
+              autoInject: true,
+              isNameRequired: true,
+              isEmailRequired: true,
+              buttonLabel: "Report Issue",
+              submitButtonLabel: "Send Feedback",
+              formTitle: "Report an Issue",
+              messageLabel: "What's the issue?",
+              messagePlaceholder: "Please describe the issue you're experiencing...",
+              successMessageText: "Thank you for your feedback!",
+            }),*/
           ],
           environment: SENTRY_ENVIRONMENT || 'production',
           tracesSampleRate: 0.1,
           replaysSessionSampleRate: 0.1,
           replaysOnErrorSampleRate: 1.0,
+          sendDefaultPii: true,
           beforeSend(event, hint) {
             // Add more context
             if (event.exception) {
@@ -64,7 +83,7 @@
           console.error('Unhandled promise rejection:', event.reason);
         });
         
-        console.log('Sentry initialized for frontend error tracking with DSN:', SENTRY_DSN.substring(0, 20) + '...');
+        console.log('Sentry initialized for frontend error tracking');
         window.SENTRY_INITIALIZED = true;
       } else {
         console.log('Sentry is disabled, skipping frontend initialization', {
@@ -78,8 +97,8 @@
     </script>
     
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/ui/js/iceberg-parser.js?v={{VERSION}}"></script>
     <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
-    <script src="js/iceberg-parser.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -427,17 +446,58 @@
                 
                 <!-- Actions -->
                 <div class="flex items-center gap-2">
+                    <button @click="toggleDeletedItems()" 
+                            class="p-2 rounded-lg"
+                            :class="showDeletedItems ? 'bg-red-100 text-red-600' : 'hover:bg-gray-100'"
+                            title="Show deleted items">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                        </svg>
+                    </button>
                     <button class="p-2 hover:bg-gray-100 rounded-lg">
                         <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                         </svg>
                     </button>
-                    <button class="p-2 hover:bg-gray-100 rounded-lg">
-                        <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                        </svg>
-                    </button>
+                    <div class="relative">
+                        <button @click="showSettings = !showSettings" class="p-2 hover:bg-gray-100 rounded-lg">
+                            <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            </svg>
+                        </button>
+                        
+                        <!-- Settings Dropdown -->
+                        <div x-show="showSettings" 
+                             @click.away="showSettings = false" 
+                             x-transition:enter="transition ease-out duration-100" 
+                             x-transition:enter-start="transform opacity-0 scale-95" 
+                             x-transition:enter-end="transform opacity-100 scale-100" 
+                             x-transition:leave="transition ease-in duration-75" 
+                             x-transition:leave-start="transform opacity-100 scale-100" 
+                             x-transition:leave-end="transform opacity-0 scale-95" 
+                             class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
+                            <button @click="openFeedback()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
+                                </svg>
+                                Report Issue
+                            </button>
+                            <a href="/docs" target="_blank" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+                                </svg>
+                                API Documentation
+                            </a>
+                            <hr class="my-2 border-gray-200">
+                            <button @click="showSettings = false; showUploadDialog = true" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                                </svg>
+                                Upload Settings
+                            </button>
+                        </div>
+                    </div>
                     <div class="h-6 w-px bg-gray-300 mx-2"></div>
                     
                     <!-- Delete button (shown when items selected) -->
@@ -461,6 +521,19 @@
             
             <!-- Content -->
             <main class="flex-1 overflow-auto bg-white">
+                <!-- Deleted Items Banner -->
+                <div x-show="showDeletedItems" x-transition class="bg-red-50 border-b border-red-200">
+                    <div class="px-6 py-3 flex items-center gap-4">
+                        <svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <p class="text-sm text-red-800">Showing deleted items. These files can be restored within the retention period.</p>
+                        <button @click="showDeletedItems = false" class="ml-auto text-sm text-red-600 hover:text-red-800">
+                            Hide deleted items
+                        </button>
+                    </div>
+                </div>
+                
                 <!-- Iceberg Table Banner -->
                 <div x-show="isIcebergTable" x-transition class="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-100">
                     <div class="px-6 py-4 flex items-center gap-4">
@@ -471,9 +544,17 @@
                         </div>
                         <div class="flex-1">
                             <h3 class="font-semibold text-gray-900">Apache Iceberg Table</h3>
-                            <p class="text-sm text-gray-600 mt-0.5">This directory contains table data and metadata files</p>
+                            <p class="text-sm text-gray-600 mt-0.5">
+                                <span x-show="!selectedSnapshot">Viewing current table state</span>
+                                <span x-show="selectedSnapshot">Viewing snapshot: <span x-text="selectedSnapshot?.snapshotId" class="font-mono"></span></span>
+                            </p>
                         </div>
-                        <button class="btn-secondary text-sm">View Table Info</button>
+                        <button @click="showSnapshotHistory = true; loadIcebergMetadata()" class="btn-secondary text-sm flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            View Snapshots
+                        </button>
                     </div>
                 </div>
                 
@@ -591,87 +672,63 @@
                                     <svg class="w-16 h-16 mx-auto mb-2 text-blue-500" fill="currentColor" viewBox="0 0 24 24">
                                         <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z"/>
                                     </svg>
-                                    <div x-show="icebergParser.isHivePartitionedPath(dir)" class="absolute -top-1 -right-1 w-6 h-6 bg-green-500 rounded-full flex items-center justify-center" title="Hive Partition">
+                                    <div x-show="window.icebergParser && window.icebergParser.isHivePartitionedPath && window.icebergParser.isHivePartitionedPath(dir)" class="absolute -top-1 -right-1 w-6 h-6 bg-green-500 rounded-full flex items-center justify-center" title="Hive Partition">
                                         <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path>
                                         </svg>
                                     </div>
                                 </div>
                                 <p class="text-sm font-medium text-gray-900 truncate" x-text="dir.name || dir"></p>
-                                <p class="text-xs text-gray-500 mt-1" x-text="icebergParser.isHivePartitionedPath(dir) ? 'Hive Partition' : 'Folder'"></p>
+                                <p class="text-xs text-gray-500 mt-1" x-text="window.icebergParser && window.icebergParser.isHivePartitionedPath && window.icebergParser.isHivePartitionedPath(dir) ? 'Hive Partition' : 'Folder'"></p>
                             </button>
                         </template>
                         
                         <!-- Files -->
-                        <template x-for="file in (starredFilter ? files.filter(f => isStarred(f)) : files)" :key="file.Key">
+                        <template x-for="(file, index) in (() => {
+                            try {
+                                let fileList = [];
+                                if (showDeletedItems) {
+                                    fileList = (deletedFiles || []);
+                                } else if (starredFilter) {
+                                    fileList = files.filter(f => isStarred(f));
+                                } else {
+                                    fileList = files;
+                                }
+                                return fileList.filter(f => f && f.Key && !f.Key.endsWith('.starred.json'));
+                            } catch (e) {
+                                console.error('Error in file filter:', e);
+                                return [];
+                            }
+                        })()" :key="file.Key || `file-${index}`">
                             <button 
-                                @click="showingRecent ? navigateToRecentFile(file) : selectFile(file)"
-                                @dblclick="viewFile(file)"
-                                :class="selectedFile?.Key === file.Key ? 'selected' : ''"
+                                @click="selectFile(file)"
+                                @dblclick="showDeletedItems ? restoreFile(file) : viewFile(file)"
                                 class="file-item p-4 rounded-lg hover-lift text-center group relative"
-                                title="Double-click to view"
+                                :class="showDeletedItems ? 'opacity-60' : ''"
+                                :title="showDeletedItems ? 'Double-click to restore' : 'Double-click to view'"
                             >
-                                <!-- Star button -->
-                                <button @click.stop="toggleStar(file)" 
-                                        class="absolute top-2 right-2 p-1 rounded-full bg-white/80 hover:bg-white shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
-                                        :class="{'opacity-100': isStarred(file)}">
-                                    <svg class="w-4 h-4 transition-colors" 
-                                         :class="isStarred(file) ? 'text-yellow-500 fill-current' : 'text-gray-400'" 
-                                         :fill="isStarred(file) ? 'currentColor' : 'none'" 
-                                         stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                                              d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path>
-                                    </svg>
-                                </button>
+                                <!-- Deleted indicator -->
+                                <div x-show="showDeletedItems" class="absolute top-2 left-2 bg-red-500 text-white text-xs px-2 py-1 rounded">
+                                    Deleted
+                                </div>
                                 <div class="relative">
-                                    <template x-if="icebergParser.getFileTypeInfo(file.Key)">
-                                        <div>
-                                            <svg class="w-16 h-16 mx-auto mb-2" 
-                                                 :style="{ color: icebergParser.getFileTypeColorHex(icebergParser.getFileTypeInfo(file.Key).color, '400') }"
-                                                 fill="currentColor" viewBox="0 0 24 24">
-                                                <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
-                                            </svg>
-                                            <div class="absolute top-0 right-0 px-2 py-1 text-xs font-medium text-white rounded-full" 
-                                                 :style="{ backgroundColor: icebergParser.getFileTypeColorHex(icebergParser.getFileTypeInfo(file.Key).color, '500') }"
-                                                 x-text="icebergParser.getFileTypeInfo(file.Key).name">
-                                            </div>
-                                        </div>
-                                    </template>
-                                    <template x-if="!icebergParser.getFileTypeInfo(file.Key)">
-                                        <svg class="w-16 h-16 mx-auto mb-2 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
-                                            <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
-                                        </svg>
-                                    </template>
+                                    <svg class="w-16 h-16 mx-auto mb-2" 
+                                         :class="showDeletedItems ? 'text-red-400' : 'text-gray-400'"
+                                         fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+                                    </svg>
                                 </div>
                                 <p class="text-sm font-medium text-gray-900 truncate" x-text="getFileName(file.Key)"></p>
                                 <p class="text-xs text-gray-500 mt-1">
                                     <span x-text="formatSize(file.Size)"></span>
-                                    <template x-if="icebergParser.getFileTypeInfo(file.Key)">
-                                        <span class="text-xs" x-text="' • ' + icebergParser.getFileTypeInfo(file.Key).description"></span>
-                                    </template>
+                                    <span x-show="showDeletedItems && file.DeletedTime"> • Deleted <span x-text="formatRelativeTime(file.DeletedTime)"></span></span>
                                 </p>
-                                <!-- Show bucket name for recent files -->
-                                <template x-if="showingRecent && file.Bucket">
-                                    <p class="text-xs text-blue-600 mt-0.5 truncate" x-text="'in ' + file.Bucket"></p>
-                                </template>
-                                <!-- Virus scan indicator -->
-                                <template x-if="file.virusScan">
-                                    <div class="mt-2 flex justify-center">
-                                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                                              :class="{
-                                                  'bg-green-100 text-green-800': file.virusScan.verdict === 'clean',
-                                                  'bg-red-100 text-red-800': file.virusScan.verdict === 'malicious',
-                                                  'bg-orange-100 text-orange-800': file.virusScan.verdict === 'suspicious'
-                                              }">
-                                            <svg class="w-3 h-3 mr-0.5" fill="currentColor" viewBox="0 0 20 20">
-                                                <path x-show="file.virusScan.verdict === 'clean'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                                <path x-show="file.virusScan.verdict === 'malicious'" fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
-                                                <path x-show="file.virusScan.verdict === 'suspicious'" fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
-                                            </svg>
-                                            <span x-text="file.virusScan.verdict"></span>
-                                        </span>
-                                    </div>
-                                </template>
+                                <!-- Restore button for deleted items -->
+                                <button x-show="showDeletedItems" 
+                                        @click.stop="restoreFile(file)"
+                                        class="mt-2 btn-primary text-xs">
+                                    Restore
+                                </button>
                             </button>
                         </template>
                     </div>
@@ -707,7 +764,7 @@
                                                     <path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z"/>
                                                 </svg>
                                                 <span class="text-sm font-medium text-gray-900" x-text="dir"></span>
-                                                <span x-show="icebergParser.isHivePartitionedPath(dir)" class="ml-2 text-xs text-green-600">(Hive Partition)</span>
+                                                <span x-show="window.icebergParser && window.icebergParser.isHivePartitionedPath && window.icebergParser.isHivePartitionedPath(dir)" class="ml-2 text-xs text-green-600">(Hive Partition)</span>
                                             </div>
                                         </td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">—</td>
@@ -718,7 +775,7 @@
                                 </template>
                                 
                                 <!-- Files -->
-                                <template x-for="file in (starredFilter ? files.filter(f => isStarred(f)) : files)" :key="file.Key">
+                                <template x-for="file in (starredFilter ? files.filter(f => isStarred(f)) : files).filter(f => !f.Key.endsWith('.starred.json'))" :key="file.Key">
                                     <tr class="hover:bg-gray-50 cursor-pointer" 
                                         @click="showingRecent ? navigateToRecentFile(file) : selectFile(file)"
                                         @dblclick="viewFile(file)"
@@ -750,7 +807,7 @@
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatSize(file.Size)"></td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatDate(file.LastModified)"></td>
                                         <td class="px-6 py-4 whitespace-nowrap">
-                                            <template x-if="icebergParser.getFileTypeInfo(file.Key)">
+                                            <template x-if="icebergParser && icebergParser.getFileTypeInfo(file.Key)">
                                                 <span class="text-xs font-medium px-2 py-1 rounded-full" 
                                                       :style="{ 
                                                           backgroundColor: icebergParser.getFileTypeColorHex(icebergParser.getFileTypeInfo(file.Key).color, '100'), 
@@ -759,7 +816,7 @@
                                                       x-text="icebergParser.getFileTypeInfo(file.Key).name">
                                                 </span>
                                             </template>
-                                            <template x-if="!icebergParser.getFileTypeInfo(file.Key)">
+                                            <template x-if="!icebergParser || !icebergParser.getFileTypeInfo(file.Key)">
                                                 <span class="text-sm text-gray-500">File</span>
                                             </template>
                                         </td>
@@ -1217,6 +1274,81 @@
         </div>
     </div>
     
+    <!-- Snapshot History Modal -->
+    <div x-show="showSnapshotHistory" 
+         class="fixed inset-0 bg-gray-500 bg-opacity-75 overflow-y-auto h-full w-full z-50"
+         @click="showSnapshotHistory = false">
+        <div class="relative top-20 mx-auto p-5 border w-[800px] shadow-lg rounded-lg bg-white"
+             @click.stop>
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-xl font-semibold text-gray-900">Iceberg Table Snapshots</h3>
+                <button @click="showSnapshotHistory = false" class="text-gray-400 hover:text-gray-500">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Loading State -->
+            <div x-show="loadingMetadata" class="flex items-center justify-center h-64">
+                <div class="text-center">
+                    <svg class="w-12 h-12 mx-auto mb-4 text-gray-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <p class="text-sm text-gray-600">Loading table metadata...</p>
+                </div>
+            </div>
+
+            <!-- Snapshot List -->
+            <div x-show="!loadingMetadata && icebergMetadata" class="space-y-3 max-h-[500px] overflow-y-auto">
+                <template x-if="icebergMetadata && icebergMetadata.snapshots">
+                    <template x-for="snapshot in [...icebergMetadata.snapshots].reverse()" :key="snapshot.snapshotId">
+                        <div class="p-4 border rounded-lg cursor-pointer hover:border-blue-500 transition-colors"
+                             :class="selectedSnapshot?.snapshotId === snapshot.snapshotId ? 'border-blue-500 bg-blue-50' : 'border-gray-200'"
+                             @click="selectSnapshot(snapshot)">
+                            <div class="flex items-start justify-between">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2">
+                                        <span class="font-mono text-sm" x-text="snapshot.snapshotId"></span>
+                                        <span x-show="icebergMetadata.currentSnapshot === snapshot.snapshotId" 
+                                              class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">CURRENT</span>
+                                    </div>
+                                    <p class="text-sm text-gray-600 mt-1" x-text="snapshot.timestamp ? new Date(snapshot.timestamp).toLocaleString() : 'Unknown time'"></p>
+                                    <div x-show="snapshot.summary" class="mt-2 text-xs text-gray-500">
+                                        <template x-if="snapshot.summary['added-data-files']">
+                                            <span>Added <span x-text="snapshot.summary['added-data-files']"></span> files</span>
+                                        </template>
+                                        <template x-if="snapshot.summary['deleted-data-files']">
+                                            <span> • Deleted <span x-text="snapshot.summary['deleted-data-files']"></span> files</span>
+                                        </template>
+                                    </div>
+                                </div>
+                                <button x-show="selectedSnapshot?.snapshotId === snapshot.snapshotId"
+                                        @click="loadSnapshotFiles(snapshot)"
+                                        class="btn-primary text-sm">
+                                    Load Version
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </template>
+            </div>
+
+            <!-- Actions -->
+            <div class="mt-6 flex justify-end gap-2">
+                <button @click="selectedSnapshot = null; loadContents()" 
+                        class="btn-secondary">
+                    View Current
+                </button>
+                <button @click="showSnapshotHistory = false" 
+                        class="btn-secondary">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+    
     <!-- Global Drag & Drop Overlay -->
     <div x-show="globalDragOver"
          @drop.prevent="handleDrop($event); globalDragOver = false"
@@ -1504,6 +1636,111 @@
             </div>
         </div>
     </div>
+    
+    <!-- Notifications -->
+    <div class="fixed top-4 right-4 z-50 space-y-2">
+        <template x-for="notification in notifications" :key="notification.id">
+            <div x-transition:enter="transition ease-out duration-300"
+                 x-transition:enter-start="opacity-0 transform translate-x-full"
+                 x-transition:enter-end="opacity-100 transform translate-x-0"
+                 x-transition:leave="transition ease-in duration-200"
+                 x-transition:leave-start="opacity-100"
+                 x-transition:leave-end="opacity-0"
+                 class="bg-white rounded-lg shadow-lg p-4 max-w-sm flex items-start gap-3">
+                <div :class="{
+                    'text-green-500': notification.type === 'success',
+                    'text-red-500': notification.type === 'error',
+                    'text-yellow-500': notification.type === 'warning',
+                    'text-blue-500': notification.type === 'info'
+                }">
+                    <svg x-show="notification.type === 'success'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <svg x-show="notification.type === 'error'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <p class="text-sm text-gray-700" x-text="notification.message"></p>
+            </div>
+        </template>
+    </div>
+    
+    <!-- Feedback Dialog -->
+    <div x-show="showFeedback" 
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4"
+         @click.self="showFeedback = false">
+        
+        <div class="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden"
+             @click.stop>
+            
+            <!-- Header -->
+            <div class="px-6 py-4 border-b border-gray-200">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-lg font-semibold text-gray-900">Report an Issue</h3>
+                    <button @click="showFeedback = false" class="p-1 hover:bg-gray-100 rounded-lg">
+                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <p class="text-sm text-gray-500 mt-1">Help us improve by reporting issues you encounter</p>
+            </div>
+            
+            <!-- Form -->
+            <form @submit.prevent="submitFeedback" class="px-6 py-4 space-y-4">
+                <div>
+                    <label for="feedback-name" class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                    <input type="text" 
+                           id="feedback-name"
+                           x-model="feedbackName" 
+                           :placeholder="userName || 'Your name'"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary">
+                </div>
+                
+                <div>
+                    <label for="feedback-email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                    <input type="email" 
+                           id="feedback-email"
+                           x-model="feedbackEmail" 
+                           :placeholder="userEmail || 'your@email.com'"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary">
+                </div>
+                
+                <div>
+                    <label for="feedback-message" class="block text-sm font-medium text-gray-700 mb-1">What's the issue? <span class="text-red-500">*</span></label>
+                    <textarea id="feedback-message"
+                              x-model="feedbackMessage" 
+                              rows="4" 
+                              placeholder="Please describe the issue you're experiencing..."
+                              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
+                              required></textarea>
+                </div>
+                
+                <!-- Actions -->
+                <div class="flex justify-end gap-3 pt-2">
+                    <button type="button" 
+                            @click="showFeedback = false" 
+                            class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+                    <button type="submit" 
+                            :disabled="submittingFeedback || !feedbackMessage.trim()"
+                            class="btn-primary flex items-center gap-2"
+                            :class="{ 'opacity-50 cursor-not-allowed': submittingFeedback || !feedbackMessage.trim() }">
+                        <svg x-show="submittingFeedback" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span x-text="submittingFeedback ? 'Sending...' : 'Send Feedback'"></span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <script>
     function s3Browser() {
@@ -1556,12 +1793,96 @@
             files: [],
             loading: false,
             error: null,
+            icebergParser: null,
             selectedFile: null,
             selectedFileMetadata: null,
             icebergParser: null,
             isIcebergTable: false,
-            viewMode: 'grid',
+            viewMode: 'list',
             showProfile: false,
+            showSettings: false,
+            
+            // Iceberg snapshot state
+            showSnapshotHistory: false,
+            icebergMetadata: null,
+            selectedSnapshot: null,
+            loadingMetadata: false,
+            
+            // Soft delete state
+            showDeletedItems: false,
+            deletedFiles: [],
+            loadingDeleted: false,
+            
+            // Feedback state
+            showFeedback: false,
+            feedbackMessage: '',
+            feedbackName: '',
+            feedbackEmail: '',
+            submittingFeedback: false,
+            
+            // Notifications
+            notifications: [],
+            
+            addNotification(type, message) {
+                const id = Date.now();
+                this.notifications.push({ id, type, message });
+                setTimeout(() => {
+                    this.notifications = this.notifications.filter(n => n.id !== id);
+                }, 3000);
+            },
+            
+            // Simple file type detection
+            getFileType(filepath) {
+                if (!filepath) return null;
+                // Get just the filename from the path
+                const filename = filepath.split('/').pop();
+                const parts = filename.toLowerCase().split('.');
+                if (parts.length < 2) return null;
+                const ext = parts.pop();
+                const types = {
+                    // Data formats
+                    parquet: { name: 'Parquet', color: 'blue' },
+                    parq: { name: 'Parquet', color: 'blue' },
+                    orc: { name: 'ORC', color: 'green' },
+                    avro: { name: 'Avro', color: 'purple' },
+                    json: { name: 'JSON', color: 'yellow' },
+                    csv: { name: 'CSV', color: 'gray' },
+                    tsv: { name: 'TSV', color: 'gray' },
+                    // Archives
+                    zip: { name: 'ZIP', color: 'red' },
+                    gz: { name: 'GZIP', color: 'red' },
+                    tar: { name: 'TAR', color: 'red' },
+                    // Documents
+                    pdf: { name: 'PDF', color: 'red' },
+                    txt: { name: 'Text', color: 'gray' },
+                    md: { name: 'MD', color: 'gray' },
+                    // Images
+                    jpg: { name: 'Image', color: 'green' },
+                    jpeg: { name: 'Image', color: 'green' },
+                    png: { name: 'Image', color: 'green' },
+                    gif: { name: 'Image', color: 'green' },
+                    // Code
+                    py: { name: 'Python', color: 'blue' },
+                    js: { name: 'JS', color: 'yellow' },
+                    sql: { name: 'SQL', color: 'orange' },
+                    yaml: { name: 'YAML', color: 'purple' },
+                    yml: { name: 'YAML', color: 'purple' }
+                };
+                return types[ext] || null;
+            },
+            
+            getFileColorHex(color, shade = '500') {
+                const colors = {
+                    blue: { '100': '#dbeafe', '400': '#60a5fa', '500': '#3b82f6', '600': '#2563eb', '800': '#1e40af' },
+                    green: { '100': '#dcfce7', '400': '#4ade80', '500': '#22c55e', '600': '#16a34a', '800': '#166534' },
+                    purple: { '100': '#f3e8ff', '400': '#c084fc', '500': '#a855f7', '600': '#9333ea', '800': '#6b21a8' },
+                    yellow: { '100': '#fef3c7', '400': '#facc15', '500': '#eab308', '600': '#ca8a04', '800': '#854d0e' },
+                    gray: { '100': '#f3f4f6', '400': '#9ca3af', '500': '#6b7280', '600': '#4b5563', '800': '#1f2937' },
+                    red: { '100': '#fee2e2', '400': '#f87171', '500': '#ef4444', '600': '#dc2626', '800': '#991b1b' },
+                    orange: { '100': '#fed7aa', '400': '#fb923c', '500': '#f97316', '600': '#ea580c', '800': '#9a3412' }
+                };
+                return (colors[color] && colors[color][shade]) || '#6b7280';
+            },
             
             // Starred items state
             starredItems: {},
@@ -1642,7 +1963,12 @@
                 }
 
                 // Initialize Iceberg parser
-                this.icebergParser = new IcebergMetadataParser();
+                if (typeof IcebergMetadataParser !== 'undefined') {
+                    this.icebergParser = new IcebergMetadataParser();
+                } else {
+                    console.warn('IcebergMetadataParser not loaded, iceberg features will be disabled');
+                    this.icebergParser = null;
+                }
 
                 // Load features
                 this.loadFeatures();
@@ -1674,7 +2000,7 @@
                         this.showRecentFiles();
                     } else if (hash) {
                         const parts = hash.split('/');
-                        if (parts.length > 0) {
+                        if (parts.length > 0 && parts[0] !== 'recent') {
                             this.showingRecent = false;
                             this.selectedBucket = parts[0];
                             this.currentPath = parts.join('/');
@@ -1699,8 +2025,17 @@
                         const data = await response.json();
                         this.starredItems = data || {};
                     } else if (response.status === 404) {
-                        // No starred items file yet
+                        // No starred items file yet - create an empty one
                         this.starredItems = {};
+                        // Create the file with empty object
+                        await fetch('/' + starredPath, {
+                            method: 'PUT',
+                            headers: {
+                                ...this.getAuthHeaders(),
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({})
+                        });
                     }
                 } catch (error) {
                     this.captureError(error, { operation: 'loadStarredItems' });
@@ -1862,6 +2197,91 @@
                 return {};
             },
 
+            openFeedback() {
+                if (window.SENTRY_INITIALIZED && typeof Sentry !== 'undefined') {
+                    this.showSettings = false;
+                    this.showFeedback = true;
+                } else {
+                    alert('Error tracking is not initialized. Please refresh the page and try again.');
+                }
+            },
+            
+            async submitFeedback() {
+                if (!this.feedbackMessage.trim()) {
+                    alert('Please enter your feedback message.');
+                    return;
+                }
+                
+                this.submittingFeedback = true;
+                
+                try {
+                    // Set user context
+                    Sentry.setUser({
+                        email: this.feedbackEmail || this.userEmail || '',
+                        name: this.feedbackName || this.userName || ''
+                    });
+                    
+                    // Create a feedback event
+                    Sentry.withScope((scope) => {
+                        scope.setLevel('info');
+                        scope.setTag('type', 'user-feedback');
+                        scope.setContext('feedback', {
+                            name: this.feedbackName || this.userName || 'Anonymous',
+                            email: this.feedbackEmail || this.userEmail || 'Not provided',
+                            message: this.feedbackMessage
+                        });
+                        
+                        // Capture the feedback as a message
+                        Sentry.captureMessage(`User Feedback: ${this.feedbackMessage.substring(0, 100)}...`, 'info');
+                    });
+                    
+                    // Get the event ID
+                    const eventId = Sentry.lastEventId();
+                    
+                    if (eventId) {
+                        // Send user feedback using Sentry's API
+                        const user = Sentry.getCurrentHub().getScope().getUser();
+                        const feedback = {
+                            event_id: eventId,
+                            name: this.feedbackName || this.userName || 'Anonymous',
+                            email: this.feedbackEmail || this.userEmail || 'noreply@example.com',
+                            comments: this.feedbackMessage
+                        };
+                        
+                        // Note: This would normally be sent to Sentry's user feedback endpoint
+                        // but that requires backend implementation. For now, the feedback is captured
+                        // as context on the event.
+                        
+                        this.addNotification('success', 'Thank you for your feedback!');
+                        this.showFeedback = false;
+                        this.feedbackMessage = '';
+                        this.feedbackName = '';
+                        this.feedbackEmail = '';
+                    } else {
+                        throw new Error('Failed to create feedback event');
+                    }
+                } catch (error) {
+                    console.error('Error submitting feedback:', error);
+                    this.addNotification('error', 'Failed to submit feedback. Please try again.');
+                } finally {
+                    this.submittingFeedback = false;
+                }
+            },
+
+            logout() {
+                // Clear all auth tokens
+                localStorage.removeItem('s3_auth_token');
+                localStorage.removeItem('auth_token');
+                
+                // Check if Auth0 is enabled and logout
+                if (this.checkAuth0()) {
+                    window.location.href = '/api/auth/logout';
+                } else {
+                    // Redirect to login page
+                    window.location.href = '/ui/login.html';
+                }
+            },
+
             async loadBuckets() {
                 this.bucketsLoading = true;
                 try {
@@ -1896,6 +2316,173 @@
                 this.selectedBucket = bucket;
                 this.currentPath = bucket;
                 window.location.hash = bucket;
+            },
+
+            async toggleDeletedItems() {
+                this.showDeletedItems = !this.showDeletedItems;
+                if (this.showDeletedItems) {
+                    // Ensure deletedFiles is initialized
+                    if (!this.deletedFiles) {
+                        this.deletedFiles = [];
+                    }
+                    await this.loadDeletedItems();
+                } else {
+                    // Clear deleted files when hiding
+                    this.deletedFiles = [];
+                }
+            },
+
+            async loadDeletedItems() {
+                this.loadingDeleted = true;
+                this.deletedFiles = []; // Reset the array
+                try {
+                    // Load deleted blobs - always at bucket level for soft delete listing
+                    // Soft delete listing is done at bucket level, not directory level
+                    const bucketPath = this.selectedBucket;
+                    console.log('Loading deleted items for bucket:', bucketPath);
+                    const response = await fetch(`/${bucketPath}?deleted=true`, {
+                        headers: this.getAuthHeaders()
+                    });
+                    
+                    if (!response.ok) {
+                        if (response.status === 501) {
+                            const errorXml = await response.text();
+                            const parser = new DOMParser();
+                            const xml = parser.parseFromString(errorXml, 'text/xml');
+                            const errorMessage = xml.querySelector('Message')?.textContent || 'Not Implemented';
+                            throw new Error(`Not Implemented: ${errorMessage}`);
+                        }
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const text = await response.text();
+                    console.log('Deleted items response:', text);
+                    const parser = new DOMParser();
+                    const xml = parser.parseFromString(text, 'text/xml');
+                    
+                    // Check for XML parse errors
+                    const parseError = xml.querySelector('parsererror');
+                    if (parseError) {
+                        console.error('XML Parse Error:', parseError.textContent);
+                        throw new Error('Failed to parse XML response');
+                    }
+                    
+                    // Log the root element
+                    console.log('XML root element:', xml.documentElement.tagName);
+                    console.log('XML namespace:', xml.documentElement.namespaceURI);
+                    
+                    // Parse deleted blobs from S3 XML response
+                    let contents = xml.querySelectorAll('Contents');
+                    console.log('Found Contents elements (no namespace):', contents.length);
+                    
+                    // If no contents found, try with namespace
+                    if (contents.length === 0) {
+                        // Try to get all elements and filter
+                        const allElements = xml.getElementsByTagName('*');
+                        console.log('Total elements in XML:', allElements.length);
+                        for (let elem of allElements) {
+                            console.log('Element:', elem.tagName, elem.localName);
+                            if (elem.localName === 'Contents' || elem.tagName === 'Contents') {
+                                console.log('Found a Contents element!');
+                            }
+                        }
+                    }
+                    
+                    console.log('First few Contents:', Array.from(contents).slice(0, 3).map(c => ({
+                        key: c.querySelector('Key')?.textContent,
+                        size: c.querySelector('Size')?.textContent
+                    })));
+                    if (contents.length > 0) {
+                        // S3 format response
+                        this.deletedFiles = Array.from(contents).map((item, idx) => {
+                            const key = item.querySelector('Key')?.textContent;
+                            if (!key) {
+                                console.warn(`Content item ${idx} has no Key element`);
+                                return null;
+                            }
+                            // Parse metadata from S3 response
+                            const metadata = {};
+                            item.querySelectorAll('Metadata > *').forEach(meta => {
+                                metadata[meta.tagName] = meta.textContent;
+                            });
+                            
+                            return {
+                                Key: item.querySelector('Key')?.textContent || '',
+                                Size: parseInt(item.querySelector('Size')?.textContent || '0'),
+                                LastModified: item.querySelector('LastModified')?.textContent || '',
+                                DeletedTime: metadata.DeletedTime || item.querySelector('LastModified')?.textContent || '',
+                                VersionId: metadata.VersionID || '',
+                                isDeleted: true
+                            };
+                        }).filter(f => f !== null); // Remove null entries
+                    } else {
+                        // Try Azure format (Blob elements)
+                        this.deletedFiles = Array.from(xml.querySelectorAll('Blob')).map(blob => ({
+                            Key: blob.querySelector('Name')?.textContent || '',
+                            Size: parseInt(blob.querySelector('Properties > Content-Length')?.textContent || '0'),
+                            LastModified: blob.querySelector('Properties > Last-Modified')?.textContent || '',
+                            DeletedTime: blob.querySelector('Properties > DeletedTime')?.textContent || blob.querySelector('Properties > Last-Modified')?.textContent || '',
+                            VersionId: blob.querySelector('Properties > VersionId')?.textContent || '',
+                            isDeleted: true
+                        }));
+                    }
+                    console.log('Deleted files parsed:', this.deletedFiles.length, this.deletedFiles.slice(0, 5));
+                    console.log('showDeletedItems state:', this.showDeletedItems);
+                    console.log('deletedFiles variable exists:', 'deletedFiles' in this);
+                } catch (error) {
+                    console.error('Error loading deleted items:', error);
+                    this.deletedFiles = []; // Ensure array is empty on error
+                    this.captureError(error, { operation: 'loadDeletedItems' });
+                    if (error.message.includes('Not Implemented')) {
+                        this.addNotification('warning', 'Soft delete listing is not yet implemented for the current storage backend');
+                    } else {
+                        this.addNotification('error', 'Failed to load deleted items. This feature requires soft delete to be enabled.');
+                    }
+                    this.showDeletedItems = false;
+                } finally {
+                    this.loadingDeleted = false;
+                }
+            },
+
+            async restoreFile(file) {
+                if (!confirm(`Restore ${file.Key}?`)) return;
+                
+                try {
+                    // Send restore request to backend
+                    const response = await fetch(`/${file.Key}?restore=true&versionId=${file.VersionId || ''}`, {
+                        method: 'POST',
+                        headers: this.getAuthHeaders()
+                    });
+                    
+                    if (response.ok) {
+                        this.addNotification('success', `${file.Key} restored successfully`);
+                        // Reload the lists
+                        await Promise.all([
+                            this.loadContents(),
+                            this.loadDeletedItems()
+                        ]);
+                    } else {
+                        throw new Error('Failed to restore file');
+                    }
+                } catch (error) {
+                    this.captureError(error, { operation: 'restoreFile', file: file.Key });
+                    alert(`Failed to restore ${file.Key}`);
+                }
+            },
+
+            formatRelativeTime(dateString) {
+                if (!dateString) return '';
+                const date = new Date(dateString);
+                const now = new Date();
+                const diff = now - date;
+                
+                const minutes = Math.floor(diff / 60000);
+                const hours = Math.floor(diff / 3600000);
+                const days = Math.floor(diff / 86400000);
+                
+                if (minutes < 60) return `${minutes}m ago`;
+                if (hours < 24) return `${hours}h ago`;
+                return `${days}d ago`;
             },
 
             async loadContents() {
@@ -1975,7 +2562,7 @@
                     this.directories.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
                     
                     // Check if this is an Iceberg table directory
-                    this.isIcebergTable = this.icebergParser.isIcebergTablePath(this.currentPath);
+                    this.isIcebergTable = this.icebergParser ? this.icebergParser.isIcebergTablePath(this.currentPath) : false;
                     
                     // Parse files
                     this.files = [];
@@ -2084,7 +2671,7 @@
                         headers: this.getAuthHeaders()
                     });
                     
-                    if (response.ok) {
+                    if (response.ok && this.selectedFile) {
                         // Extract metadata from headers
                         this.selectedFile.metadata = {
                             contentType: response.headers.get('Content-Type') || 'application/octet-stream',
@@ -2106,7 +2693,7 @@
                 }
                 
                 // Check if this is an Iceberg metadata file
-                if (this.icebergParser.isIcebergMetadata(file.Key)) {
+                if (this.icebergParser && this.icebergParser.isIcebergMetadata(file.Key)) {
                     try {
                         // Need to prepend bucket to file key
                         const fullPath = this.selectedBucket + '/' + file.Key;
@@ -2143,16 +2730,19 @@
                 }
                 
                 try {
-                    // file.Key contains path but not bucket, need to prepend bucket
-                    const bucket = this.selectedBucket || this.currentBucket;
+                    // Get the bucket name
+                    const bucket = this.selectedBucket;
                     if (!bucket) {
                         throw new Error('No bucket selected');
                     }
+                    
+                    // file.Key in selectedFile context doesn't include bucket
+                    // Construct the full path
                     const fullKey = bucket + '/' + file.Key;
                     
                     // Construct proper delete URL with encoding
                     const deleteUrl = '/' + fullKey.split('/').map(segment => encodeURIComponent(segment)).join('/');
-                    console.log('Deleting file:', file.Key, 'from bucket:', bucket, 'URL:', deleteUrl);
+                    console.log('Deleting file:', file.Key, 'Bucket:', bucket, 'Full path:', fullKey, 'URL:', deleteUrl);
                     
                     const response = await fetch(deleteUrl, {
                         method: 'DELETE',
@@ -2512,7 +3102,13 @@
             },
 
             async deleteSelected() {
-                if (!confirm(`Are you sure you want to delete ${this.selectedItems.dirs.length + this.selectedItems.files.length} items?`)) {
+                const itemCount = this.selectedItems.dirs.length + this.selectedItems.files.length;
+                const provider = this.selectedBucket?.startsWith('azure-') ? 'Azure' : 'S3';
+                const message = provider === 'Azure' 
+                    ? `Are you sure you want to delete ${itemCount} item(s)?\n\nWith soft delete enabled, these items can be restored from the recycle bin.`
+                    : `Are you sure you want to delete ${itemCount} item(s)?\n\nThis action cannot be undone.`;
+                    
+                if (!confirm(message)) {
                     return;
                 }
 
@@ -2521,9 +3117,15 @@
                 // Delete files
                 for (const fileKey of this.selectedItems.files) {
                     try {
-                        // fileKey already contains the full path from S3 listing
-                        const deleteUrl = '/' + fileKey.split('/').map(segment => encodeURIComponent(segment)).join('/');
-                        console.log('Deleting file:', fileKey, 'URL:', deleteUrl);
+                        // Check if fileKey includes bucket prefix
+                        let fullKey = fileKey;
+                        if (!fileKey.startsWith(this.selectedBucket + '/')) {
+                            // Add bucket prefix if not present
+                            fullKey = this.selectedBucket + '/' + fileKey;
+                        }
+                        
+                        const deleteUrl = '/' + fullKey.split('/').map(segment => encodeURIComponent(segment)).join('/');
+                        console.log('Deleting file:', fileKey, 'Full key:', fullKey, 'URL:', deleteUrl);
                         
                         const response = await fetch(deleteUrl, {
                             method: 'DELETE',

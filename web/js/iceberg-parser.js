@@ -89,7 +89,7 @@ class IcebergMetadataParser {
         };
         
         return colors[color] && colors[color][shade] || '#6b7280'; // Default to gray
-    },
+    }
 
     // Get file type and metadata
     getFileTypeInfo(key) {
