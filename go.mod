@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.16
 	github.com/aws/aws-sdk-go-v2/service/kms v1.40.1
 	github.com/getsentry/sentry-go v0.35.3
+	github.com/getsentry/sentry-go/slog v0.35.3
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/sessions v1.4.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
@@ -24,13 +25,10 @@ require (
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/crypto v0.41.0
 	golang.org/x/time v0.11.0
+	gopkg.in/square/go-jose.v2 v2.6.0
 )
 
-require (
-	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.1 // indirect
-	github.com/getsentry/sentry-go/logrus v0.35.3 // indirect
-	github.com/getsentry/sentry-go/slog v0.35.3 // indirect
-)
+require github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.1 // indirect
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.2
