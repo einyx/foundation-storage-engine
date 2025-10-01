@@ -196,7 +196,7 @@ func (s *Server) setSecurityHeaders(w http.ResponseWriter) {
 
 	// Content Security Policy - restrictive by default
 	// Allow self for scripts/styles, data: for images (base64), and 'unsafe-inline' for styles (needed by some UI frameworks)
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none';")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com https://browser.sentry-cdn.com https://*.sentry.io; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.sentry.io; frame-src 'self' https://*.sentry.io; frame-ancestors 'none';")
 
 	// Referrer Policy - don't leak referrer information
 	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -466,6 +466,7 @@ func (s *Server) uiHandler() http.Handler {
 			// Add version timestamp for cache busting
 			version := fmt.Sprintf("%d", time.Now().Unix())
 			html = strings.ReplaceAll(html, "alpinejs@3.x.x/dist/cdn.min.js", "alpinejs@3.x.x/dist/cdn.min.js?v="+version)
+			html = strings.ReplaceAll(html, "{{VERSION}}", version)
 			
 			// Set content type and cache headers
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -480,7 +481,12 @@ func (s *Server) uiHandler() http.Handler {
 			return
 		}
 		
-		// For non-HTML files, serve them directly
+		// For non-HTML files, add cache headers for JS/CSS files
+		if strings.HasSuffix(r.URL.Path, ".js") || strings.HasSuffix(r.URL.Path, ".css") {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+		}
 		fileServer.ServeHTTP(w, r)
 	})
 }

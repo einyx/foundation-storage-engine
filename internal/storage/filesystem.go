@@ -661,3 +661,14 @@ func (fs *FileSystemBackend) ListParts(ctx context.Context, bucket, key, uploadI
 	result.IsTruncated = count >= maxParts
 	return result, nil
 }
+
+
+// ListDeletedObjects is not implemented for filesystem backend
+func (f *FileSystemBackend) ListDeletedObjects(ctx context.Context, bucket, prefix, marker string, maxKeys int) (*ListObjectsResult, error) {
+	return nil, fmt.Errorf("soft delete listing is not implemented for filesystem backend")
+}
+
+// RestoreObject is not implemented for filesystem backend
+func (f *FileSystemBackend) RestoreObject(ctx context.Context, bucket, key, versionID string) error {
+	return fmt.Errorf("soft delete restore is not implemented for filesystem backend")
+}

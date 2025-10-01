@@ -1785,3 +1785,14 @@ func (s *S3Backend) putObjectMultipartResilient(ctx context.Context, bucket, key
 	
 	return nil
 }
+
+
+// ListDeletedObjects is not implemented for S3 backend
+func (s *S3Backend) ListDeletedObjects(ctx context.Context, bucket, prefix, marker string, maxKeys int) (*ListObjectsResult, error) {
+	return nil, fmt.Errorf("soft delete listing is not implemented for S3 backend")
+}
+
+// RestoreObject is not implemented for S3 backend
+func (s *S3Backend) RestoreObject(ctx context.Context, bucket, key, versionID string) error {
+	return fmt.Errorf("soft delete restore is not implemented for S3 backend")
+}

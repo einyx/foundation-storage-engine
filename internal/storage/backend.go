@@ -18,9 +18,11 @@ type Backend interface {
 
 	ListObjects(ctx context.Context, bucket, prefix, marker string, maxKeys int) (*ListObjectsResult, error)
 	ListObjectsWithDelimiter(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (*ListObjectsResult, error)
+	ListDeletedObjects(ctx context.Context, bucket, prefix, marker string, maxKeys int) (*ListObjectsResult, error)
 	GetObject(ctx context.Context, bucket, key string) (*Object, error)
 	PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64, metadata map[string]string) error
 	DeleteObject(ctx context.Context, bucket, key string) error
+	RestoreObject(ctx context.Context, bucket, key, versionID string) error
 	HeadObject(ctx context.Context, bucket, key string) (*ObjectInfo, error)
 
 	GetObjectACL(ctx context.Context, bucket, key string) (*ACL, error)
