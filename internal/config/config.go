@@ -53,13 +53,20 @@ type UIConfig struct {
 
 // Auth0Config contains Auth0 configuration settings
 type Auth0Config struct {
-	Enabled      bool   `mapstructure:"enabled" envconfig:"AUTH0_ENABLED" default:"false"`
-	Domain       string `mapstructure:"domain" envconfig:"AUTH0_DOMAIN"`
-	ClientID     string `mapstructure:"client_id" envconfig:"AUTH0_CLIENT_ID"`
-	ClientSecret string `mapstructure:"client_secret" envconfig:"AUTH0_CLIENT_SECRET"`
-	RedirectURI  string `mapstructure:"redirect_uri" envconfig:"AUTH0_REDIRECT_URI" default:"/api/auth/callback"`
-	LogoutURI    string `mapstructure:"logout_uri" envconfig:"AUTH0_LOGOUT_URI" default:"/ui/login.html"`
-	SessionKey   string `mapstructure:"session_key" envconfig:"AUTH0_SESSION_KEY"`
+	Enabled           bool              `mapstructure:"enabled" envconfig:"AUTH0_ENABLED" default:"false"`
+	Domain            string            `mapstructure:"domain" envconfig:"AUTH0_DOMAIN"`
+	ClientID          string            `mapstructure:"client_id" envconfig:"AUTH0_CLIENT_ID"`
+	ClientSecret      string            `mapstructure:"client_secret" envconfig:"AUTH0_CLIENT_SECRET"`
+	RedirectURI       string            `mapstructure:"redirect_uri" envconfig:"AUTH0_REDIRECT_URI" default:"/api/auth/callback"`
+	LogoutURI         string            `mapstructure:"logout_uri" envconfig:"AUTH0_LOGOUT_URI" default:"/ui/login.html"`
+	SessionKey        string            `mapstructure:"session_key" envconfig:"AUTH0_SESSION_KEY"`
+	Audience          string            `mapstructure:"audience" envconfig:"AUTH0_AUDIENCE"`
+	Scopes            []string          `mapstructure:"scopes" envconfig:"AUTH0_SCOPES" default:"openid,profile,email"`
+	JWTValidation     bool              `mapstructure:"jwt_validation" envconfig:"AUTH0_JWT_VALIDATION" default:"true"`
+	PermissionMapping map[string]string `mapstructure:"permission_mapping"`
+	SessionTimeout    time.Duration     `mapstructure:"session_timeout" envconfig:"AUTH0_SESSION_TIMEOUT" default:"24h"`
+	TokenCacheTTL     time.Duration     `mapstructure:"token_cache_ttl" envconfig:"AUTH0_TOKEN_CACHE_TTL" default:"5m"`
+	EnablePKCE        bool              `mapstructure:"enable_pkce" envconfig:"AUTH0_ENABLE_PKCE" default:"true"`
 }
 
 // StorageConfig specifies the storage backend configuration

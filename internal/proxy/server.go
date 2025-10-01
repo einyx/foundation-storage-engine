@@ -24,6 +24,24 @@ import (
 	"github.com/einyx/foundation-storage-engine/pkg/s3"
 )
 
+// responseRecorder captures HTTP response for debugging
+type responseRecorder struct {
+	http.ResponseWriter
+	statusCode int
+	body       *strings.Builder
+}
+
+func (r *responseRecorder) WriteHeader(statusCode int) {
+	r.statusCode = statusCode
+	// Don't write header yet - we'll do it manually later
+}
+
+func (r *responseRecorder) Write(b []byte) (int, error) {
+	r.body.Write(b)
+	// Don't write to the underlying ResponseWriter here - we'll do it manually later
+	return len(b), nil
+}
+
 type Server struct {
 	config           *config.Config
 	storage          storage.Backend
@@ -257,6 +275,7 @@ func (s *Server) setupRoutes() {
 		s.router.HandleFunc("/api/auth/callback", s.auth0.CallbackHandler).Methods("GET")
 		s.router.HandleFunc("/api/auth/logout", s.auth0.LogoutHandler).Methods("GET")
 		s.router.HandleFunc("/api/auth/userinfo", s.auth0.UserInfoHandler).Methods("GET")
+		s.router.HandleFunc("/api/auth/status", s.auth0.AuthStatusHandler).Methods("GET")
 	}
 
 	// Register auth validation endpoint
@@ -274,17 +293,44 @@ func (s *Server) setupRoutes() {
 		logrus.WithFields(logrus.Fields{
 			"basePath":   s.config.UI.BasePath,
 			"staticPath": s.config.UI.StaticPath,
+			"auth0":      s.config.Auth0.Enabled,
 		}).Info("Web UI enabled")
 
-		// Serve static files from the UI path with HTML processing for env vars
-		s.router.PathPrefix(s.config.UI.BasePath + "/").Handler(
-			http.StripPrefix(s.config.UI.BasePath, s.uiHandler()),
-		).Methods("GET")
+		if s.config.Auth0.Enabled && s.auth0 != nil {
+			// Serve secure UI with Auth0 authentication
+			s.router.HandleFunc(s.config.UI.BasePath, s.auth0.SecureUIHandler).Methods("GET")
+			s.router.HandleFunc(s.config.UI.BasePath+"/", s.auth0.SecureUIHandler).Methods("GET")
+			
+			// Block unsafe static files that bypass auth
+			s.router.HandleFunc(s.config.UI.BasePath + "/login.html", func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "/api/auth/login", http.StatusTemporaryRedirect)
+			}).Methods("GET")
+			s.router.HandleFunc(s.config.UI.BasePath + "/index.html", func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, s.config.UI.BasePath, http.StatusTemporaryRedirect)
+			}).Methods("GET")
+			
+			// Protected static assets - these should be served without auth middleware
+			// but the session check will happen on the main UI pages that load these assets
+			s.router.PathPrefix(s.config.UI.BasePath + "/js/").Handler(
+				http.StripPrefix(s.config.UI.BasePath, s.uiHandler()),
+			).Methods("GET")
+			s.router.PathPrefix(s.config.UI.BasePath + "/css/").Handler(
+				http.StripPrefix(s.config.UI.BasePath, s.uiHandler()),
+			).Methods("GET")
+			s.router.HandleFunc(s.config.UI.BasePath + "/browser.html", s.auth0.RequireUIAuth(s.uiHandler().ServeHTTP)).Methods("GET")
 
-		// Redirect /ui to /ui/
-		s.router.HandleFunc(s.config.UI.BasePath, func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, s.config.UI.BasePath+"/", http.StatusMovedPermanently)
-		}).Methods("GET")
+			logrus.Info("UI protected with Auth0 authentication")
+		} else {
+			// Serve UI without authentication
+			s.router.PathPrefix(s.config.UI.BasePath + "/").Handler(
+				http.StripPrefix(s.config.UI.BasePath, s.uiHandler()),
+			).Methods("GET")
+
+			// Redirect /ui to /ui/
+			s.router.HandleFunc(s.config.UI.BasePath, func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, s.config.UI.BasePath+"/", http.StatusMovedPermanently)
+			}).Methods("GET")
+		}
 	}
 
 	// Handle common web files that should not be treated as S3 buckets
@@ -296,10 +342,11 @@ func (s *Server) setupRoutes() {
 	}
 
 	// Register S3 bucket operations (must be after monitoring endpoints and UI)
+	// Exclude /api/ paths to prevent conflicts with Auth0 and other API routes
 	s.router.HandleFunc("/", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
-	s.router.HandleFunc("/{bucket}", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
-	s.router.HandleFunc("/{bucket}/", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
-	s.router.HandleFunc("/{bucket}/{key:.+}", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+	s.router.HandleFunc("/{bucket:(?!api$)[^/]+}", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+	s.router.HandleFunc("/{bucket:(?!api$)[^/]+}/", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+	s.router.HandleFunc("/{bucket:(?!api$)[^/]+}/{key:.+}", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
 }
 
 func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
@@ -334,21 +381,25 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 
 	logrus.WithFields(logrus.Fields{
 		"path":                r.URL.Path,
+		"method":              r.Method,
 		"authType":            s.config.Auth.Type,
 		"hasAuth":             r.Header.Get("Authorization") != "",
 		"contentLength":       r.ContentLength,
 		"contentLengthHeader": r.Header.Get("Content-Length"),
-	}).Debug("handleS3Request called")
+		"userAgent":           r.Header.Get("User-Agent"),
+		"accept":              r.Header.Get("Accept"),
+	}).Info("S3 request received")
 
 	if s.config.Auth.Type != "none" {
-		// Allow unauthenticated access to UI static files and API documentation
-		// These paths are public and don't contain sensitive data
+		// Allow unauthenticated access to monitoring endpoints and docs
+		// UI access is now handled by Auth0 middleware in setupRoutes
 		isPublicPath := false
-		if s.config.UI.Enabled && strings.HasPrefix(r.URL.Path, s.config.UI.BasePath+"/") {
-			isPublicPath = true
-		} else if strings.HasPrefix(r.URL.Path, "/docs/") {
+		if strings.HasPrefix(r.URL.Path, "/docs/") {
 			isPublicPath = true
 		} else if r.URL.Path == "/health" || r.URL.Path == "/metrics" || r.URL.Path == "/stats" {
+			isPublicPath = true
+		} else if strings.HasPrefix(r.URL.Path, "/api/auth/") {
+			// Auth0 endpoints should be public
 			isPublicPath = true
 		}
 
@@ -414,7 +465,12 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 		"method":              r.Method,
 	}).Debug("Passing to S3 handler")
 
-	// Pass to S3 handler
+	// Add CORS headers for all S3 requests
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Amz-*")
+	
+	// Pass to S3 handler normally (no more duplicate response)
 	s.s3Handler.ServeHTTP(w, r)
 }
 

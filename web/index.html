@@ -2106,12 +2106,24 @@
             },
 
             isAuthenticated() {
+                // Check safeguard flags first
+                if (window.AUTH0_AUTHENTICATED || window.AUTH_USER) {
+                    console.log('Auth safeguard: Already authenticated via Auth0');
+                    return true;
+                }
+                
                 return localStorage.getItem('s3_auth_token') || 
                        localStorage.getItem('auth_token') || 
                        this.checkAuth0();
             },
 
             checkAuth0() {
+                // Check safeguard flags first  
+                if (window.AUTH0_AUTHENTICATED || window.AUTH_USER) {
+                    console.log('Auth safeguard: Auth0 session confirmed by server');
+                    return true;
+                }
+                
                 // Check for Auth0 session cookie
                 const cookies = document.cookie.split(';');
                 for (let cookie of cookies) {
@@ -2132,7 +2144,38 @@
             },
 
             async loadUserInfo() {
-                // Check for basic auth token first
+                // First check for Auth0 user data injected by server
+                if (window.AUTH_USER) {
+                    try {
+                        console.log('Loading user info from Auth0 injection:', window.AUTH_USER);
+                        this.userEmail = window.AUTH_USER.email || 'user@example.com';
+                        this.userName = window.AUTH_USER.name || this.userEmail.split('@')[0];
+                        
+                        // Generate initials from name
+                        const nameParts = this.userName.split(' ');
+                        if (nameParts.length >= 2) {
+                            this.userInitials = nameParts[0][0] + nameParts[nameParts.length - 1][0];
+                        } else {
+                            this.userInitials = this.userName.substring(0, 2);
+                        }
+                        this.userInitials = this.userInitials.toUpperCase();
+                        
+                        // Store in localStorage for Sentry context
+                        localStorage.setItem('userEmail', this.userEmail);
+                        localStorage.setItem('userName', this.userName);
+                        
+                        console.log('Auth0 user info loaded:', {
+                            name: this.userName,
+                            email: this.userEmail,
+                            initials: this.userInitials
+                        });
+                        return;
+                    } catch (error) {
+                        console.error('Error loading Auth0 user info:', error);
+                    }
+                }
+                
+                // Fallback: Check for basic auth token
                 const authToken = localStorage.getItem('auth_token');
                 if (authToken) {
                     try {
@@ -2145,7 +2188,7 @@
                     } catch (e) {}
                 }
                 
-                // Check for Auth0 and fetch user info
+                // Fallback: Try Auth0 API endpoint
                 if (this.checkAuth0()) {
                     try {
                         const response = await fetch('/api/auth/userinfo', {
@@ -2283,10 +2326,18 @@
             },
 
             async loadBuckets() {
+                console.log('loadBuckets called - starting bucket loading...');
                 this.bucketsLoading = true;
                 try {
+                    console.log('Making request to / for bucket list...');
                     const response = await fetch('/', {
                         headers: this.getAuthHeaders()
+                    });
+                    
+                    console.log('Bucket response received:', {
+                        status: response.status,
+                        statusText: response.statusText,
+                        headers: [...response.headers.entries()]
                     });
                     
                     if (!response.ok) {
@@ -2294,21 +2345,34 @@
                     }
                     
                     const text = await response.text();
+                    console.log('Bucket response text length:', text.length);
+                    console.log('Bucket response preview:', text.substring(0, 500));
+                    
                     const parser = new DOMParser();
                     const xml = parser.parseFromString(text, 'text/xml');
+                    console.log('Parsed XML document:', xml);
                     
                     this.buckets = [];
-                    const bucketNodes = xml.querySelectorAll('Bucket > Name');
-                    bucketNodes.forEach(node => {
-                        this.buckets.push(node.textContent);
+                    const bucketNodes = xml.querySelectorAll('Buckets > Bucket > Name');
+                    console.log('Found bucket nodes:', bucketNodes.length);
+                    
+                    bucketNodes.forEach((node, index) => {
+                        const bucketName = node.textContent;
+                        console.log(`Bucket ${index + 1}:`, bucketName);
+                        this.buckets.push(bucketName);
                     });
+                    
+                    console.log('Final buckets array:', this.buckets);
                     
                     // Sort buckets alphabetically
                     this.buckets.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+                    console.log('Sorted buckets:', this.buckets);
                 } catch (err) {
+                    console.error('Error loading buckets:', err);
                     this.captureError(err, { operation: 'loadBuckets' });
                 } finally {
                     this.bucketsLoading = false;
+                    console.log('loadBuckets finished, bucketsLoading set to false');
                 }
             },
 
