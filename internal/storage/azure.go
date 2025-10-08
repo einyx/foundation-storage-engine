@@ -325,6 +325,15 @@ func (a *AzureBackend) ListObjects(ctx context.Context, bucket, prefix, marker s
 }
 
 func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (*ListObjectsResult, error) {
+	start := time.Now()
+	logrus.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"prefix": prefix,
+		"marker": marker,
+		"delimiter": delimiter,
+		"maxKeys": maxKeys,
+	}).Info("Azure ListObjectsWithDelimiter started")
+	
 	result := &ListObjectsResult{
 		CommonPrefixes: []string{},
 		Contents:       []ObjectInfo{},
@@ -618,6 +627,15 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 			}
 		}
 	}
+
+	duration := time.Since(start)
+	logrus.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"prefix": prefix,
+		"resultCount": len(result.Contents),
+		"duration": duration,
+		"isTruncated": result.IsTruncated,
+	}).Info("Azure ListObjectsWithDelimiter completed")
 
 	return result, nil
 }
@@ -1032,18 +1050,94 @@ func (a *AzureBackend) RestoreObject(ctx context.Context, bucket, key, versionID
 }
 
 func (a *AzureBackend) HeadObject(ctx context.Context, bucket, key string) (*ObjectInfo, error) {
+	start := time.Now()
+	logrus.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    key,
+		"method": "HeadObject",
+	}).Debug("Azure HeadObject started")
+
 	// Handle directory-like objects
 	normalizedKey := key
 	if strings.HasSuffix(key, "/") && key != "/" {
 		normalizedKey = strings.TrimSuffix(key, "/") + directoryMarkerSuffix
 	}
 
+	// For potential directory checks, try optimized list approach first
+	if strings.Contains(key, "/") || strings.HasSuffix(key, "/") {
+		// Use list operation with MaxResults=1 for faster directory existence check
+		containerClient := a.client.ServiceClient().NewContainerClient(bucket)
+		
+		listOpts := &container.ListBlobsFlatOptions{
+			Prefix: &key,
+			MaxResults: func() *int32 { 
+				one := int32(1)
+				return &one 
+			}(),
+		}
+		
+		pager := containerClient.NewListBlobsFlatPager(listOpts)
+		if pager.More() {
+			page, err := pager.NextPage(ctx)
+			if err == nil && len(page.Segment.BlobItems) > 0 {
+				// Found the exact key, use it
+				blob := page.Segment.BlobItems[0]
+				if *blob.Name == key || *blob.Name == normalizedKey {
+					duration := time.Since(start)
+					logrus.WithFields(logrus.Fields{
+						"bucket": bucket,
+						"key":    key,
+						"duration": duration,
+						"method": "list_optimization",
+					}).Debug("Azure HeadObject completed via list optimization")
+
+					// Get metadata
+					metadata := make(map[string]string)
+					if blob.Metadata != nil {
+						metadata = desanitizeAzureMetadata(blob.Metadata)
+					}
+
+					// Use stored MD5 hash as ETag for S3 compatibility
+					etag := string(*blob.Properties.ETag)
+					if md5Hash, exists := metadata[metadataKeyMD5]; exists {
+						etag = fmt.Sprintf("\"%s\"", md5Hash)
+					}
+
+					return &ObjectInfo{
+						Key:          key,
+						Size:         *blob.Properties.ContentLength,
+						ETag:         etag,
+						LastModified: *blob.Properties.LastModified,
+						Metadata:     metadata,
+					}, nil
+				}
+			}
+		}
+	}
+
+	// Fall back to direct blob property lookup
 	blobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlobClient(normalizedKey)
 	
 	props, err := blobClient.GetProperties(ctx, nil)
 	if err != nil {
+		duration := time.Since(start)
+		logrus.WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key":    key,
+			"normalizedKey": normalizedKey,
+			"duration": duration,
+			"error": err.Error(),
+		}).Debug("Azure HeadObject failed")
 		return nil, wrapAzureError("get blob properties", bucket, normalizedKey, err)
 	}
+
+	duration := time.Since(start)
+	logrus.WithFields(logrus.Fields{
+		"bucket": bucket,
+		"key":    key,
+		"duration": duration,
+		"method": "direct_properties",
+	}).Debug("Azure HeadObject completed via direct properties")
 
 	// Get metadata
 	metadata := make(map[string]string)

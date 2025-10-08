@@ -1264,6 +1264,23 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 					"decodedSize":  decodedSize,
 				}).Debug("Using x-amz-decoded-content-length for actual content size")
 				size = decodedSize
+				
+				// Update logger with corrected size
+				logger = logrus.WithFields(logrus.Fields{
+					"bucket": bucket,
+					"key":    key,
+					"size":   size,
+					"contentLengthHeader": r.Header.Get("Content-Length"),
+					"decodedContentLength": r.Header.Get("X-Amz-Decoded-Content-Length"),
+					"transferEncoding": r.Header.Get("Transfer-Encoding"),
+					"method": r.Method,
+					"requestID": requestID,
+					"isChunkedWithoutSize": isChunkedWithoutSize,
+					"userAgent": userAgent,
+					"isSDKv1": isSDKv1,
+					"isJavaClient": isJavaClient,
+					"contentMD5": r.Header.Get("Content-MD5"),
+				})
 			}
 		}
 	}
@@ -1273,7 +1290,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		etag = "\"d41d8cd98f00b204e9800998ecf8427e\""
 	} else if isChunkedWithoutSize {
 		// For Trino, we should NOT buffer - it causes timeouts
-		// CRITICAL FIX: Always buffer Iceberg metadata files regardless of client
+		// Always buffer Iceberg metadata files regardless of client  
 		// Metadata files are small but critical - they must be written atomically
 		isIcebergMetadata := strings.Contains(key, "metadata") && strings.HasSuffix(key, ".json")
 		
@@ -1319,19 +1336,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			body = bytes.NewReader(data)
 		}
 	} else if size > 0 && size <= smallFileLimit {
-		// CRITICAL FIX: For chunked AWS V4 streaming, use the decoded size
 		actualSize := size
-		if decodedLengthHeader := r.Header.Get("X-Amz-Decoded-Content-Length"); decodedLengthHeader != "" {
-			if decodedLength, err := strconv.ParseInt(decodedLengthHeader, 10, 64); err == nil && decodedLength != size {
-				// Use decoded size for chunked data
-				actualSize = decodedLength
-				logger.WithFields(logrus.Fields{
-					"originalSize": size,
-					"decodedSize": actualSize,
-					"key": key,
-				}).Info("Using decoded size for AWS V4 streaming data")
-			}
-		}
 		
 		bufPtr := smallBufferPool.Get().(*[]byte)
 		buf := *bufPtr
@@ -1359,8 +1364,29 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		etag = fmt.Sprintf("\"%s\"", hex.EncodeToString(hash[:]))
 		body = bytes.NewReader(buf)
 		
-		// Update size to match actual content size
+		// Update size to match actual content size  
+		oldSize := size
 		size = actualSize
+		
+		// Update logger with corrected size for accurate response logging
+		if actualSize != oldSize {
+			logger = logrus.WithFields(logrus.Fields{
+				"bucket": bucket,
+				"key": key,
+				"size": actualSize,
+				"originalSize": oldSize,
+				"contentLengthHeader": r.Header.Get("Content-Length"),
+				"decodedContentLength": r.Header.Get("X-Amz-Decoded-Content-Length"),
+				"transferEncoding": r.Header.Get("Transfer-Encoding"),
+				"method": r.Method,
+				"requestID": requestID,
+				"isChunkedWithoutSize": isChunkedWithoutSize,
+				"userAgent": userAgent,
+				"isSDKv1": isSDKv1,
+				"isJavaClient": isJavaClient,
+				"contentMD5": r.Header.Get("Content-MD5"),
+			})
+		}
 	}
 
 	var metadata map[string]string
@@ -1544,9 +1570,57 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		"isAzure": strings.Contains(strings.ToLower(userAgent), "azure"),
 	}).Info("Upload completed successfully, about to send response")
 	
+	// Special handling for Trino and Hive clients (which use Java AWS SDK)
+	if strings.Contains(strings.ToLower(userAgent), "trino") || 
+	   (strings.Contains(strings.ToLower(userAgent), "java") && strings.Contains(userAgent, "app/Trino")) ||
+	   strings.Contains(strings.ToLower(userAgent), "hive") ||
+	   strings.Contains(strings.ToLower(userAgent), "hadoop") ||
+	   strings.Contains(strings.ToLower(userAgent), "s3a") {
+		
+		// Remove all checksum headers that might cause validation issues
+		w.Header().Del("x-amz-checksum-crc32")
+		w.Header().Del("x-amz-checksum-crc32c") 
+		w.Header().Del("x-amz-checksum-sha1")
+		w.Header().Del("x-amz-checksum-sha256")
+		w.Header().Del("x-amz-sdk-checksum-algorithm")
+		w.Header().Del("Content-MD5")
+		
+		// Set minimal AWS S3 PUT response headers (exactly like real S3)
+		w.Header().Set("ETag", etag)
+		w.Header().Set("x-amz-request-id", requestID)
+		w.Header().Set("x-amz-id-2", fmt.Sprintf("S3/%s", requestID))
+		w.Header().Set("Server", "AmazonS3")
+		w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
+		
+		// CRITICAL: Set Content-Length to 0 for empty body
+		w.Header().Set("Content-Length", "0")
+		
+		// Force connection close to prevent client hanging
+		w.Header().Set("Connection", "close")
+		
+		// Send 200 OK
+		w.WriteHeader(http.StatusOK)
+		
+		// Force flush immediately
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		
+		logger.WithFields(logrus.Fields{
+			"bucket": bucket,
+			"key": key,
+			"etag": etag,
+			"requestID": requestID,
+			"client": "java_sdk",
+			"userAgent": userAgent,
+		}).Info("Sent minimal S3 PUT response for Java SDK client")
+		
+		return
+	}
+	
 	// Special handling for Azure clients
-	if strings.Contains(strings.ToLower(userAgent), "azure") || strings.Contains(strings.ToLower(userAgent), "java") {
-		// Azure SDK and Java clients need specific response handling
+	if strings.Contains(strings.ToLower(userAgent), "azure") {
+		// Azure SDK clients need specific response handling
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Content-Length", "0")
 		w.Header().Set("x-amz-request-id", requestID)
@@ -1566,7 +1640,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			"key": key,
 			"etag": etag,
 			"requestID": requestID,
-			"client": "azure/java",
+			"client": "azure",
 		}).Info("Sent Azure-optimized response")
 		
 		return
@@ -1642,6 +1716,11 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		}
 		
 		w.WriteHeader(http.StatusOK)
+		
+		// Force immediate flush for Java clients (including Trino)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
 
 		logger.WithFields(logrus.Fields{
 			"bucket": bucket,
@@ -1747,9 +1826,13 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 		logger.Info("HEAD request received")
 	}
 
+	start := time.Now()
 	info, err := h.storage.HeadObject(ctx, bucket, key)
+	duration := time.Since(start)
 	if err != nil {
-		logger.WithError(err).Info("HEAD request failed - returning 404")
+		logger.WithFields(logrus.Fields{
+			"duration": duration,
+		}).WithError(err).Info("HEAD request failed - returning 404")
 		h.sendError(w, err, http.StatusNotFound)
 		return
 	}
@@ -1757,6 +1840,9 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 	logger.WithFields(logrus.Fields{
 		"size": info.Size,
 		"etag": info.ETag,
+		"lastModified": info.LastModified,
+		"contentType": info.ContentType,
+		"duration": duration,
 	}).Info("HEAD request succeeded - returning object info")
 
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
@@ -1790,7 +1876,34 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 	// Also remove SDK v1 checksum headers
 	w.Header().Del("Content-MD5")
 
+	// Special handling for Java SDK clients (Trino, Hive, Hadoop)
+	userAgent := r.Header.Get("User-Agent")
+	if strings.Contains(strings.ToLower(userAgent), "trino") || 
+	   (strings.Contains(strings.ToLower(userAgent), "java") && strings.Contains(userAgent, "app/Trino")) ||
+	   strings.Contains(strings.ToLower(userAgent), "hive") ||
+	   strings.Contains(strings.ToLower(userAgent), "hadoop") ||
+	   strings.Contains(strings.ToLower(userAgent), "s3a") {
+		
+		// Force connection close to prevent client hanging
+		w.Header().Set("Connection", "close")
+		
+		// Set AWS S3 headers for compatibility
+		w.Header().Set("Server", "AmazonS3")
+		w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
+		
+		logger.WithFields(logrus.Fields{
+			"userAgent": userAgent,
+			"bucket": bucket,
+			"key": key,
+		}).Info("Applied Java SDK optimizations for HEAD request")
+	}
+
 	w.WriteHeader(http.StatusOK)
+	
+	// Force immediate flush for HEAD responses to prevent client hangs
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request, bucket string) {
