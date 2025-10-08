@@ -7,9 +7,9 @@ import (
 
 
 // ServeSwaggerUI returns an HTTP handler for Swagger UI without embedded files
-func ServeSwaggerUI(openAPISpec []byte) http.HandlerFunc {
+func ServeSwaggerUI(openAPISpec []byte, basePath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/docs")
+		path := strings.TrimPrefix(r.URL.Path, basePath)
 		
 		// Serve the OpenAPI spec
 		if path == "/openapi.yaml" || path == "/openapi.json" || path == "/spec" {
@@ -43,7 +43,7 @@ func ServeSwaggerUI(openAPISpec []byte) http.HandlerFunc {
     <script>
         window.onload = function() {
             window.ui = SwaggerUIBundle({
-                url: "/docs/openapi.yaml",
+                url: "` + basePath + `/openapi.yaml",
                 dom_id: '#swagger-ui',
                 deepLinking: true,
                 presets: [

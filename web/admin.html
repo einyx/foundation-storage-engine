@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Foundation Storage - Group/Role Management</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body class="bg-gray-50">
+    <div x-data="groupRoleManager" class="min-h-screen">
+        <!-- Header -->
+        <nav class="bg-white shadow">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between h-16">
+                    <div class="flex items-center">
+                        <h1 class="text-xl font-semibold">Azure AD Group/Role Management</h1>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <span class="text-sm text-gray-500" x-text="userEmail"></span>
+                        <a href="/ui" class="text-sm text-blue-600 hover:text-blue-800">Back to Storage</a>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <div class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+            <!-- Help Section -->
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                <div class="flex">
+                    <svg class="h-5 w-5 text-blue-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                    </svg>
+                    <div class="text-sm text-blue-800">
+                        <p class="font-medium mb-1">How to set up Azure AD group mappings:</p>
+                        <ol class="list-decimal list-inside space-y-1 text-blue-700">
+                            <li>Click "Discover My AD Groups" to see all your Azure AD groups</li>
+                            <li>Select a group and click "Quick Map" to start mapping it</li>
+                            <li>Choose the appropriate roles for each group</li>
+                            <li>Groups mapped to roles will automatically grant permissions to their members</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Your AD Groups Section -->
+            <div class="bg-white shadow rounded-lg p-6 mb-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-lg font-medium">Your Azure AD Groups</h2>
+                    <button @click="discoverGroups" 
+                            :class="loading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'"
+                            :disabled="loading"
+                            class="text-white px-4 py-2 rounded text-sm font-medium transition-colors">
+                        <span x-show="!loading">Discover My AD Groups</span>
+                        <span x-show="loading">Loading...</span>
+                    </button>
+                </div>
+                
+                <div x-show="azureGroups.length === 0 && !loading" class="text-gray-500 text-center py-8">
+                    Click "Discover My AD Groups" to see your Azure AD group memberships
+                </div>
+                
+                <div x-show="azureGroups.length > 0" class="space-y-3">
+                    <template x-for="group in azureGroups" :key="group">
+                        <div class="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                            <div class="flex justify-between items-center">
+                                <div class="flex-1">
+                                    <p class="font-medium text-gray-900" x-text="formatGroupName(group)"></p>
+                                    <p class="text-sm text-gray-500 font-mono" x-text="group"></p>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span x-show="isMapped(group)" class="text-xs text-green-600 font-medium">✓ Mapped</span>
+                                    <button @click="quickMap(group)" 
+                                            x-show="!isMapped(group)"
+                                            class="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700">
+                                        Map to Roles
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Current Mappings -->
+            <div class="bg-white shadow rounded-lg p-6 mb-6">
+                <h2 class="text-lg font-medium mb-4">Active Group to Role Mappings</h2>
+                
+                <div x-show="groupMappings.length === 0" class="text-gray-500 text-center py-8">
+                    No group mappings configured yet. Import your AD groups above to get started.
+                </div>
+                
+                <div class="space-y-4">
+                    <template x-for="mapping in groupMappings" :key="mapping.group_id">
+                        <div class="border rounded-lg p-4 hover:shadow-md transition-shadow">
+                            <div class="flex justify-between items-start">
+                                <div class="flex-1">
+                                    <h3 class="font-medium text-gray-900" x-text="mapping.group_name"></h3>
+                                    <p class="text-sm text-gray-500 font-mono" x-text="mapping.group_id"></p>
+                                    <div class="mt-3">
+                                        <p class="text-xs text-gray-600 mb-1">Assigned Roles:</p>
+                                        <div class="flex flex-wrap gap-2">
+                                            <template x-for="role in mapping.roles" :key="role">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800" x-text="role"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex gap-2 ml-4">
+                                    <button @click="editMapping(mapping)" class="text-blue-600 hover:text-blue-800 font-medium text-sm">Edit</button>
+                                    <button @click="deleteMapping(mapping.group_id)" class="text-red-600 hover:text-red-800 font-medium text-sm">Delete</button>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Add/Edit Mapping Modal -->
+            <div x-show="showMappingForm" class="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50">
+                <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 p-6">
+                    <div class="flex justify-between items-start mb-4">
+                        <h2 class="text-lg font-medium" x-text="editMode ? 'Edit Group Mapping' : 'Add Group Mapping'"></h2>
+                        <button @click="closeMappingForm" class="text-gray-400 hover:text-gray-600">
+                            <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Azure AD Group ID</label>
+                            <input type="text" 
+                                   x-model="newMapping.group_id" 
+                                   placeholder="e.g., a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <p class="mt-1 text-xs text-gray-500">The GUID of the Azure AD group</p>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
+                            <input type="text" 
+                                   x-model="newMapping.group_name" 
+                                   placeholder="e.g., Engineering Team"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <p class="mt-1 text-xs text-gray-500">A friendly name for this group</p>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Assign Roles</label>
+                            <div class="space-y-3 border border-gray-200 rounded-md p-4 bg-gray-50">
+                                <template x-for="role in availableRoles" :key="role.name">
+                                    <label class="flex items-start cursor-pointer hover:bg-white p-2 rounded">
+                                        <input type="checkbox" 
+                                               :value="role.name" 
+                                               :checked="newMapping.roles.includes(role.name)"
+                                               @change="toggleRole(role.name)" 
+                                               class="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                        <div class="ml-3">
+                                            <p class="font-medium text-gray-900" x-text="role.name"></p>
+                                            <p class="text-sm text-gray-600" x-text="role.description"></p>
+                                        </div>
+                                    </label>
+                                </template>
+                            </div>
+                        </div>
+                        
+                        <div class="flex justify-end gap-3 mt-6">
+                            <button @click="closeMappingForm" 
+                                    class="px-4 py-2 text-gray-700 bg-gray-200 rounded hover:bg-gray-300">
+                                Cancel
+                            </button>
+                            <button @click="saveMapping" 
+                                    :disabled="!newMapping.group_id || !newMapping.group_name || newMapping.roles.length === 0"
+                                    :class="(!newMapping.group_id || !newMapping.group_name || newMapping.roles.length === 0) ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'"
+                                    class="px-4 py-2 text-white rounded">
+                                Save Mapping
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Manual Add Button -->
+            <div class="bg-white shadow rounded-lg p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <div>
+                        <h2 class="text-lg font-medium">Manual Group Entry</h2>
+                        <p class="text-sm text-gray-600 mt-1">Know your group ID? Add it manually</p>
+                    </div>
+                    <button @click="openMappingForm" 
+                            class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                        Add Manual Mapping
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('alpine:init', () => {
+        Alpine.data('groupRoleManager', () => ({
+            userEmail: '',
+            groupMappings: [],
+            availableRoles: [
+                { name: 'admin', description: 'Full system administrator with complete access' },
+                { name: 'storage-admin', description: 'Manage storage service configuration and users' },
+                { name: 'bucket-admin', description: 'Create, delete, and manage bucket policies' },
+                { name: 'developer', description: 'Read/write access to development resources' },
+                { name: 'reader', description: 'Read-only access to view files and buckets' }
+            ],
+            newMapping: {
+                group_id: '',
+                group_name: '',
+                roles: []
+            },
+            azureGroups: [],
+            showMappingForm: false,
+            editMode: false,
+            loading: false,
+
+            async init() {
+                await this.checkAuth();
+                await this.loadMappings();
+            },
+
+            async checkAuth() {
+                try {
+                    const response = await fetch('/api/auth/userinfo');
+                    const data = await response.json();
+                    this.userEmail = data.email;
+                    
+                    // Store current user's groups for import
+                    if (data.groups) {
+                        this.azureGroups = data.groups;
+                    }
+                } catch (error) {
+                    console.error('Auth check failed:', error);
+                    window.location.href = '/api/auth/login';
+                }
+            },
+
+            async loadMappings() {
+                try {
+                    const response = await fetch('/api/admin/group-mappings');
+                    this.groupMappings = await response.json();
+                } catch (error) {
+                    console.error('Failed to load mappings:', error);
+                    // Use local storage as fallback for demo
+                    const stored = localStorage.getItem('groupMappings');
+                    this.groupMappings = stored ? JSON.parse(stored) : [];
+                }
+            },
+
+            toggleRole(roleName) {
+                const index = this.newMapping.roles.indexOf(roleName);
+                if (index > -1) {
+                    this.newMapping.roles.splice(index, 1);
+                } else {
+                    this.newMapping.roles.push(roleName);
+                }
+            },
+
+            async saveMapping() {
+                if (!this.newMapping.group_id || !this.newMapping.group_name || this.newMapping.roles.length === 0) {
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/api/admin/group-mappings', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(this.newMapping)
+                    });
+                    
+                    if (response.ok) {
+                        await this.loadMappings();
+                        this.closeMappingForm();
+                    } else {
+                        alert('Failed to save mapping. Please try again.');
+                    }
+                } catch (error) {
+                    console.error('Save failed:', error);
+                    alert('Error saving mapping. Please check your connection.');
+                }
+            },
+
+            openMappingForm() {
+                this.editMode = false;
+                this.newMapping = { group_id: '', group_name: '', roles: [] };
+                this.showMappingForm = true;
+            },
+
+            closeMappingForm() {
+                this.showMappingForm = false;
+                this.newMapping = { group_id: '', group_name: '', roles: [] };
+            },
+
+            editMapping(mapping) {
+                this.editMode = true;
+                this.newMapping = {
+                    group_id: mapping.group_id,
+                    group_name: mapping.group_name,
+                    roles: [...mapping.roles]
+                };
+                this.showMappingForm = true;
+            },
+
+            async deleteMapping(groupId) {
+                if (!confirm('Delete this mapping?')) return;
+                
+                try {
+                    // In production, DELETE to your API
+                    const response = await fetch(`/api/admin/group-mappings/${groupId}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (response.ok) {
+                        await this.loadMappings();
+                    }
+                } catch (error) {
+                    // Demo fallback
+                    this.groupMappings = this.groupMappings.filter(m => m.group_id !== groupId);
+                    localStorage.setItem('groupMappings', JSON.stringify(this.groupMappings));
+                }
+            },
+
+            async discoverGroups() {
+                this.loading = true;
+                try {
+                    const response = await fetch('/api/auth/userinfo');
+                    const data = await response.json();
+                    if (data.groups) {
+                        this.azureGroups = data.groups.sort();
+                    }
+                } catch (error) {
+                    console.error('Failed to fetch groups:', error);
+                    alert('Failed to discover AD groups. Please try again.');
+                }
+                this.loading = false;
+            },
+
+            quickMap(groupId) {
+                this.editMode = false;
+                this.newMapping = {
+                    group_id: groupId,
+                    group_name: this.formatGroupName(groupId),
+                    roles: ['reader'] // Default to reader role
+                };
+                this.showMappingForm = true;
+            },
+
+            formatGroupName(groupId) {
+                // Try to extract a friendly name from the group ID if it contains readable text
+                // Otherwise just return the ID
+                const parts = groupId.split('-');
+                if (parts.length > 1 && isNaN(parts[0])) {
+                    return parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+                }
+                return groupId;
+            },
+
+            isMapped(groupId) {
+                return this.groupMappings.some(m => m.group_id === groupId);
+            }
+        }));
+    });
+    </script>
+</body>
+</html>
