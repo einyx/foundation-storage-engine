@@ -401,10 +401,25 @@
                 
                 <!-- Profile Menu -->
                 <div x-show="showProfile" @click.away="showProfile = false" x-transition class="absolute bottom-20 left-4 right-4 bg-white rounded-lg shadow-lg border border-gray-200 py-2">
-                    <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Settings</a>
-                    <a href="#" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Help</a>
+                    <a href="/ui/profile" class="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                        </svg>
+                        Profile & Settings
+                    </a>
+                    <a href="#" class="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        Help & Support
+                    </a>
                     <hr class="my-2 border-gray-200">
-                    <button @click="logout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sign Out</button>
+                    <button @click="logout()" class="w-full text-left flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+                        </svg>
+                        Sign Out
+                    </button>
                 </div>
             </div>
         </aside>
@@ -459,45 +474,6 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                         </svg>
                     </button>
-                    <div class="relative">
-                        <button @click="showSettings = !showSettings" class="p-2 hover:bg-gray-100 rounded-lg">
-                            <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                            </svg>
-                        </button>
-                        
-                        <!-- Settings Dropdown -->
-                        <div x-show="showSettings" 
-                             @click.away="showSettings = false" 
-                             x-transition:enter="transition ease-out duration-100" 
-                             x-transition:enter-start="transform opacity-0 scale-95" 
-                             x-transition:enter-end="transform opacity-100 scale-100" 
-                             x-transition:leave="transition ease-in duration-75" 
-                             x-transition:leave-start="transform opacity-100 scale-100" 
-                             x-transition:leave-end="transform opacity-0 scale-95" 
-                             class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
-                            <button @click="openFeedback()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path>
-                                </svg>
-                                Report Issue
-                            </button>
-                            <a href="/docs" target="_blank" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
-                                </svg>
-                                API Documentation
-                            </a>
-                            <hr class="my-2 border-gray-200">
-                            <button @click="showSettings = false; showUploadDialog = true" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
-                                </svg>
-                                Upload Settings
-                            </button>
-                        </div>
-                    </div>
                     <div class="h-6 w-px bg-gray-300 mx-2"></div>
                     
                     <!-- Delete button (shown when items selected) -->
@@ -1800,7 +1776,6 @@
             isIcebergTable: false,
             viewMode: 'list',
             showProfile: false,
-            showSettings: false,
             
             // Iceberg snapshot state
             showSnapshotHistory: false,
@@ -1900,6 +1875,14 @@
             userEmail: 'user@example.com',
             userInitials: 'U',
             
+            // Settings
+            settings: {
+                defaultView: 'list',
+                itemsPerPage: 50,
+                autoRefresh: 0
+            },
+            autoRefreshInterval: null,
+            
             // Notifications
             notifications: [],
             
@@ -1975,6 +1958,9 @@
 
                 // Load user info
                 this.loadUserInfo();
+                
+                // Load settings
+                this.loadSettings();
                 
                 // Load recent files from localStorage
                 this.loadRecentFiles();
@@ -2219,6 +2205,51 @@
                 }
             },
 
+            loadSettings() {
+                try {
+                    const saved = localStorage.getItem('storageEngineSettings');
+                    if (saved) {
+                        const settings = JSON.parse(saved);
+                        
+                        // Update settings with saved values
+                        this.settings = {
+                            defaultView: settings.defaultView || 'list',
+                            itemsPerPage: parseInt(settings.itemsPerPage) || 50,
+                            autoRefresh: parseInt(settings.autoRefresh) || 0
+                        };
+                        
+                        // Apply default view
+                        this.viewMode = this.settings.defaultView;
+                        
+                        // Set up auto-refresh if enabled
+                        if (this.settings.autoRefresh > 0) {
+                            this.setupAutoRefresh();
+                        }
+                        
+                        console.log('Settings loaded:', this.settings);
+                    }
+                } catch (error) {
+                    console.error('Failed to load settings:', error);
+                }
+            },
+
+            setupAutoRefresh() {
+                // Clear existing interval
+                if (this.autoRefreshInterval) {
+                    clearInterval(this.autoRefreshInterval);
+                }
+                
+                // Set up new interval if enabled
+                if (this.settings.autoRefresh > 0) {
+                    this.autoRefreshInterval = setInterval(() => {
+                        if (this.selectedBucket && !this.showingRecent) {
+                            console.log('Auto-refreshing bucket contents...');
+                            this.loadContents();
+                        }
+                    }, this.settings.autoRefresh * 1000);
+                }
+            },
+
             getAuthHeaders() {
                 const s3Token = localStorage.getItem('s3_auth_token');
                 if (s3Token) {
@@ -2242,7 +2273,6 @@
 
             openFeedback() {
                 if (window.SENTRY_INITIALIZED && typeof Sentry !== 'undefined') {
-                    this.showSettings = false;
                     this.showFeedback = true;
                 } else {
                     alert('Error tracking is not initialized. Please refresh the page and try again.');
@@ -2551,6 +2581,12 @@
 
             async loadContents() {
                 if (!this.selectedBucket) return;
+                
+                // Never try to load "recent" as a bucket - it's handled by showRecentFiles()
+                if (this.selectedBucket === 'recent' || this.showingRecent) {
+                    console.log('Skipping loadContents for recent files - handled by showRecentFiles()');
+                    return;
+                }
                 
                 // Add Sentry breadcrumb for navigation
                 if (window.SENTRY_INITIALIZED && typeof Sentry !== 'undefined') {

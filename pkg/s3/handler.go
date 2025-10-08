@@ -1765,6 +1765,18 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request, bucket string) {
 	ctx := r.Context()
+	
+	// Check if user is admin
+	isAdmin, _ := ctx.Value("is_admin").(bool)
+	if !isAdmin {
+		logrus.WithFields(logrus.Fields{
+			"user_sub": ctx.Value("user_sub"),
+			"bucket":   bucket,
+			"operation": "CreateBucket",
+		}).Warn("Non-admin user attempted to create bucket")
+		h.sendError(w, fmt.Errorf("access denied: admin privileges required"), http.StatusForbidden)
+		return
+	}
 
 	err := h.storage.CreateBucket(ctx, bucket)
 	if err != nil {
@@ -1777,6 +1789,18 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request, bucket st
 
 func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, bucket string) {
 	ctx := r.Context()
+	
+	// Check if user is admin
+	isAdmin, _ := ctx.Value("is_admin").(bool)
+	if !isAdmin {
+		logrus.WithFields(logrus.Fields{
+			"user_sub": ctx.Value("user_sub"),
+			"bucket":   bucket,
+			"operation": "DeleteBucket",
+		}).Warn("Non-admin user attempted to delete bucket")
+		h.sendError(w, fmt.Errorf("access denied: admin privileges required"), http.StatusForbidden)
+		return
+	}
 
 	err := h.storage.DeleteBucket(ctx, bucket)
 	if err != nil {

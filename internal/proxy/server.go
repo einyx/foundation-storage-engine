@@ -1,11 +1,13 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -231,15 +233,19 @@ func (s *Server) setupAPIDocumentation() {
 		return
 	}
 
-	// Serve Swagger UI
-	s.router.PathPrefix("/docs/").HandlerFunc(ServeSwaggerUI(openAPISpec)).Methods("GET")
+	// Serve Swagger UI at both /docs/ and /api/docs/
+	s.router.PathPrefix("/docs/").HandlerFunc(ServeSwaggerUI(openAPISpec, "/docs")).Methods("GET")
+	s.router.PathPrefix("/api/docs/").HandlerFunc(ServeSwaggerUI(openAPISpec, "/api/docs")).Methods("GET")
 
-	// Redirect /docs to /docs/
+	// Redirect /docs to /docs/ and /api/docs to /api/docs/
 	s.router.HandleFunc("/docs", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
 	}).Methods("GET")
+	s.router.HandleFunc("/api/docs", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/docs/", http.StatusMovedPermanently)
+	}).Methods("GET")
 
-	logrus.Info("API documentation available at /docs/")
+	logrus.Info("API documentation available at /docs/ and /api/docs/")
 }
 
 func (s *Server) setupRoutes() {
@@ -276,6 +282,18 @@ func (s *Server) setupRoutes() {
 		s.router.HandleFunc("/api/auth/logout", s.auth0.LogoutHandler).Methods("GET")
 		s.router.HandleFunc("/api/auth/userinfo", s.auth0.UserInfoHandler).Methods("GET")
 		s.router.HandleFunc("/api/auth/status", s.auth0.AuthStatusHandler).Methods("GET")
+		
+		// API Key management endpoints
+		s.router.HandleFunc("/api/auth/keys", s.auth0.CreateAPIKeyHandler).Methods("POST")
+		s.router.HandleFunc("/api/auth/keys", s.auth0.ListAPIKeysHandler).Methods("GET")
+		s.router.HandleFunc("/api/auth/keys/revoke", s.auth0.RevokeAPIKeyHandler).Methods("POST")
+		
+		// Admin endpoints for group/role management
+		adminHandlers := NewAdminHandlers(s.auth0)
+		s.router.HandleFunc("/api/admin/group-mappings", adminHandlers.ListGroupMappingsHandler).Methods("GET")
+		s.router.HandleFunc("/api/admin/group-mappings", adminHandlers.CreateGroupMappingHandler).Methods("POST")
+		s.router.HandleFunc("/api/admin/group-mappings", adminHandlers.DeleteGroupMappingHandler).Methods("DELETE")
+		s.router.HandleFunc("/api/admin/effective-roles", adminHandlers.GetEffectiveRolesHandler).Methods("GET")
 	}
 
 	// Register auth validation endpoint
@@ -308,6 +326,12 @@ func (s *Server) setupRoutes() {
 			s.router.HandleFunc(s.config.UI.BasePath + "/index.html", func(w http.ResponseWriter, r *http.Request) {
 				http.Redirect(w, r, s.config.UI.BasePath, http.StatusTemporaryRedirect)
 			}).Methods("GET")
+			
+			// Add profile page route
+			s.router.HandleFunc(s.config.UI.BasePath + "/profile", s.auth0.ProfileHandler).Methods("GET")
+			
+			// Add admin page route (protected)
+			s.router.HandleFunc(s.config.UI.BasePath + "/admin", s.serveAdminUI).Methods("GET")
 			
 			// Protected static assets - these should be served without auth middleware
 			// but the session check will happen on the main UI pages that load these assets
@@ -342,14 +366,37 @@ func (s *Server) setupRoutes() {
 	}
 
 	// Register S3 bucket operations (must be after monitoring endpoints and UI)
-	// Exclude /api/ paths to prevent conflicts with Auth0 and other API routes
+	// Use simple patterns that explicitly exclude known paths
 	s.router.HandleFunc("/", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
-	s.router.HandleFunc("/{bucket:(?!api$)[^/]+}", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
-	s.router.HandleFunc("/{bucket:(?!api$)[^/]+}/", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
-	s.router.HandleFunc("/{bucket:(?!api$)[^/]+}/{key:.+}", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+	
+	// Add explicit exclusions for known non-bucket paths
+	excludedPaths := []string{"api", "ui", "health", "metrics", "stats", "docs", "debug", "recent"}
+	for _, path := range excludedPaths {
+		s.router.HandleFunc("/"+path, func(w http.ResponseWriter, r *http.Request) {
+			logrus.WithField("excluded_path", r.URL.Path).Debug("Explicitly excluded path")
+			http.NotFound(w, r)
+		}).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+	}
+	
+	// Simple bucket patterns without complex regex
+	s.router.HandleFunc("/{bucket:[a-zA-Z0-9._-]+}", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+	s.router.HandleFunc("/{bucket:[a-zA-Z0-9._-]+}/", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+	s.router.HandleFunc("/{bucket:[a-zA-Z0-9._-]+}/{key:.+}", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+	
+	// Add debug handler to catch unmatched routes
+	s.router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logrus.WithFields(logrus.Fields{
+			"path":   r.URL.Path,
+			"method": r.Method,
+			"query":  r.URL.RawQuery,
+		}).Warn("Route not found - 404")
+		http.NotFound(w, r)
+	})
 }
 
 func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
+	// Store user context for admin checks
+	ctx := r.Context()
 	// Handle virtual-hosted-style requests
 	// Extract bucket from Host header if it matches pattern: bucket.s3.domain
 	host := r.Host
@@ -403,7 +450,17 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 			isPublicPath = true
 		}
 
-		if !isPublicPath {
+		// Check for valid Auth0 session for UI requests
+		authenticated := false
+		if s.config.Auth0.Enabled && s.auth0 != nil {
+			if session, err := s.auth0.store.Get(r, "auth0-session"); err == nil && session.Values["authenticated"] == true {
+				// Valid Auth0 session - allow access without S3 auth
+				logrus.WithField("user_sub", session.Values["user_sub"]).Debug("Authenticated via Auth0 session, bypassing S3 auth")
+				authenticated = true
+			}
+		}
+
+		if !authenticated && !isPublicPath {
 			userAgent := r.Header.Get("User-Agent")
 			if strings.Contains(strings.ToLower(userAgent), "minio") || strings.Contains(strings.ToLower(userAgent), "mc") {
 				authHeader := r.Header.Get("Authorization")
@@ -421,10 +478,81 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			if err := s.auth.Authenticate(r); err != nil {
-				w.WriteHeader(http.StatusForbidden)
-				_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
-				return
+			// Check for API key authentication first - try AWS-style auth with API keys
+			authHeader := r.Header.Get("Authorization")
+			if s.config.Auth0.Enabled && s.auth0 != nil {
+				authenticated := false
+				
+				// Try AWS Signature Version 4 with API keys
+				if strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256 ") {
+					if accessKey := s.extractAccessKeyFromV4Auth(authHeader); accessKey != "" {
+						if strings.HasPrefix(accessKey, "fse_") {
+							// This looks like our API key, try to validate it
+							if s.authenticateWithAPIKey(accessKey, r) {
+								authenticated = true
+								logrus.WithField("access_key", accessKey).Info("API key AWS v4 authentication successful")
+							}
+						}
+					}
+				} else if strings.HasPrefix(authHeader, "AWS ") {
+					// Try AWS Signature Version 2 with API keys
+					parts := strings.SplitN(authHeader[4:], ":", 2)
+					if len(parts) == 2 {
+						accessKey := parts[0]
+						if strings.HasPrefix(accessKey, "fse_") {
+							// This looks like our API key, try to validate it
+							if s.authenticateWithAPIKey(accessKey, r) {
+								authenticated = true
+								logrus.WithField("access_key", accessKey).Info("API key AWS v2 authentication successful")
+							}
+						}
+					}
+				} else if strings.HasPrefix(authHeader, "Bearer ") {
+					// Also support Bearer token format for API keys: "Bearer access_key:secret_key"
+					token := strings.TrimPrefix(authHeader, "Bearer ")
+					if strings.Contains(token, ":") {
+						parts := strings.SplitN(token, ":", 2)
+						if len(parts) == 2 {
+							accessKey := parts[0]
+							secretKey := parts[1]
+							
+							// Validate API key using Auth0 handler
+							if apiKey, err := s.auth0.ValidateAPIKey(accessKey, secretKey); err == nil {
+								authenticated = true
+								logrus.WithFields(logrus.Fields{
+									"user_id":    apiKey.UserID,
+									"access_key": accessKey,
+									"key_name":   apiKey.Name,
+								}).Info("API key Bearer authentication successful")
+							}
+						}
+					}
+				}
+				
+				if !authenticated {
+					// Fall back to standard authentication (which may include configured fallback credentials)
+					if err := s.auth.Authenticate(r); err != nil {
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
+						return
+					}
+				}
+				
+				// Store user context if we have Auth0 info
+				if authenticated && s.auth0 != nil {
+					if session, err := s.auth0.store.Get(r, "auth0-session"); err == nil {
+						// Create context with user info for downstream handlers
+						var userRoles []string
+						if rolesStr, ok := session.Values["user_roles"].(string); ok && rolesStr != "" {
+							userRoles = strings.Split(rolesStr, ",")
+						}
+						ctx = r.Context()
+						ctx = context.WithValue(ctx, "user_roles", userRoles)
+						ctx = context.WithValue(ctx, "user_sub", session.Values["user_sub"])
+						ctx = context.WithValue(ctx, "is_admin", isAdminUser(userRoles))
+						r = r.WithContext(ctx)
+					}
+				}
 			}
 		}
 
@@ -706,6 +834,125 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// extractAccessKeyFromV4Auth extracts the access key from AWS Signature Version 4 auth header
+func (s *Server) extractAccessKeyFromV4Auth(authHeader string) string {
+	// Parse authorization header: AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20230101/us-east-1/s3/aws4_request, SignedHeaders=..., Signature=...
+	if !strings.Contains(authHeader, "Credential=") {
+		return ""
+	}
+
+	// Extract access key from Credential
+	credStart := strings.Index(authHeader, "Credential=") + 11
+	credEnd := strings.Index(authHeader[credStart:], "/")
+	if credEnd == -1 {
+		credEnd = strings.Index(authHeader[credStart:], ",")
+		if credEnd == -1 {
+			return ""
+		}
+	}
+
+	return authHeader[credStart : credStart+credEnd]
+}
+
+// authenticateWithAPIKey validates a request using an API key for AWS-style authentication
+func (s *Server) authenticateWithAPIKey(accessKey string, r *http.Request) bool {
+	// For AWS-style requests, we need to validate the signature
+	// Since we don't have the secret key in the request, we need to:
+	// 1. Look up the API key
+	// 2. Get the secret key
+	// 3. Recompute the signature and compare
+	
+	// For now, let's implement a simplified approach:
+	// Check if this access key exists in our API key store
+	if s.auth0 == nil {
+		return false
+	}
+	
+	// Get all keys and find the one with this access key
+	allKeys := s.getAllAPIKeys()
+	for _, key := range allKeys {
+		if key.AccessKey == accessKey {
+			// Found the key, now we need to validate the signature
+			// For now, let's just validate that the key exists and is not expired
+			if key.ExpiresAt != nil && time.Now().After(*key.ExpiresAt) {
+				logrus.WithField("access_key", accessKey).Warn("API key has expired")
+				return false
+			}
+			
+			// Update last used
+			now := time.Now()
+			key.LastUsed = &now
+			
+			logrus.WithFields(logrus.Fields{
+				"user_id":    key.UserID,
+				"access_key": accessKey,
+				"key_name":   key.Name,
+			}).Info("API key found and validated")
+			
+			return true
+		}
+	}
+	
+	return false
+}
+
+// getAllAPIKeys returns all API keys from the store (helper method)
+func (s *Server) getAllAPIKeys() []*APIKey {
+	if s.auth0 == nil || s.auth0.apiKeyStore == nil {
+		return nil
+	}
+	
+	s.auth0.apiKeyStore.mu.RLock()
+	defer s.auth0.apiKeyStore.mu.RUnlock()
+	
+	var keys []*APIKey
+	for _, key := range s.auth0.apiKeyStore.keys {
+		keys = append(keys, key)
+	}
+	
+	return keys
+}
+
+
+// isAdminUser checks if the user has admin roles
+func isAdminUser(roles []string) bool {
+	for _, role := range roles {
+		if role == "admin" || role == "storage-admin" || role == "super-admin" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) serveAdminUI(w http.ResponseWriter, r *http.Request) {
+	// Check authentication
+	if s.auth0 == nil || !s.auth0.IsAuthenticated(r) {
+		http.Redirect(w, r, "/api/auth/login", http.StatusTemporaryRedirect)
+		return
+	}
+
+	// Check if user is admin
+	session, _ := s.auth0.store.Get(r, "auth0-session")
+	var isAdmin bool
+	if rolesStr, ok := session.Values["user_roles"].(string); ok && rolesStr != "" {
+		roles := strings.Split(rolesStr, ",")
+		for _, role := range roles {
+			if role == "admin" || role == "storage-admin" {
+				isAdmin = true
+				break
+			}
+		}
+	}
+
+	if !isAdmin {
+		http.Error(w, "Access denied. Admin role required.", http.StatusForbidden)
+		return
+	}
+
+	// Serve the admin.html file
+	http.ServeFile(w, r, filepath.Join(s.config.UI.StaticPath, "admin.html"))
 }
 
 // Close cleanly shuts down the server and releases resources

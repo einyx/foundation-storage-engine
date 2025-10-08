@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/sirupsen/logrus"
 )
 
 type Provider interface {
@@ -55,9 +56,9 @@ func NewProvider(cfg config.AuthConfig) (Provider, error) {
 			credential: cfg.Credential,
 		}, nil
 	case "awsv4":
-		if cfg.Identity == "" || cfg.Credential == "" {
-			return nil, fmt.Errorf("awsv4 auth requires identity and credential")
-		}
+		// Allow empty credentials - they can be set later via API
+		// Debug logging to see what credentials we got
+		fmt.Printf("DEBUG: Creating AWSV4Provider with identity='%s', credential='%s'\n", cfg.Identity, cfg.Credential)
 		return &AWSV4Provider{
 			identity:   cfg.Identity,
 			credential: cfg.Credential,
@@ -198,6 +199,24 @@ type AWSV4Provider struct {
 }
 
 func (p *AWSV4Provider) Authenticate(r *http.Request) error {
+	// If no credentials are configured, deny ALL access (API keys should be used instead)
+	if p.identity == "" || p.credential == "" {
+		return fmt.Errorf("no fallback credentials configured - use API keys")
+	}
+	
+	// If using fallback credentials, only allow for API clients (not browsers)
+	if p.identity == "minio" {
+		userAgent := r.Header.Get("User-Agent")
+		isBrowser := strings.Contains(strings.ToLower(userAgent), "mozilla") || 
+			strings.Contains(strings.ToLower(userAgent), "chrome") || 
+			strings.Contains(strings.ToLower(userAgent), "safari") ||
+			strings.Contains(strings.ToLower(userAgent), "edge")
+		
+		if isBrowser {
+			return fmt.Errorf("fallback credentials not allowed for browser clients")
+		}
+	}
+
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
 		return fmt.Errorf("missing authorization header")
@@ -233,26 +252,109 @@ func (p *AWSV4Provider) Authenticate(r *http.Request) error {
 		return fmt.Errorf("invalid access key")
 	}
 
-	// For now, we'll do a simplified validation
-	// A full implementation would need to:
-	// 1. Parse the canonical request
-	// 2. Create string to sign
-	// 3. Calculate signature
-	// 4. Compare with provided signature
+	// Extract required components
+	dateStr := credParts[1]
+	region := credParts[2]
+	service := credParts[3]
+	signedHeaders := authComponents["SignedHeaders"]
+	signature := authComponents["Signature"]
+
+	if signature == "" {
+		return fmt.Errorf("missing signature in authorization header")
+	}
+
+	// Get X-Amz-Date header
+	amzDate := r.Header.Get("X-Amz-Date")
+	if amzDate == "" {
+		return fmt.Errorf("missing X-Amz-Date header")
+	}
+
+	// Create canonical request
+	canonicalURI := r.URL.Path
+	if canonicalURI == "" {
+		canonicalURI = "/"
+	}
+	
+	canonicalQueryString := r.URL.Query().Encode()
+	
+	// Build canonical headers
+	canonicalHeaders := ""
+	signedHeadersList := strings.Split(signedHeaders, ";")
+	for _, header := range signedHeadersList {
+		value := r.Header.Get(header)
+		if header == "host" {
+			value = r.Host
+		}
+		canonicalHeaders += fmt.Sprintf("%s:%s\n", strings.ToLower(header), strings.TrimSpace(value))
+	}
+
+	// Get content hash
+	contentHash := r.Header.Get("X-Amz-Content-Sha256")
+	if contentHash == "" {
+		contentHash = "UNSIGNED-PAYLOAD"
+	}
+
+	// Create canonical request
+	canonicalRequest := strings.Join([]string{
+		r.Method,
+		canonicalURI,
+		canonicalQueryString,
+		canonicalHeaders,
+		signedHeaders,
+		contentHash,
+	}, "\n")
+
+	// Create string to sign
+	canonicalRequestHash := sha256.Sum256([]byte(canonicalRequest))
+	stringToSign := strings.Join([]string{
+		"AWS4-HMAC-SHA256",
+		amzDate,
+		fmt.Sprintf("%s/%s/%s/aws4_request", dateStr, region, service),
+		hex.EncodeToString(canonicalRequestHash[:]),
+	}, "\n")
+
+	// Calculate signing key
+	signingKey := getSigningKey(p.credential, dateStr, region, service)
+	
+	// Calculate signature
+	h := hmac.New(sha256.New, signingKey)
+	h.Write([]byte(stringToSign))
+	calculatedSignature := hex.EncodeToString(h.Sum(nil))
+
+	// Compare signatures
+	if calculatedSignature != signature {
+		logrus.WithFields(logrus.Fields{
+			"access_key": accessKey,
+			"expected_signature": calculatedSignature[:16] + "...",
+			"provided_signature": signature[:16] + "...",
+			"method": r.Method,
+			"path": r.URL.Path,
+		}).Error("AWS Signature V4 validation failed")
+		return fmt.Errorf("signature mismatch")
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"access_key": accessKey,
+		"method": r.Method,
+		"path": r.URL.Path,
+	}).Debug("AWS Signature V4 authentication successful")
 
 	return nil
 }
 
 func (p *AWSV4Provider) GetSecretKey(accessKey string) (string, error) {
+	// If no credentials are configured, deny ALL access
+	if p.identity == "" || p.credential == "" {
+		return "", fmt.Errorf("no fallback credentials configured - use API keys")
+	}
+	
 	if accessKey == p.identity {
 		return p.credential, nil
 	}
 	return "", fmt.Errorf("unknown access key")
 }
 
-// getSigningKey generates AWS signature key - kept for future use
-//
-//nolint:unused
+// getSigningKey generates AWS signature key
 func getSigningKey(key, dateStamp, regionName, serviceName string) []byte {
 	kDate := hmacSHA256([]byte("AWS4"+key), []byte(dateStamp))
 	kRegion := hmacSHA256(kDate, []byte(regionName))
@@ -261,9 +363,7 @@ func getSigningKey(key, dateStamp, regionName, serviceName string) []byte {
 	return kSigning
 }
 
-// hmacSHA256 computes HMAC-SHA256 - kept for future use
-//
-//nolint:unused
+// hmacSHA256 computes HMAC-SHA256
 func hmacSHA256(key, data []byte) []byte {
 	h := hmac.New(sha256.New, key)
 	h.Write(data)
