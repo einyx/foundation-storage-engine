@@ -939,6 +939,12 @@ func (a *AzureBackend) PutObject(ctx context.Context, bucket, key string, reader
 				}
 				return &ct
 			}(),
+			BlobContentLength: func() *int64 {
+				if size > 0 {
+					return &size
+				}
+				return nil
+			}(),
 		},
 	}
 

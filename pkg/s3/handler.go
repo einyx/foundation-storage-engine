@@ -1273,7 +1273,11 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		etag = "\"d41d8cd98f00b204e9800998ecf8427e\""
 	} else if isChunkedWithoutSize {
 		// For Trino, we should NOT buffer - it causes timeouts
-		if strings.Contains(userAgent, "Trino") {
+		// CRITICAL FIX: Always buffer Iceberg metadata files regardless of client
+		// Metadata files are small but critical - they must be written atomically
+		isIcebergMetadata := strings.Contains(key, "metadata") && strings.HasSuffix(key, ".json")
+		
+		if strings.Contains(userAgent, "Trino") && !isIcebergMetadata {
 			logger.WithFields(logrus.Fields{
 				"key": key,
 				"userAgent": userAgent,
@@ -1282,8 +1286,12 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			// The storage backend will handle it
 			size = -1
 		} else {
-			// For other clients, buffer as before
-			logger.Info("Buffering chunked upload without explicit size")
+			// For other clients, or for Iceberg metadata, buffer as before
+			if isIcebergMetadata {
+				logger.Info("Buffering Iceberg metadata file for atomic write")
+			} else {
+				logger.Info("Buffering chunked upload without explicit size")
+			}
 			bufferStart := time.Now()
 			
 			var buf bytes.Buffer
@@ -1300,7 +1308,8 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 				"bufferedSize": size,
 				"duration": bufferDuration,
 				"bytesPerSec": float64(size) / bufferDuration.Seconds(),
-			}).Warn("Buffered chunked upload - THIS IS THE SLOW PART")
+				"isIcebergMetadata": isIcebergMetadata,
+			}).Info("Buffered chunked upload successfully")
 			
 			data := buf.Bytes()
 			// Don't calculate our own ETag for chunked uploads - it won't match client expectations
@@ -1310,20 +1319,38 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			body = bytes.NewReader(data)
 		}
 	} else if size > 0 && size <= smallFileLimit {
+		// CRITICAL FIX: For chunked AWS V4 streaming, use the decoded size
+		actualSize := size
+		if decodedLengthHeader := r.Header.Get("X-Amz-Decoded-Content-Length"); decodedLengthHeader != "" {
+			if decodedLength, err := strconv.ParseInt(decodedLengthHeader, 10, 64); err == nil && decodedLength != size {
+				// Use decoded size for chunked data
+				actualSize = decodedLength
+				logger.WithFields(logrus.Fields{
+					"originalSize": size,
+					"decodedSize": actualSize,
+					"key": key,
+				}).Info("Using decoded size for AWS V4 streaming data")
+			}
+		}
+		
 		bufPtr := smallBufferPool.Get().(*[]byte)
 		buf := *bufPtr
-		if int64(len(buf)) < size {
+		if int64(len(buf)) < actualSize {
 			smallBufferPool.Put(bufPtr)
-			buf = make([]byte, size)
+			buf = make([]byte, actualSize)
 		} else {
-			buf = buf[:size]
+			buf = buf[:actualSize]
 			defer smallBufferPool.Put(bufPtr)
 		}
 
 		// Read entire small file into memory
 		_, err := io.ReadFull(body, buf)
 		if err != nil {
-			logger.WithError(err).Error("Failed to read request body")
+			logger.WithError(err).WithFields(logrus.Fields{
+				"expectedSize": actualSize,
+				"originalSize": size,
+				"key": key,
+			}).Error("Failed to read request body")
 			h.sendError(w, err, http.StatusBadRequest)
 			return
 		}
@@ -1331,6 +1358,9 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		hash := md5.Sum(buf) //nolint:gosec // MD5 is required for S3 ETag compatibility
 		etag = fmt.Sprintf("\"%s\"", hex.EncodeToString(hash[:]))
 		body = bytes.NewReader(buf)
+		
+		// Update size to match actual content size
+		size = actualSize
 	}
 
 	var metadata map[string]string
