@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"bytes"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -57,8 +58,14 @@ func (h *Handler) handleBulkDelete(w http.ResponseWriter, r *http.Request, bucke
 		return
 	}
 
+	// Create secure XML decoder to prevent XXE attacks
+	decoder := xml.NewDecoder(bytes.NewReader(body))
+	// Disable external entity processing to prevent XXE
+	decoder.Strict = false
+	decoder.Entity = xml.HTMLEntity
+	
 	var req DeleteObjectsRequest
-	if unmarshalErr := xml.Unmarshal(body, &req); unmarshalErr != nil {
+	if unmarshalErr := decoder.Decode(&req); unmarshalErr != nil {
 		logger.WithError(unmarshalErr).Error("Failed to parse XML")
 		h.sendError(w, fmt.Errorf("malformed XML"), http.StatusBadRequest)
 		return

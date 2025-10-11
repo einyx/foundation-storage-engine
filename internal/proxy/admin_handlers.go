@@ -104,7 +104,7 @@ func (h *AdminHandlers) DeleteGroupMappingHandler(w http.ResponseWriter, r *http
 
 // GetEffectiveRolesHandler returns effective roles for the current user
 func (h *AdminHandlers) GetEffectiveRolesHandler(w http.ResponseWriter, r *http.Request) {
-	session, err := h.auth0.store.Get(r, "auth0-session")
+	session, err := h.auth0.store.Get(r, sessionName)
 	if err != nil || session.Values["authenticated"] != true {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -144,7 +144,7 @@ func (h *AdminHandlers) GetEffectiveRolesHandler(w http.ResponseWriter, r *http.
 
 // Helper functions
 func (h *AdminHandlers) isAdmin(r *http.Request) bool {
-	session, err := h.auth0.store.Get(r, "auth0-session")
+	session, err := h.auth0.store.Get(r, sessionName)
 	if err != nil {
 		return false
 	}

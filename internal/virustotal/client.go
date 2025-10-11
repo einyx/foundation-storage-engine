@@ -17,17 +17,23 @@ import (
 )
 
 const (
-	// API endpoints
-	baseURL        = "https://www.virustotal.com/api/v3"
-	fileUploadURL  = baseURL + "/files"
-	fileReportURL  = baseURL + "/files/%s"
-	analysisURL    = baseURL + "/analyses/%s"
-	
 	// API limits
 	maxFileSizeDefault = 32 * 1024 * 1024 // 32MB
 	apiTimeout         = 30 * time.Second
 	pollInterval       = 5 * time.Second
 	maxPollAttempts    = 60 // 5 minutes total
+)
+
+var (
+	// API endpoints (variable for testing)
+	baseURL = "https://www.virustotal.com/api/v3"
+)
+
+const (
+	// API endpoint patterns
+	fileUploadPath  = "/files"
+	fileReportPath  = "/files/%s"
+	analysisPath    = "/analyses/%s"
 )
 
 // Client is the VirusTotal API client
@@ -129,7 +135,7 @@ func (c *Client) uploadFile(ctx context.Context, data []byte, filename string) (
 	}
 	
 	// Create request
-	req, err := http.NewRequestWithContext(ctx, "POST", fileUploadURL, &buf)
+	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+fileUploadPath, &buf)
 	if err != nil {
 		return "", err
 	}
@@ -164,7 +170,7 @@ func (c *Client) uploadFile(ctx context.Context, data []byte, filename string) (
 }
 
 func (c *Client) getFileReport(ctx context.Context, sha256Hash string) (*ScanResult, error) {
-	url := fmt.Sprintf(fileReportURL, sha256Hash)
+	url := fmt.Sprintf(baseURL+fileReportPath, sha256Hash)
 	
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -234,7 +240,7 @@ func (c *Client) getFileReport(ctx context.Context, sha256Hash string) (*ScanRes
 }
 
 func (c *Client) waitForAnalysis(ctx context.Context, analysisID, sha256Hash string) (*ScanResult, error) {
-	url := fmt.Sprintf(analysisURL, analysisID)
+	url := fmt.Sprintf(baseURL+analysisPath, analysisID)
 	
 	for attempt := 0; attempt < maxPollAttempts; attempt++ {
 		select {

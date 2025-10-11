@@ -2,11 +2,16 @@ package proxy
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,6 +29,13 @@ import (
 	"github.com/einyx/foundation-storage-engine/internal/storage"
 	"github.com/einyx/foundation-storage-engine/internal/virustotal"
 	"github.com/einyx/foundation-storage-engine/pkg/s3"
+)
+
+const (
+	// Cache configuration constants
+	defaultMaxMemory     = 1024 * 1024 * 1024 // 1GB
+	defaultMaxObjectSize = 10 * 1024 * 1024   // 10MB
+	defaultCacheTTL      = 5 * time.Minute
 )
 
 // responseRecorder captures HTTP response for debugging
@@ -44,6 +56,8 @@ func (r *responseRecorder) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
+// Server represents the main HTTP server that handles S3-compatible requests
+// and proxies them to various storage backends.
 type Server struct {
 	config           *config.Config
 	storage          storage.Backend
@@ -66,21 +80,21 @@ func NewServer(cfg *config.Config) (*Server, error) {
 
 	// Wrap with caching if enabled
 	if cacheEnabled := os.Getenv("ENABLE_OBJECT_CACHE"); cacheEnabled == "true" {
-		maxMemory := int64(1024 * 1024 * 1024) // 1GB default
+		maxMemory := int64(defaultMaxMemory)
 		if envMem := os.Getenv("CACHE_MAX_MEMORY"); envMem != "" {
 			if parsed, parseErr := strconv.ParseInt(envMem, 10, 64); parseErr == nil {
 				maxMemory = parsed
 			}
 		}
 
-		maxObjectSize := int64(10 * 1024 * 1024) // 10MB default
+		maxObjectSize := int64(defaultMaxObjectSize)
 		if envSize := os.Getenv("CACHE_MAX_OBJECT_SIZE"); envSize != "" {
 			if parsed, parseErr := strconv.ParseInt(envSize, 10, 64); parseErr == nil {
 				maxObjectSize = parsed
 			}
 		}
 
-		ttl := 5 * time.Minute // 5 minutes default
+		ttl := defaultCacheTTL
 		if envTTL := os.Getenv("CACHE_TTL"); envTTL != "" {
 			if parsed, parseErr := time.ParseDuration(envTTL); parseErr == nil {
 				ttl = parsed
@@ -120,12 +134,26 @@ func NewServer(cfg *config.Config) (*Server, error) {
 			return nil, fmt.Errorf("failed to create database connection: %w", err)
 		}
 
-		authProvider = auth.NewDatabaseProvider(db)
-		logrus.Info("Database authentication provider initialized")
+		baseProvider := auth.NewDatabaseProvider(db)
+		
+		// Wrap with OPA if enabled
+		if cfg.OPA.Enabled {
+			authProvider = auth.NewOPAProvider(cfg.Auth, cfg.OPA, baseProvider)
+			logrus.WithField("opa_url", cfg.OPA.URL).Info("Database authentication provider initialized with OPA authorization")
+		} else {
+			authProvider = baseProvider
+			logrus.Info("Database authentication provider initialized")
+		}
 	} else {
-		authProvider, err = auth.NewProvider(cfg.Auth)
+		authProvider, err = auth.NewProviderWithOPA(cfg.Auth, cfg.OPA)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create auth provider: %w", err)
+		}
+		
+		if cfg.OPA.Enabled {
+			logrus.WithField("opa_url", cfg.OPA.URL).Info("Authentication provider initialized with OPA authorization")
+		} else {
+			logrus.Info("Authentication provider initialized")
 		}
 	}
 
@@ -178,6 +206,8 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	return s, nil
 }
 
+// ServeHTTP implements the http.Handler interface for the proxy server.
+// It adds security headers and preprocesses requests before routing.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Add security headers to all responses
 	s.setSecurityHeaders(w)
@@ -216,7 +246,7 @@ func (s *Server) setSecurityHeaders(w http.ResponseWriter) {
 
 	// Content Security Policy - restrictive by default
 	// Allow self for scripts/styles, data: for images (base64), and 'unsafe-inline' for styles (needed by some UI frameworks)
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com https://browser.sentry-cdn.com https://*.sentry.io; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.sentry.io; frame-src 'self' https://*.sentry.io; frame-ancestors 'none';")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com https://browser.sentry-cdn.com https://*.sentry.io https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.sentry.io; frame-src 'self' https://*.sentry.io; frame-ancestors 'none';")
 
 	// Referrer Policy - don't leak referrer information
 	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -250,7 +280,7 @@ func (s *Server) setupAPIDocumentation() {
 
 func (s *Server) setupRoutes() {
 	// Register monitoring endpoints first (highest priority)
-	s.router.HandleFunc("/health", s.healthCheck).Methods("GET")
+	s.router.HandleFunc("/health", s.healthCheck).Methods("GET", "HEAD")
 	s.router.Handle("/metrics", s.metrics.Handler()).Methods("GET")
 	s.router.Handle("/stats", s.metrics.StatsHandler()).Methods("GET")
 
@@ -358,25 +388,31 @@ func (s *Server) setupRoutes() {
 	}
 
 	// Handle common web files that should not be treated as S3 buckets
-	commonWebFiles := []string{"/favicon.ico", "/robots.txt", "/.well-known", "/apple-touch-icon.png"}
+	commonWebFiles := []string{"/favicon.ico", "/robots.txt", "/.well-known", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"}
 	for _, path := range commonWebFiles {
 		s.router.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 		}).Methods("GET", "HEAD")
 	}
 
-	// Register S3 bucket operations (must be after monitoring endpoints and UI)
-	// Use simple patterns that explicitly exclude known paths
-	s.router.HandleFunc("/", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
-	
-	// Add explicit exclusions for known non-bucket paths
-	excludedPaths := []string{"api", "ui", "health", "metrics", "stats", "docs", "debug", "recent"}
+	// Add explicit exclusions for known non-bucket paths BEFORE S3 routes
+	// Only exclude paths that might be interpreted as bucket names but shouldn't be
+	excludedPaths := []string{"api", "recent", "admin", "features"}
 	for _, path := range excludedPaths {
+		// Handle both /path and /path/* to catch all sub-paths
 		s.router.HandleFunc("/"+path, func(w http.ResponseWriter, r *http.Request) {
 			logrus.WithField("excluded_path", r.URL.Path).Debug("Explicitly excluded path")
 			http.NotFound(w, r)
 		}).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+		s.router.PathPrefix("/"+path+"/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			logrus.WithField("excluded_path", r.URL.Path).Debug("Explicitly excluded sub-path")
+			http.NotFound(w, r)
+		}).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
 	}
+
+	// Register S3 bucket operations (must be after exclusions)
+	// Use simple patterns that explicitly exclude known paths
+	s.router.HandleFunc("/", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
 	
 	// Simple bucket patterns without complex regex
 	s.router.HandleFunc("/{bucket:[a-zA-Z0-9._-]+}", s.handleS3Request).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
@@ -440,118 +476,39 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 	if s.config.Auth.Type != "none" {
 		// Allow unauthenticated access to monitoring endpoints and docs
 		// UI access is now handled by Auth0 middleware in setupRoutes
-		isPublicPath := false
-		if strings.HasPrefix(r.URL.Path, "/docs/") {
-			isPublicPath = true
-		} else if r.URL.Path == "/health" || r.URL.Path == "/metrics" || r.URL.Path == "/stats" {
-			isPublicPath = true
-		} else if strings.HasPrefix(r.URL.Path, "/api/auth/") {
-			// Auth0 endpoints should be public
-			isPublicPath = true
-		}
+		isPublicPath := s.isPublicPath(r.URL.Path)
 
-		// Check for valid Auth0 session for UI requests
-		authenticated := false
-		if s.config.Auth0.Enabled && s.auth0 != nil {
-			if session, err := s.auth0.store.Get(r, "auth0-session"); err == nil && session.Values["authenticated"] == true {
-				// Valid Auth0 session - allow access without S3 auth
-				logrus.WithField("user_sub", session.Values["user_sub"]).Debug("Authenticated via Auth0 session, bypassing S3 auth")
-				authenticated = true
-			}
-		}
+		authenticated := s.checkAuth0Session(r)
 
 		if !authenticated && !isPublicPath {
-			userAgent := r.Header.Get("User-Agent")
-			if strings.Contains(strings.ToLower(userAgent), "minio") || strings.Contains(strings.ToLower(userAgent), "mc") {
-				authHeader := r.Header.Get("Authorization")
+			s.cleanMinIOClientHeaders(r)
 
-				if strings.Contains(authHeader, "\n") || strings.Contains(authHeader, "\r") {
-					cleanedHeader := strings.ReplaceAll(authHeader, "\n", "")
-					cleanedHeader = strings.ReplaceAll(cleanedHeader, "\r", "")
-					r.Header.Set("Authorization", cleanedHeader)
-
-					// logrus.WithFields(logrus.Fields{
-					// 	"originalLen": len(authHeader),
-					// 	"cleanedLen":  len(cleanedHeader),
-					// 	"path":        r.URL.Path,
-					// }).Debug("Cleaned MC client auth header")
-				}
+			if !authenticated {
+				authenticated = s.tryAPIKeyAuth(r)
 			}
 
-			// Check for API key authentication first - try AWS-style auth with API keys
-			authHeader := r.Header.Get("Authorization")
-			if s.config.Auth0.Enabled && s.auth0 != nil {
-				authenticated := false
-				
-				// Try AWS Signature Version 4 with API keys
-				if strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256 ") {
-					if accessKey := s.extractAccessKeyFromV4Auth(authHeader); accessKey != "" {
-						if strings.HasPrefix(accessKey, "fse_") {
-							// This looks like our API key, try to validate it
-							if s.authenticateWithAPIKey(accessKey, r) {
-								authenticated = true
-								logrus.WithField("access_key", accessKey).Info("API key AWS v4 authentication successful")
-							}
-						}
-					}
-				} else if strings.HasPrefix(authHeader, "AWS ") {
-					// Try AWS Signature Version 2 with API keys
-					parts := strings.SplitN(authHeader[4:], ":", 2)
-					if len(parts) == 2 {
-						accessKey := parts[0]
-						if strings.HasPrefix(accessKey, "fse_") {
-							// This looks like our API key, try to validate it
-							if s.authenticateWithAPIKey(accessKey, r) {
-								authenticated = true
-								logrus.WithField("access_key", accessKey).Info("API key AWS v2 authentication successful")
-							}
-						}
-					}
-				} else if strings.HasPrefix(authHeader, "Bearer ") {
-					// Also support Bearer token format for API keys: "Bearer access_key:secret_key"
-					token := strings.TrimPrefix(authHeader, "Bearer ")
-					if strings.Contains(token, ":") {
-						parts := strings.SplitN(token, ":", 2)
-						if len(parts) == 2 {
-							accessKey := parts[0]
-							secretKey := parts[1]
-							
-							// Validate API key using Auth0 handler
-							if apiKey, err := s.auth0.ValidateAPIKey(accessKey, secretKey); err == nil {
-								authenticated = true
-								logrus.WithFields(logrus.Fields{
-									"user_id":    apiKey.UserID,
-									"access_key": accessKey,
-									"key_name":   apiKey.Name,
-								}).Info("API key Bearer authentication successful")
-							}
-						}
-					}
+			if !authenticated {
+				// Fall back to standard authentication (which may include configured fallback credentials)
+				if err := s.auth.Authenticate(r); err != nil {
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
+					return
 				}
-				
-				if !authenticated {
-					// Fall back to standard authentication (which may include configured fallback credentials)
-					if err := s.auth.Authenticate(r); err != nil {
-						w.WriteHeader(http.StatusForbidden)
-						_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
-						return
+			}
+			
+			// Store user context if we have Auth0 info
+			if authenticated && s.auth0 != nil {
+				if session, err := s.auth0.store.Get(r, sessionName); err == nil {
+					// Create context with user info for downstream handlers
+					var userRoles []string
+					if rolesStr, ok := session.Values["user_roles"].(string); ok && rolesStr != "" {
+						userRoles = strings.Split(rolesStr, ",")
 					}
-				}
-				
-				// Store user context if we have Auth0 info
-				if authenticated && s.auth0 != nil {
-					if session, err := s.auth0.store.Get(r, "auth0-session"); err == nil {
-						// Create context with user info for downstream handlers
-						var userRoles []string
-						if rolesStr, ok := session.Values["user_roles"].(string); ok && rolesStr != "" {
-							userRoles = strings.Split(rolesStr, ",")
-						}
-						ctx = r.Context()
-						ctx = context.WithValue(ctx, "user_roles", userRoles)
-						ctx = context.WithValue(ctx, "user_sub", session.Values["user_sub"])
-						ctx = context.WithValue(ctx, "is_admin", isAdminUser(userRoles))
-						r = r.WithContext(ctx)
-					}
+					ctx = r.Context()
+					ctx = context.WithValue(ctx, "user_roles", userRoles)
+					ctx = context.WithValue(ctx, "user_sub", session.Values["user_sub"])
+					ctx = context.WithValue(ctx, "is_admin", isAdminUser(userRoles))
+					r = r.WithContext(ctx)
 				}
 			}
 		}
@@ -836,24 +793,90 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// extractAccessKeyFromV4Auth extracts the access key from AWS Signature Version 4 auth header
+// isPublicPath safely validates if a request path should be publicly accessible
+// This function prevents path traversal attacks and ensures secure path validation
+func (s *Server) isPublicPath(requestPath string) bool {
+	// Normalize path to prevent traversal attacks like /../, /./, //
+	cleanPath := path.Clean(requestPath)
+	
+	// Ensure the cleaned path starts with / to prevent relative path attacks
+	if !strings.HasPrefix(cleanPath, "/") {
+		return false
+	}
+	
+	// Exact matches for monitoring endpoints (security-critical)
+	exactPaths := []string{"/health", "/metrics", "/stats"}
+	for _, exactPath := range exactPaths {
+		if cleanPath == exactPath {
+			return true
+		}
+	}
+	
+	// Prefix matches with strict validation to prevent traversal
+	publicPrefixes := []string{"/docs/", "/api/auth/"}
+	for _, prefix := range publicPrefixes {
+		if strings.HasPrefix(cleanPath, prefix) {
+			// Additional security: ensure no traversal beyond the prefix
+			relativePath := cleanPath[len(prefix):]
+			// Reject any path containing .. or other suspicious patterns
+			if strings.Contains(relativePath, "..") || 
+			   strings.Contains(relativePath, "//") ||
+			   strings.Contains(relativePath, "\\") {
+				logrus.WithFields(logrus.Fields{
+					"path": requestPath,
+					"cleaned_path": cleanPath,
+					"relative_path": relativePath,
+				}).Warn("Path traversal attempt detected")
+				return false
+			}
+			return true
+		}
+	}
+	
+	return false
+}
+
+// extractAccessKeyFromV4Auth safely extracts the access key from AWS Signature Version 4 auth header
 func (s *Server) extractAccessKeyFromV4Auth(authHeader string) string {
-	// Parse authorization header: AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20230101/us-east-1/s3/aws4_request, SignedHeaders=..., Signature=...
-	if !strings.Contains(authHeader, "Credential=") {
+	if authHeader == "" || !strings.Contains(authHeader, "Credential=") {
 		return ""
 	}
 
-	// Extract access key from Credential
-	credStart := strings.Index(authHeader, "Credential=") + 11
-	credEnd := strings.Index(authHeader[credStart:], "/")
+	// Find credential start position safely
+	credIndex := strings.Index(authHeader, "Credential=")
+	if credIndex == -1 {
+		return ""
+	}
+	
+	credStart := credIndex + 11 // len("Credential=")
+	if credStart >= len(authHeader) {
+		return ""
+	}
+
+	// Find end delimiter safely - look for '/' or ',' 
+	remaining := authHeader[credStart:]
+	credEnd := strings.Index(remaining, "/")
 	if credEnd == -1 {
-		credEnd = strings.Index(authHeader[credStart:], ",")
+		credEnd = strings.Index(remaining, ",")
 		if credEnd == -1 {
 			return ""
 		}
 	}
+	
+	// Bounds check before slicing
+	if credEnd <= 0 || credStart+credEnd > len(authHeader) {
+		return ""
+	}
 
-	return authHeader[credStart : credStart+credEnd]
+	accessKey := authHeader[credStart : credStart+credEnd]
+	
+	// Additional validation: access keys should be reasonable length
+	if len(accessKey) < 3 || len(accessKey) > 128 {
+		logrus.WithField("key_length", len(accessKey)).Warn("Suspicious access key length")
+		return ""
+	}
+
+	return accessKey
 }
 
 // authenticateWithAPIKey validates a request using an API key for AWS-style authentication
@@ -874,14 +897,19 @@ func (s *Server) authenticateWithAPIKey(accessKey string, r *http.Request) bool 
 	allKeys := s.getAllAPIKeys()
 	for _, key := range allKeys {
 		if key.AccessKey == accessKey {
-			// Found the key, now we need to validate the signature
-			// For now, let's just validate that the key exists and is not expired
+			// Found the key, validate expiration first
 			if key.ExpiresAt != nil && time.Now().After(*key.ExpiresAt) {
 				logrus.WithField("access_key", accessKey).Warn("API key has expired")
 				return false
 			}
 			
-			// Update last used
+			// Critical: Validate the cryptographic signature using the secret key
+			if !s.validateAPIKeySignature(r, key) {
+				logrus.WithField("access_key", accessKey).Warn("API key signature validation failed")
+				return false
+			}
+			
+			// Update last used only after successful validation
 			now := time.Now()
 			key.LastUsed = &now
 			
@@ -889,7 +917,7 @@ func (s *Server) authenticateWithAPIKey(accessKey string, r *http.Request) bool 
 				"user_id":    key.UserID,
 				"access_key": accessKey,
 				"key_name":   key.Name,
-			}).Info("API key found and validated")
+			}).Info("API key cryptographically validated")
 			
 			return true
 		}
@@ -915,6 +943,333 @@ func (s *Server) getAllAPIKeys() []*APIKey {
 	return keys
 }
 
+// validateSecureSession performs comprehensive security validation on Auth0 sessions
+func (s *Server) validateSecureSession(session interface{}) bool {
+	// Type assertion to access session values
+	type sessionInterface interface {
+		Values() map[interface{}]interface{}
+	}
+	
+	sess, ok := session.(sessionInterface)
+	if !ok {
+		return false
+	}
+	
+	values := sess.Values()
+	
+	// Check authentication flag
+	authenticated, ok := values["authenticated"].(bool)
+	if !ok || !authenticated {
+		return false
+	}
+	
+	// Check session expiration (critical security check)
+	if expiresAt, ok := values["expires_at"].(time.Time); ok {
+		if time.Now().After(expiresAt) {
+			return false
+		}
+	} else {
+		// No expiration set - reject for security
+		return false
+	}
+	
+	// Validate session integrity using constant-time comparison
+	if expectedHash, ok := values["integrity_hash"].(string); ok {
+		if userSub, ok := values["user_sub"].(string); ok {
+			// Recompute integrity hash
+			computedHash := s.computeSessionIntegrityHash(userSub, values["expires_at"].(time.Time))
+			// Use constant-time comparison to prevent timing attacks
+			if subtle.ConstantTimeCompare([]byte(expectedHash), []byte(computedHash)) != 1 {
+				return false
+			}
+		} else {
+			return false
+		}
+	} else {
+		// No integrity hash - reject for security
+		return false
+	}
+	
+	return true
+}
+
+// checkAuth0Session validates Auth0 session and returns authentication status
+func (s *Server) checkAuth0Session(r *http.Request) bool {
+	if !s.config.Auth0.Enabled || s.auth0 == nil {
+		return false
+	}
+	
+	session, err := s.auth0.store.Get(r, sessionName)
+	if err != nil {
+		return false
+	}
+	
+	if s.validateSecureSession(session) {
+		logrus.WithField("user_sub", session.Values["user_sub"]).Debug("Authenticated via Auth0 session, bypassing S3 auth")
+		return true
+	}
+	
+	logrus.WithField("session_id", session.ID).Warn("Session validation failed - expired or tampered")
+	return false
+}
+
+// cleanMinIOClientHeaders fixes authorization header issues specific to MinIO mc client
+func (s *Server) cleanMinIOClientHeaders(r *http.Request) {
+	userAgent := r.Header.Get("User-Agent")
+	if !strings.Contains(strings.ToLower(userAgent), "minio") && !strings.Contains(strings.ToLower(userAgent), "mc") {
+		return
+	}
+	
+	authHeader := r.Header.Get("Authorization")
+	if strings.Contains(authHeader, "\n") || strings.Contains(authHeader, "\r") {
+		cleanedHeader := strings.ReplaceAll(authHeader, "\n", "")
+		cleanedHeader = strings.ReplaceAll(cleanedHeader, "\r", "")
+		r.Header.Set("Authorization", cleanedHeader)
+	}
+}
+
+// tryAPIKeyAuth attempts to authenticate using various API key formats (AWS v4, v2, Bearer)
+func (s *Server) tryAPIKeyAuth(r *http.Request) bool {
+	if !s.config.Auth0.Enabled || s.auth0 == nil {
+		return false
+	}
+	
+	authHeader := r.Header.Get("Authorization")
+	
+	// Try AWS Signature Version 4 with API keys
+	if strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256 ") {
+		if accessKey := s.extractAccessKeyFromV4Auth(authHeader); accessKey != "" {
+			if strings.HasPrefix(accessKey, "fse_") {
+				if s.authenticateWithAPIKey(accessKey, r) {
+					logrus.WithField("access_key", accessKey).Info("API key AWS v4 authentication successful")
+					return true
+				}
+			}
+		}
+	} else if strings.HasPrefix(authHeader, "AWS ") {
+		// Try AWS Signature Version 2 with API keys
+		parts := strings.SplitN(authHeader[4:], ":", 2)
+		if len(parts) == 2 {
+			accessKey := parts[0]
+			if strings.HasPrefix(accessKey, "fse_") {
+				if s.authenticateWithAPIKey(accessKey, r) {
+					logrus.WithField("access_key", accessKey).Info("API key AWS v2 authentication successful")
+					return true
+				}
+			}
+		}
+	} else if strings.HasPrefix(authHeader, "Bearer ") {
+		// Support Bearer token format for API keys: "Bearer access_key:secret_key"
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		if strings.Contains(token, ":") {
+			parts := strings.SplitN(token, ":", 2)
+			if len(parts) == 2 {
+				accessKey := parts[0]
+				secretKey := parts[1]
+				
+				if apiKey, err := s.auth0.ValidateAPIKey(accessKey, secretKey); err == nil {
+					logrus.WithFields(logrus.Fields{
+						"user_id":    apiKey.UserID,
+						"access_key": accessKey,
+						"key_name":   apiKey.Name,
+					}).Info("API key Bearer authentication successful")
+					return true
+				}
+			}
+		}
+	}
+	
+	return false
+}
+
+// computeSessionIntegrityHash creates a cryptographic hash for session integrity validation
+func (s *Server) computeSessionIntegrityHash(userSub string, expiresAt time.Time) string {
+	// Use server secret (Auth0 client secret) as HMAC key
+	key := s.config.Auth0.ClientSecret
+	if key == "" {
+		// Fallback to a server-specific secret (in production, use proper key management)
+		key = "fallback-integrity-key-change-in-production"
+	}
+	
+	// Create integrity hash from user ID and expiration
+	hmacHash := hmac.New(sha256.New, []byte(key))
+	hmacHash.Write([]byte(userSub))
+	hmacHash.Write([]byte(expiresAt.Format(time.RFC3339)))
+	return hex.EncodeToString(hmacHash.Sum(nil))
+}
+
+// validateAPIKeySignature performs cryptographic validation of API key signatures
+func (s *Server) validateAPIKeySignature(r *http.Request, apiKey *APIKey) bool {
+	authHeader := r.Header.Get("Authorization")
+	
+	// Handle AWS Signature Version 4
+	if strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256 ") {
+		return s.validateAWSV4SignatureWithAPIKey(r, apiKey, authHeader)
+	}
+	
+	// Handle AWS Signature Version 2  
+	if strings.HasPrefix(authHeader, "AWS ") {
+		return s.validateAWSV2SignatureWithAPIKey(r, apiKey, authHeader)
+	}
+	
+	return false
+}
+
+// validateAWSV4SignatureWithAPIKey validates AWS V4 signatures using API key secrets
+func (s *Server) validateAWSV4SignatureWithAPIKey(r *http.Request, apiKey *APIKey, authHeader string) bool {
+	// Parse authorization header components
+	parts := strings.Split(authHeader[17:], ", ")
+	authComponents := make(map[string]string)
+	
+	for _, part := range parts {
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) == 2 {
+			authComponents[kv[0]] = kv[1]
+		}
+	}
+	
+	signature := authComponents["Signature"]
+	if signature == "" {
+		return false
+	}
+	
+	// Extract credential components
+	credential := authComponents["Credential"]
+	credParts := strings.Split(credential, "/")
+	if len(credParts) < 5 {
+		return false
+	}
+	
+	dateStr := credParts[1]
+	region := credParts[2] 
+	service := credParts[3]
+	signedHeaders := authComponents["SignedHeaders"]
+	
+	// Get required headers
+	amzDate := r.Header.Get("X-Amz-Date")
+	if amzDate == "" {
+		return false
+	}
+	
+	// Rebuild canonical request (same logic as AWSV4Provider)
+	canonicalURI := r.URL.Path
+	if canonicalURI == "" {
+		canonicalURI = "/"
+	}
+	
+	canonicalQueryString := r.URL.Query().Encode()
+	
+	// Build canonical headers
+	canonicalHeaders := ""
+	signedHeadersList := strings.Split(signedHeaders, ";")
+	for _, header := range signedHeadersList {
+		value := r.Header.Get(header)
+		if header == "host" {
+			value = r.Host
+		}
+		canonicalHeaders += fmt.Sprintf("%s:%s\n", strings.ToLower(header), strings.TrimSpace(value))
+	}
+	
+	contentHash := r.Header.Get("X-Amz-Content-Sha256")
+	if contentHash == "" {
+		contentHash = "UNSIGNED-PAYLOAD"
+	}
+	
+	// Create canonical request
+	canonicalRequest := strings.Join([]string{
+		r.Method,
+		canonicalURI,
+		canonicalQueryString,
+		canonicalHeaders,
+		signedHeaders,
+		contentHash,
+	}, "\n")
+	
+	// Create string to sign
+	canonicalRequestHash := sha256.Sum256([]byte(canonicalRequest))
+	stringToSign := strings.Join([]string{
+		"AWS4-HMAC-SHA256",
+		amzDate,
+		fmt.Sprintf("%s/%s/%s/aws4_request", dateStr, region, service),
+		hex.EncodeToString(canonicalRequestHash[:]),
+	}, "\n")
+	
+	// Calculate signing key using API key secret (same logic as in auth package)
+	signingKey := s.getSigningKey(apiKey.SecretKey, dateStr, region, service)
+	
+	// Calculate expected signature
+	h := hmac.New(sha256.New, signingKey)
+	h.Write([]byte(stringToSign))
+	expectedSignature := hex.EncodeToString(h.Sum(nil))
+	
+	// Use constant-time comparison to prevent timing attacks
+	return subtle.ConstantTimeCompare([]byte(expectedSignature), []byte(signature)) == 1
+}
+
+// validateAWSV2SignatureWithAPIKey validates AWS V2 signatures using API key secrets
+func (s *Server) validateAWSV2SignatureWithAPIKey(r *http.Request, apiKey *APIKey, authHeader string) bool {
+	parts := strings.SplitN(authHeader[4:], ":", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	
+	providedSignature := parts[1]
+	
+	// Build string to sign (same logic as AWSV2Provider)
+	var builder strings.Builder
+	builder.WriteString(r.Method)
+	builder.WriteString("\n")
+	builder.WriteString(r.Header.Get("Content-MD5"))
+	builder.WriteString("\n")
+	builder.WriteString(r.Header.Get("Content-Type"))
+	builder.WriteString("\n")
+	builder.WriteString(r.Header.Get("Date"))
+	builder.WriteString("\n")
+	
+	// Add canonical headers
+	for key, values := range r.Header {
+		lowerKey := strings.ToLower(key)
+		if strings.HasPrefix(lowerKey, "x-amz-") {
+			builder.WriteString(lowerKey)
+			builder.WriteString(":")
+			builder.WriteString(strings.Join(values, ","))
+			builder.WriteString("\n")
+		}
+	}
+	
+	// Add canonical resource
+	builder.WriteString(r.URL.Path)
+	if r.URL.RawQuery != "" {
+		builder.WriteString("?")
+		builder.WriteString(r.URL.RawQuery)
+	}
+	
+	stringToSign := builder.String()
+	
+	// Calculate expected signature using API key secret
+	h := hmac.New(sha256.New, []byte(apiKey.SecretKey))
+	h.Write([]byte(stringToSign))
+	expectedSignature := hex.EncodeToString(h.Sum(nil))
+	
+	// Use constant-time comparison to prevent timing attacks
+	return subtle.ConstantTimeCompare([]byte(expectedSignature), []byte(providedSignature)) == 1
+}
+
+// getSigningKey generates AWS signature key (duplicate of auth package function for internal use)
+func (s *Server) getSigningKey(key, dateStamp, regionName, serviceName string) []byte {
+	kDate := s.hmacSHA256([]byte("AWS4"+key), []byte(dateStamp))
+	kRegion := s.hmacSHA256(kDate, []byte(regionName))
+	kService := s.hmacSHA256(kRegion, []byte(serviceName))
+	kSigning := s.hmacSHA256(kService, []byte("aws4_request"))
+	return kSigning
+}
+
+// hmacSHA256 computes HMAC-SHA256 (duplicate of auth package function for internal use)
+func (s *Server) hmacSHA256(key, data []byte) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write(data)
+	return h.Sum(nil)
+}
 
 // isAdminUser checks if the user has admin roles
 func isAdminUser(roles []string) bool {
@@ -934,7 +1289,7 @@ func (s *Server) serveAdminUI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if user is admin
-	session, _ := s.auth0.store.Get(r, "auth0-session")
+	session, _ := s.auth0.store.Get(r, sessionName)
 	var isAdmin bool
 	if rolesStr, ok := session.Values["user_roles"].(string); ok && rolesStr != "" {
 		roles := strings.Split(rolesStr, ",")
@@ -955,7 +1310,8 @@ func (s *Server) serveAdminUI(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filepath.Join(s.config.UI.StaticPath, "admin.html"))
 }
 
-// Close cleanly shuts down the server and releases resources
+// Close cleanly shuts down the server and releases resources.
+// It closes database connections and other resources held by the server.
 func (s *Server) Close() error {
 	if s.db != nil {
 		return s.db.Close()

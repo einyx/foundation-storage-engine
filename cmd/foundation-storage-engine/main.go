@@ -23,6 +23,20 @@ import (
 	"github.com/einyx/foundation-storage-engine/internal/proxy"
 )
 
+const (
+	// Server configuration constants
+	maxHeaderBytes        = 1 << 20        // 1MB
+	readHeaderTimeout     = 2 * time.Second
+	shutdownTimeout       = 30 * time.Second
+	sentryFlushTimeout    = 2 * time.Second
+	tcpKeepAlivePeriod    = 30 * time.Second
+	
+	// Cache configuration constants
+	defaultMaxMemory      = 1024 * 1024 * 1024 // 1GB
+	defaultMaxObjectSize  = 10 * 1024 * 1024   // 10MB
+	defaultCacheTTL       = 5 * time.Minute
+)
+
 var (
 	version = "dev"
 	commit  = "none"
@@ -65,18 +79,18 @@ func run(cmd *cobra.Command, _ []string) error {
 	}).Info("Starting S3 proxy server")
 
 	configFile, _ := cmd.Flags().GetString("config")
-	cfg, err := config.Load(configFile)
+	appConfig, err := config.Load(configFile)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
 	// Initialize Sentry
-	if cfg.Sentry.Enabled {
-		if err := initSentry(cfg); err != nil {
+	if appConfig.Sentry.Enabled {
+		if err := initSentry(appConfig); err != nil {
 			logrus.WithError(err).Error("Failed to initialize Sentry")
 			// Don't fail startup if Sentry init fails
 		} else {
-			defer sentry.Flush(2 * time.Second)
+			defer sentry.Flush(sentryFlushTimeout)
 			logrus.Info("Sentry initialized successfully")
 			
 			// Set up slog with Sentry handler for proper log support
@@ -107,7 +121,7 @@ func run(cmd *cobra.Command, _ []string) error {
 			logrus.AddHook(logging.NewSentryHook(sentryLevels))
 			
 			// Optionally add breadcrumb hook for better debugging context
-			if cfg.Sentry.Debug || cfg.Sentry.MaxBreadcrumbs > 0 {
+			if appConfig.Sentry.Debug || appConfig.Sentry.MaxBreadcrumbs > 0 {
 				logrus.AddHook(logging.NewBreadcrumbHook([]logrus.Level{
 					logrus.InfoLevel,
 					logrus.WarnLevel,
@@ -119,46 +133,46 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	listenAddr, _ := cmd.Flags().GetString("listen")
 	if listenAddr != "" {
-		cfg.Server.Listen = listenAddr
+		appConfig.Server.Listen = listenAddr
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"storage_provider": cfg.Storage.Provider,
-		"auth_type":        cfg.Auth.Type,
-		"listen_addr":      cfg.Server.Listen,
+		"storage_provider": appConfig.Storage.Provider,
+		"auth_type":        appConfig.Auth.Type,
+		"listen_addr":      appConfig.Server.Listen,
 		"s3_config": logrus.Fields{
-			"region":         cfg.S3.Region,
-			"ignore_headers": cfg.S3.IgnoreUnknownHeaders,
+			"region":         appConfig.S3.Region,
+			"ignore_headers": appConfig.S3.IgnoreUnknownHeaders,
 		},
 	}).Info("Configuration loaded")
 
-	proxyServer, err := proxy.NewServer(cfg)
+	proxyServer, err := proxy.NewServer(appConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create proxy server: %w", err)
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"readTimeout":  cfg.Server.ReadTimeout,
-		"writeTimeout": cfg.Server.WriteTimeout,
-		"idleTimeout":  cfg.Server.IdleTimeout,
-		"listen":       cfg.Server.Listen,
+		"readTimeout":  appConfig.Server.ReadTimeout,
+		"writeTimeout": appConfig.Server.WriteTimeout,
+		"idleTimeout":  appConfig.Server.IdleTimeout,
+		"listen":       appConfig.Server.Listen,
 	}).Info("Starting HTTP server with configured timeouts")
 	
 	srv := &http.Server{
-		Addr:              cfg.Server.Listen,
+		Addr:              appConfig.Server.Listen,
 		Handler:           proxyServer,
-		ReadTimeout:       cfg.Server.ReadTimeout,
-		WriteTimeout:      cfg.Server.WriteTimeout,
-		IdleTimeout:       cfg.Server.IdleTimeout,
-		MaxHeaderBytes:    1 << 20,
-		ReadHeaderTimeout: 2 * time.Second,
+		ReadTimeout:       appConfig.Server.ReadTimeout,
+		WriteTimeout:      appConfig.Server.WriteTimeout,
+		IdleTimeout:       appConfig.Server.IdleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
+		ReadHeaderTimeout: readHeaderTimeout,
 
 		ConnState: func(conn net.Conn, state http.ConnState) {
 			if state == http.StateNew {
 				if tcpConn, ok := conn.(*net.TCPConn); ok {
 					_ = tcpConn.SetNoDelay(true)
 					_ = tcpConn.SetKeepAlive(true)
-					_ = tcpConn.SetKeepAlivePeriod(30 * time.Second)
+					_ = tcpConn.SetKeepAlivePeriod(tcpKeepAlivePeriod)
 				}
 			}
 		},
@@ -173,7 +187,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	go func() {
 		<-sig
 		logrus.Info("Shutting down server...")
-		shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 30*time.Second)
+		shutdownCtx, shutdownCancel := context.WithTimeout(ctx, shutdownTimeout)
 		defer shutdownCancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			logrus.WithError(err).Error("Failed to shutdown server gracefully")
@@ -185,7 +199,7 @@ func run(cmd *cobra.Command, _ []string) error {
 		cancel()
 	}()
 
-	logrus.WithField("addr", cfg.Server.Listen).Info("Server listening")
+	logrus.WithField("addr", appConfig.Server.Listen).Info("Server listening")
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		return fmt.Errorf("server error: %w", err)
 	}
@@ -195,18 +209,18 @@ func run(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func initSentry(cfg *config.Config) error {
+func initSentry(appConfig *config.Config) error {
 	options := sentry.ClientOptions{
-		Dsn:              cfg.Sentry.DSN,
-		Environment:      cfg.Sentry.Environment,
-		Release:          cfg.Sentry.Release,
-		SampleRate:       cfg.Sentry.SampleRate,
-		TracesSampleRate: cfg.Sentry.TracesSampleRate,
-		AttachStacktrace: cfg.Sentry.AttachStacktrace,
-		EnableTracing:    cfg.Sentry.EnableTracing,
-		Debug:            cfg.Sentry.Debug,
-		MaxBreadcrumbs:   cfg.Sentry.MaxBreadcrumbs,
-		ServerName:       cfg.Sentry.ServerName,
+		Dsn:              appConfig.Sentry.DSN,
+		Environment:      appConfig.Sentry.Environment,
+		Release:          appConfig.Sentry.Release,
+		SampleRate:       appConfig.Sentry.SampleRate,
+		TracesSampleRate: appConfig.Sentry.TracesSampleRate,
+		AttachStacktrace: appConfig.Sentry.AttachStacktrace,
+		EnableTracing:    appConfig.Sentry.EnableTracing,
+		Debug:            appConfig.Sentry.Debug,
+		MaxBreadcrumbs:   appConfig.Sentry.MaxBreadcrumbs,
+		ServerName:       appConfig.Sentry.ServerName,
 		EnableLogs:       true,
 	}
 
@@ -239,7 +253,7 @@ func initSentry(cfg *config.Config) error {
 		// Check for ignored errors
 		if hint.OriginalException != nil {
 			errMsg := hint.OriginalException.Error()
-			for _, ignore := range cfg.Sentry.IgnoreErrors {
+			for _, ignore := range appConfig.Sentry.IgnoreErrors {
 				if strings.Contains(errMsg, ignore) {
 					return nil // Drop the event
 				}
