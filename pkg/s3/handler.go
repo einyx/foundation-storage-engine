@@ -1049,6 +1049,63 @@ func extractTableName(key string) string {
 	return ""
 }
 
+// ScanContentResult holds the result of a VirusTotal scan along with the scanned content
+type ScanContentResult struct {
+	Result *virustotal.ScanResult
+	Body   io.Reader
+}
+
+// scanContent scans the provided content with VirusTotal if enabled and returns the scanned content
+func (h *Handler) scanContent(ctx context.Context, body io.Reader, key string, size int64, logger *logrus.Entry, w http.ResponseWriter) (*ScanContentResult, error) {
+	if h.scanner == nil || !h.scanner.IsEnabled() || size <= 0 || size > 32*1024*1024 {
+		// Skip scanning if scanner disabled, empty file, or file too large
+		return &ScanContentResult{Body: body}, nil
+	}
+
+	// For small files, buffer and scan
+	var buf bytes.Buffer
+	teeReader := io.TeeReader(body, &buf)
+	
+	// Scan the file
+	result, err := h.scanner.ScanReader(ctx, teeReader, key, size)
+	if err != nil {
+		logger.WithError(err).Warn("VirusTotal scan failed, continuing with upload")
+		return &ScanContentResult{Body: &buf}, nil
+	}
+
+	if result == nil {
+		return &ScanContentResult{Body: &buf}, nil
+	}
+
+	logger.WithFields(logrus.Fields{
+		"verdict":    result.Verdict,
+		"malicious":  result.Malicious,
+		"suspicious": result.Suspicious,
+		"harmless":   result.Harmless,
+		"permalink":  result.Permalink,
+	}).Info("VirusTotal scan completed")
+	
+	// Check if we should block the upload
+	if h.scanner.ShouldBlockUpload(result) {
+		logger.WithFields(logrus.Fields{
+			"threat_level": result.GetThreatLevel(),
+			"permalink":    result.Permalink,
+		}).Error("Upload blocked due to threat detection")
+		
+		// Add scan info to response headers
+		w.Header().Set("X-VirusTotal-Verdict", result.Verdict)
+		w.Header().Set("X-VirusTotal-ThreatLevel", result.GetThreatLevel())
+		w.Header().Set("X-VirusTotal-Permalink", result.Permalink)
+		
+		return nil, fmt.Errorf("upload blocked: %s", result.GetThreatLevel())
+	}
+
+	return &ScanContentResult{
+		Result: result,
+		Body:   &buf,
+	}, nil
+}
+
 func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	// handlerStart := time.Now()
 	
@@ -1413,54 +1470,26 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		}
 	}
 
-	// Scan file with VirusTotal if enabled (only for reasonably sized files)
+	// Scan file with VirusTotal if enabled
+	scanContentResult, err := h.scanContent(ctx, body, key, size, logger, w)
+	if err != nil {
+		h.sendError(w, err, http.StatusForbidden)
+		return
+	}
+	
+	// Use the scanned content for storage
+	body = scanContentResult.Body
 	var scanResult *virustotal.ScanResult
-	if h.scanner != nil && h.scanner.IsEnabled() && size > 0 && size <= 32*1024*1024 {
-		// For small files, buffer and scan
-		var buf bytes.Buffer
-		teeReader := io.TeeReader(body, &buf)
+	if scanContentResult.Result != nil {
+		scanResult = scanContentResult.Result
 		
-		// Scan the file
-		result, err := h.scanner.ScanReader(ctx, teeReader, key, size)
-		if err != nil {
-			logger.WithError(err).Warn("VirusTotal scan failed, continuing with upload")
-		} else if result != nil {
-			scanResult = result
-			logger.WithFields(logrus.Fields{
-				"verdict":    scanResult.Verdict,
-				"malicious":  scanResult.Malicious,
-				"suspicious": scanResult.Suspicious,
-				"harmless":   scanResult.Harmless,
-				"permalink":  scanResult.Permalink,
-			}).Info("VirusTotal scan completed")
-			
-			// Check if we should block the upload
-			if h.scanner.ShouldBlockUpload(scanResult) {
-				logger.WithFields(logrus.Fields{
-					"threat_level": scanResult.GetThreatLevel(),
-					"permalink":    scanResult.Permalink,
-				}).Error("Upload blocked due to threat detection")
-				
-				// Add scan info to response headers
-				w.Header().Set("X-VirusTotal-Verdict", scanResult.Verdict)
-				w.Header().Set("X-VirusTotal-ThreatLevel", scanResult.GetThreatLevel())
-				w.Header().Set("X-VirusTotal-Permalink", scanResult.Permalink)
-				
-				h.sendError(w, fmt.Errorf("upload blocked: %s", scanResult.GetThreatLevel()), http.StatusForbidden)
-				return
-			}
-			
-			// Add scan info to metadata
-			if metadata == nil {
-				metadata = make(map[string]string)
-			}
-			metadata["x-virustotal-verdict"] = scanResult.Verdict
-			metadata["x-virustotal-scan-date"] = scanResult.ScanDate.Format(time.RFC3339)
-			metadata["x-virustotal-permalink"] = scanResult.Permalink
+		// Add scan info to metadata
+		if metadata == nil {
+			metadata = make(map[string]string)
 		}
-		
-		// Use the buffered content for storage
-		body = &buf
+		metadata["x-virustotal-verdict"] = scanResult.Verdict
+		metadata["x-virustotal-scan-date"] = scanResult.ScanDate.Format(time.RFC3339)
+		metadata["x-virustotal-permalink"] = scanResult.Permalink
 	}
 
 	// Add debugging for critical file types
@@ -1492,7 +1521,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	// Log before storage operation
 	logger.WithField("stage", "before_storage").Debug("About to call storage.PutObject")
 	
-	err := h.storage.PutObject(ctx, bucket, key, body, size, metadata)
+	err = h.storage.PutObject(ctx, bucket, key, body, size, metadata)
 	
 	putDuration := time.Since(putStart)
 	if putDuration > 5*time.Second {

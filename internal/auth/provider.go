@@ -35,6 +35,21 @@ type cacheEntry struct {
 
 const cacheTTL = 5 * time.Minute
 
+// NewProviderWithOPA creates a new auth provider with optional OPA integration
+func NewProviderWithOPA(cfg config.AuthConfig, opaConfig config.OPAConfig) (Provider, error) {
+	baseProvider, err := NewProvider(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// If OPA is enabled, wrap the base provider
+	if opaConfig.Enabled {
+		return NewOPAProvider(cfg, opaConfig, baseProvider), nil
+	}
+
+	return baseProvider, nil
+}
+
 func NewProvider(cfg config.AuthConfig) (Provider, error) {
 	switch cfg.Type {
 	case "none":
@@ -323,10 +338,20 @@ func (p *AWSV4Provider) Authenticate(r *http.Request) error {
 
 	// Compare signatures
 	if calculatedSignature != signature {
+		// Safely truncate signatures for logging
+		expectedTrunc := calculatedSignature
+		if len(expectedTrunc) > 16 {
+			expectedTrunc = expectedTrunc[:16] + "..."
+		}
+		providedTrunc := signature
+		if len(providedTrunc) > 16 {
+			providedTrunc = providedTrunc[:16] + "..."
+		}
+		
 		logrus.WithFields(logrus.Fields{
 			"access_key": accessKey,
-			"expected_signature": calculatedSignature[:16] + "...",
-			"provided_signature": signature[:16] + "...",
+			"expected_signature": expectedTrunc,
+			"provided_signature": providedTrunc,
 			"method": r.Method,
 			"path": r.URL.Path,
 		}).Error("AWS Signature V4 validation failed")

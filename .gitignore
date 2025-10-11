@@ -66,6 +66,8 @@ local.json
 config.local.yaml
 config.local.yml
 config.local.json
+config.yaml
+config.yml
 
 # Terraform
 *.tfstate

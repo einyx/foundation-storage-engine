@@ -105,7 +105,7 @@ func TestAuth0Handler_RequireUIAuth_Authenticated(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	// Create authenticated session
-	session, _ := handler.store.Get(req, "auth0-session")
+	session, _ := handler.store.Get(req, sessionName)
 	session.Values["authenticated"] = true
 	session.Values["user"] = map[string]interface{}{
 		"sub":   "auth0|123456",
@@ -277,14 +277,14 @@ func TestAuth0Handler_UserInfoHandler_Authenticated(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/auth/userinfo", nil)
 	w := httptest.NewRecorder()
 
-	// Create authenticated session
-	session, _ := handler.store.Get(req, "auth0-session")
+	// Create authenticated session with new format
+	session, _ := handler.store.Get(req, sessionName)
 	session.Values["authenticated"] = true
-	session.Values["user"] = map[string]interface{}{
-		"sub":   "auth0|123456",
-		"email": "test@example.com",
-		"name":  "Test User",
-	}
+	session.Values["user_sub"] = "auth0|123456"
+	session.Values["user_email"] = "test@example.com"
+	session.Values["user_name"] = "Test User"
+	session.Values["user_roles"] = "admin,user"
+	session.Values["user_groups"] = "group1,group2"
 	session.Save(req, w)
 
 	// Reset recorder for actual test

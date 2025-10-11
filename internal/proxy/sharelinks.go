@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -266,8 +267,24 @@ func (h *ShareLinkHandler) ServeSharedFile(w http.ResponseWriter, r *http.Reques
 	// Increment access count
 	h.manager.IncrementAccessCount(shareID)
 	
-	// Rewrite the request to point to the actual S3 object
-	r.URL.Path = "/" + link.BucketName + "/" + link.ObjectKey
+	// Securely rewrite the request to point to the actual S3 object
+	// Validate and sanitize bucket name and object key to prevent path traversal
+	safeBucket := h.sanitizePath(link.BucketName)
+	safeObjectKey := h.sanitizePath(link.ObjectKey)
+	
+	if safeBucket == "" || safeObjectKey == "" {
+		logrus.WithFields(logrus.Fields{
+			"shareID":    shareID,
+			"bucket":     link.BucketName,
+			"key":        link.ObjectKey,
+			"safeBucket": safeBucket,
+			"safeKey":    safeObjectKey,
+		}).Warn("Path traversal attempt detected in share link")
+		http.Error(w, "Invalid share link path", http.StatusForbidden)
+		return
+	}
+	
+	r.URL.Path = "/" + safeBucket + "/" + safeObjectKey
 	
 	// Add headers to indicate this is a shared file
 	w.Header().Set("X-Share-Link", "true")
@@ -290,4 +307,58 @@ func (h *ShareLinkHandler) ServeSharedFile(w http.ResponseWriter, r *http.Reques
 	
 	// Pass to S3 handler
 	h.s3Handler.ServeHTTP(w, r)
+}
+
+// sanitizePath safely validates and cleans paths to prevent directory traversal attacks
+func (h *ShareLinkHandler) sanitizePath(inputPath string) string {
+	if inputPath == "" {
+		return ""
+	}
+	
+	// First check for null byte injection before any other processing
+	if strings.Contains(inputPath, "\x00") {
+		logrus.WithFields(logrus.Fields{
+			"original": inputPath,
+		}).Warn("Rejected path containing null byte injection")
+		return ""
+	}
+	
+	// Check for double slashes before cleaning
+	if strings.Contains(inputPath, "//") {
+		logrus.WithFields(logrus.Fields{
+			"original": inputPath,
+		}).Warn("Rejected path containing double slashes")
+		return ""
+	}
+	
+	// Clean the path to resolve any . or .. elements
+	cleanedPath := path.Clean(inputPath)
+	
+	// After cleaning, reject paths that still contain traversal patterns
+	if strings.Contains(cleanedPath, "..") || 
+	   strings.Contains(cleanedPath, "\\") ||
+	   strings.HasPrefix(cleanedPath, "/") {
+		logrus.WithFields(logrus.Fields{
+			"original": inputPath,
+			"cleaned":  cleanedPath,
+		}).Warn("Rejected path containing traversal patterns")
+		return ""
+	}
+	
+	// Additional validation: only allow alphanumeric, dash, underscore, slash, and dot
+	for _, char := range cleanedPath {
+		if !((char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '-' || char == '_' || char == '/' || char == '.') {
+			logrus.WithFields(logrus.Fields{
+				"original": inputPath,
+				"cleaned":  cleanedPath,
+				"invalid_char": string(char),
+			}).Warn("Rejected path containing invalid characters")
+			return ""
+		}
+	}
+	
+	return cleanedPath
 }

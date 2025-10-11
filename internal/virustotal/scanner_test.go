@@ -2,7 +2,6 @@ package virustotal
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/sirupsen/logrus"

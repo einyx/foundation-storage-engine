@@ -120,12 +120,14 @@ func (fs *FileSystemBackend) secureUploadPath(bucket, uploadID string) (string, 
 	return cleanPath, nil
 }
 
+// NewFileSystemBackend creates a new filesystem storage backend with the provided configuration.
+// It validates the base directory exists (creating it if necessary) and initializes a buffer pool
+// for efficient file operations. Returns an error if the base directory cannot be created or accessed.
 func NewFileSystemBackend(cfg *config.FileSystemConfig) (*FileSystemBackend, error) {
 	if cfg.BaseDir == "" {
 		return nil, fmt.Errorf("base directory is required for filesystem backend")
 	}
 
-	// Ensure base directory exists
 	if err := os.MkdirAll(cfg.BaseDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create base directory: %w", err)
 	}
@@ -358,7 +360,33 @@ func (fs *FileSystemBackend) PutObject(ctx context.Context, bucket, key string, 
 		return fmt.Errorf("invalid path parameters: %w", err)
 	}
 
-	// Ensure directory exists
+	// Check if this is a directory marker (S3 compatibility)
+	// Directory markers are objects with keys ending in "/"
+	isDirectoryMarker := strings.HasSuffix(key, "/")
+
+	// If it's a directory marker, create a directory instead of a file
+	if isDirectoryMarker {
+		if err := os.MkdirAll(objectPath, 0750); err != nil {
+			return fmt.Errorf("failed to create directory: %w", err)
+		}
+
+		// Save metadata to .meta file if provided
+		if len(metadata) > 0 {
+			metadataPath := filepath.Join(objectPath, ".meta")
+			metadataBytes, err := json.Marshal(metadata)
+			if err != nil {
+				return fmt.Errorf("failed to marshal metadata: %w", err)
+			}
+
+			if err := os.WriteFile(metadataPath, metadataBytes, 0600); err != nil {
+				return fmt.Errorf("failed to write metadata file: %w", err)
+			}
+		}
+
+		return nil
+	}
+
+	// Regular file handling
 	if err := os.MkdirAll(filepath.Dir(objectPath), 0750); err != nil {
 		return fmt.Errorf("failed to create object directory: %w", err)
 	}
@@ -401,15 +429,14 @@ func (fs *FileSystemBackend) DeleteObject(ctx context.Context, bucket, key strin
 		return fmt.Errorf("invalid path parameters: %w", err)
 	}
 
-	// Remove the object file
 	err = os.Remove(objectPath)
 	if os.IsNotExist(err) {
 		return nil // S3 behavior: deleting non-existent object succeeds
 	}
 
-	// Also remove metadata file if it exists
+	// Clean up metadata file if it exists
 	metadataPath := objectPath + ".meta"
-	_ = os.Remove(metadataPath) // Ignore errors - metadata file might not exist
+	_ = os.Remove(metadataPath)
 
 	return err
 }
@@ -425,9 +452,23 @@ func (fs *FileSystemBackend) HeadObject(ctx context.Context, bucket, key string)
 		return nil, fmt.Errorf("object not found: %w", err)
 	}
 
+	// For S3 compatibility: directories should return 404 for HEAD requests
+	// when accessed without a trailing "/", as S3 directories don't exist as objects
+	if info.IsDir() && !strings.HasSuffix(key, "/") {
+		return nil, fmt.Errorf("object not found: %w", os.ErrNotExist)
+	}
+
 	// Load metadata from .meta file if it exists
 	metadata := make(map[string]string)
-	metadataPath := objectPath + ".meta"
+	var metadataPath string
+	if info.IsDir() {
+		// For directories, metadata is stored inside the directory
+		metadataPath = filepath.Join(objectPath, ".meta")
+	} else {
+		// For files, metadata is stored alongside the file
+		metadataPath = objectPath + ".meta"
+	}
+	
 	if metadataBytes, err := os.ReadFile(metadataPath); err == nil { //nolint:gosec // metadataPath is controlled
 		_ = json.Unmarshal(metadataBytes, &metadata)
 	}
@@ -438,9 +479,17 @@ func (fs *FileSystemBackend) HeadObject(ctx context.Context, bucket, key string)
 		contentType = "application/octet-stream"
 	}
 
+	// Calculate size: directories (S3 directory markers) should have size 0
+	var size int64
+	if info.IsDir() {
+		size = 0 // S3 directory markers have zero size
+	} else {
+		size = info.Size()
+	}
+
 	return &ObjectInfo{
 		Key:          key,
-		Size:         info.Size(),
+		Size:         size,
 		ETag:         fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()),
 		LastModified: info.ModTime(),
 		ContentType:  contentType,
