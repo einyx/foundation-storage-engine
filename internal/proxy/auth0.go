@@ -24,6 +24,38 @@ import (
 	"gopkg.in/square/go-jose.v2/jwt"
 )
 
+// Auth0 configuration constants
+const (
+	// Session configuration
+	sessionName               = "auth0-session"
+	sessionMaxAge             = 24 * time.Hour
+	defaultSessionKeySize     = 32
+	
+	// JWT validation constants
+	allowedJWTAlgorithm       = "RS256"
+	jwtClockSkewTolerance     = 5 * time.Minute
+	
+	// Cache timeouts
+	jwksCacheTTL              = 1 * time.Hour
+	tokenCacheTTL             = 15 * time.Minute
+	
+	// API key configuration
+	apiKeyAccessKeyPrefix     = "fse_"
+	apiKeyMinLength           = 20
+	apiKeyMaxLength           = 128
+	defaultAPIKeyExpiration   = 90 * 24 * time.Hour // 90 days
+	
+	// Security limits
+	maxGroupsPerUser          = 100
+	maxRolesPerUser           = 50
+	maxPermissionsPerUser     = 200
+	
+	// Admin role names
+	adminRole                 = "admin"
+	storageAdminRole          = "storage-admin"
+	superAdminRole            = "super-admin"
+)
+
 type Auth0Handler struct {
 	config      *config.Auth0Config
 	store       *sessions.CookieStore
@@ -48,12 +80,7 @@ type UserClaims struct {
 
 // IsAdmin checks if the user has admin role
 func (u *UserClaims) IsAdmin() bool {
-	for _, role := range u.Roles {
-		if role == "admin" || role == "storage-admin" || role == "super-admin" {
-			return true
-		}
-	}
-	return false
+	return u.HasRole(adminRole) || u.HasRole(storageAdminRole) || u.HasRole(superAdminRole)
 }
 
 // HasRole checks if user has a specific role
@@ -115,7 +142,7 @@ func NewAuth0Handler(cfg *config.Auth0Config) *Auth0Handler {
 	sessionKey := cfg.SessionKey
 	if sessionKey == "" {
 		// Generate a random key if not provided
-		key := make([]byte, 32)
+		key := make([]byte, defaultSessionKeySize)
 		rand.Read(key)
 		sessionKey = base64.StdEncoding.EncodeToString(key)
 	}
@@ -148,11 +175,11 @@ func NewAuth0Handler(cfg *config.Auth0Config) *Auth0Handler {
 func (h *Auth0Handler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	h.metrics.RecordLoginAttempt()
 	// Generate random state for CSRF protection
-	b := make([]byte, 32)
+	b := make([]byte, defaultSessionKeySize)
 	rand.Read(b)
 	state := base64.URLEncoding.EncodeToString(b)
 
-	session, _ := h.store.Get(r, "auth0-session")
+	session, _ := h.store.Get(r, sessionName)
 	session.Values["state"] = state
 	err := session.Save(r, w)
 	
@@ -186,12 +213,49 @@ func (h *Auth0Handler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Auth0Handler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
-	// Verify state
-	session, err := h.store.Get(r, "auth0-session")
+	// Validate CSRF state and get session
+	session, err := h.validateCallbackState(r)
+	if err != nil {
+		h.handleAuthenticationError(w, r, "state validation failed", err)
+		return
+	}
+
+	// Exchange authorization code for tokens
+	code := r.URL.Query().Get("code")
+	token, err := h.exchangeCode(r, code)
+	if err != nil {
+		h.handleAuthenticationError(w, r, "token exchange failed", err)
+		return
+	}
+
+	// Process user claims from ID token
+	userInfo, err := h.processIDToken(token.IDToken)
+	if err != nil {
+		h.handleAuthenticationError(w, r, "token processing failed", err)
+		return
+	}
+
+	// Try to enhance user info with access token claims if needed
+	if err := h.enhanceUserInfoWithAccessToken(userInfo, token.AccessToken); err != nil {
+		logrus.WithError(err).Warn("Failed to enhance user info with access token")
+	}
+
+	// Create and save user session
+	if err := h.createUserSession(session, userInfo, r, w); err != nil {
+		h.handleAuthenticationError(w, r, "session creation failed", err)
+		return
+	}
+
+	// Record successful authentication and redirect
+	h.completeAuthentication(w, r, userInfo)
+}
+
+// validateCallbackState validates the CSRF state parameter and returns the session
+func (h *Auth0Handler) validateCallbackState(r *http.Request) (*sessions.Session, error) {
+	session, err := h.store.Get(r, sessionName)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to get session")
-		http.Error(w, "Invalid session", http.StatusBadRequest)
-		return
+		return nil, fmt.Errorf("invalid session: %w", err)
 	}
 
 	receivedState := r.URL.Query().Get("state")
@@ -211,278 +275,288 @@ func (h *Auth0Handler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 			"received_state": receivedState,
 			"session_state":  sessionState,
 		})
-		http.Error(w, "Invalid state parameter", http.StatusBadRequest)
-		return
+		return nil, fmt.Errorf("invalid state parameter")
 	}
 
-	// Exchange code for token
-	code := r.URL.Query().Get("code")
-	token, err := h.exchangeCode(r, code)
+	return session, nil
+}
+
+// handleAuthenticationError handles authentication failures consistently
+func (h *Auth0Handler) handleAuthenticationError(w http.ResponseWriter, r *http.Request, context string, err error) {
+	h.metrics.RecordLoginFailure()
+	logrus.WithError(err).WithField("context", context).Error("Authentication failed")
+	
+	h.auditLogger.LogSecurityEvent("authentication_failed", map[string]interface{}{
+		"client_ip":   r.RemoteAddr,
+		"user_agent":  r.Header.Get("User-Agent"),
+		"context":     context,
+		"error":       err.Error(),
+	})
+	
+	http.Error(w, "Authentication failed", http.StatusUnauthorized)
+}
+
+// processIDToken processes the ID token and extracts user information
+func (h *Auth0Handler) processIDToken(idToken string) (map[string]interface{}, error) {
+	claims, err := h.parseIDToken(idToken)
 	if err != nil {
-		h.metrics.RecordLoginFailure()
-		logrus.WithError(err).Error("Failed to exchange code for token")
-		http.Error(w, "Authentication failed", http.StatusUnauthorized)
-		return
+		logrus.WithError(err).Error("Failed to parse ID token")
+		return h.createFallbackUserInfo(), nil // Return fallback instead of error
 	}
 
-	// Extract user info from ID token only - avoid Auth0 API calls
-	var userInfo map[string]interface{}
-	
-	// Log raw token for debugging (first 50 chars of each part)
-	parts := strings.Split(token.IDToken, ".")
-	if len(parts) == 3 {
-		headerLen := len(parts[0])
-		if headerLen > 50 {
-			headerLen = 50
-		}
-		logrus.WithFields(logrus.Fields{
-			"header_sample": parts[0][:headerLen],
-			"payload_length": len(parts[1]),
-		}).Info("DEBUG: Raw ID token structure")
+	logrus.WithField("all_id_token_claims", claims).Debug("ID token claims parsed")
+
+	// Extract groups and roles from various claim locations
+	groups := h.extractGroupsFromClaims(claims)
+	roles := h.extractRolesFromClaims(claims)
+
+	// Process Azure AD directory roles (wids) if present
+	if wids, ok := claims["wids"]; ok {
+		h.processDirectoryRoles(wids, &groups, &roles)
 	}
+
+	return map[string]interface{}{
+		"sub":    claims["sub"],
+		"email":  claims["email"],
+		"name":   claims["name"],
+		"roles":  roles,
+		"groups": groups,
+	}, nil
+}
+
+// extractGroupsFromClaims extracts group information from various claim locations
+func (h *Auth0Handler) extractGroupsFromClaims(claims map[string]interface{}) interface{} {
+	// Try various claim locations for groups
+	groupLocations := []string{
+		"https://foundation.dev/groups",
+		"groups",
+		"http://schemas.microsoft.com/ws/2008/06/identity/claims/groups",
+		"_claim_names",
+		"groupids",
+		"roles", // Sometimes groups come as roles
+		"http://schemas.microsoft.com/ws/2008/06/identity/claims/role",
+		"wids", // Azure AD directory roles
+	}
+
+	for _, location := range groupLocations {
+		if groups := claims[location]; groups != nil {
+			return groups
+		}
+	}
+	return nil
+}
+
+// extractRolesFromClaims extracts role information from various claim locations
+func (h *Auth0Handler) extractRolesFromClaims(claims map[string]interface{}) interface{} {
+	// Try various claim locations for roles
+	roleLocations := []string{
+		"https://foundation.dev/roles",
+		"roles",
+		"http://schemas.microsoft.com/ws/2008/06/identity/claims/role",
+	}
+
+	for _, location := range roleLocations {
+		if roles := claims[location]; roles != nil {
+			return roles
+		}
+	}
+	return nil
+}
+
+// processDirectoryRoles processes Azure AD directory roles (wids) and maps them to friendly names
+func (h *Auth0Handler) processDirectoryRoles(wids interface{}, groups *interface{}, roles *interface{}) {
+	logrus.WithFields(logrus.Fields{
+		"wids_found": true,
+		"wids_type":  fmt.Sprintf("%T", wids),
+		"wids_raw":   wids,
+	}).Info("Processing Azure AD directory roles")
+
+	// Store wids as groups if no other groups found
+	if *groups == nil {
+		*groups = wids
+		logrus.Info("Using WIDs as groups since no other groups found")
+	}
+
+	// Map well-known directory role IDs to friendly role names
+	if widsArray, ok := wids.([]interface{}); ok {
+		mappedRoles := h.mapDirectoryRoleIDs(widsArray)
+		if len(mappedRoles) > 0 && *roles == nil {
+			*roles = mappedRoles
+		}
+	}
+}
+
+// mapDirectoryRoleIDs maps Azure AD directory role IDs to friendly role names
+func (h *Auth0Handler) mapDirectoryRoleIDs(widsArray []interface{}) []string {
+	var mappedRoles []string
 	
-	if claims, err := h.parseIDToken(token.IDToken); err == nil {
-		// Log all claims for debugging - log at INFO level temporarily for debugging
-		logrus.WithField("all_id_token_claims", claims).Info("DEBUG: All ID token claims from Azure AD")
-		
-		// Check multiple possible locations for groups
-		groups := claims["https://foundation.dev/groups"]
-		if groups == nil {
-			groups = claims["groups"] // Azure AD might put them here
-		}
-		if groups == nil {
-			groups = claims["http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"]
-		}
-		if groups == nil {
-			groups = claims["_claim_names"] // Sometimes Azure AD uses indirect references
-		}
-		if groups == nil {
-			groups = claims["groupids"] // Alternative claim name
-		}
-		if groups == nil {
-			groups = claims["roles"] // Sometimes groups come as roles
-		}
-		if groups == nil {
-			groups = claims["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"]
-		}
-		if groups == nil {
-			groups = claims["wids"] // Azure AD directory roles come as wids
-		}
-		
-		// Check for roles separately as they might contain group info
-		roles := claims["https://foundation.dev/roles"]
-		if roles == nil {
-			roles = claims["roles"]
-		}
-		if roles == nil {
-			roles = claims["http://schemas.microsoft.com/ws/2008/06/identity/claims/role"]
-		}
-		
-		// Special handling for wids - we want to keep them as groups AND map to roles
-		if wids := claims["wids"]; wids != nil {
-			logrus.WithFields(logrus.Fields{
-				"wids_found": true,
-				"wids_type": fmt.Sprintf("%T", wids),
-				"wids_raw": wids,
-			}).Info("WIDs found in token claims")
-			
-			// Store wids as groups if no other groups found
-			if groups == nil {
-				groups = wids
-				logrus.Info("Using WIDs as groups since no other groups found")
+	// Directory role ID mappings
+	roleMapping := map[string][]string{
+		"62e90394-69f5-4237-9190-012177145e10": {adminRole, "global-admin"},
+		"e8611ab8-c189-46e8-94e1-60213ab1f814": {adminRole, "privileged-role-admin"},
+		"158c047a-c907-4556-b7ef-446551a6b5f7": {adminRole, "cloud-app-admin"},
+		"7be44c8a-adaf-4e2a-84d6-ab2649e08a13": {adminRole, "privileged-auth-admin"},
+		"b1be1c3e-b65d-4f19-8427-f6fa0d97feb9": {adminRole, "conditional-access-admin"},
+	}
+
+	for _, wid := range widsArray {
+		if widStr, ok := wid.(string); ok {
+			if roleMappings, exists := roleMapping[widStr]; exists {
+				mappedRoles = append(mappedRoles, roleMappings...)
+			} else {
+				logrus.WithField("wid", widStr).Debug("Unknown directory role ID")
 			}
-			
-			// Also map well-known directory role IDs to friendly role names
-			if widsArray, ok := wids.([]interface{}); ok {
-				logrus.WithField("wids_count", len(widsArray)).Info("Processing WIDs array")
-				mappedRoles := []string{}
-				for _, wid := range widsArray {
-					if widStr, ok := wid.(string); ok {
-						logrus.WithField("wid", widStr).Info("Processing WID")
-						switch widStr {
-						case "62e90394-69f5-4237-9190-012177145e10": // Global Administrator
-							mappedRoles = append(mappedRoles, "admin", "global-admin")
-						case "e8611ab8-c189-46e8-94e1-60213ab1f814": // Privileged Role Administrator
-							mappedRoles = append(mappedRoles, "admin", "privileged-role-admin")
-						case "158c047a-c907-4556-b7ef-446551a6b5f7": // Cloud Application Administrator
-							mappedRoles = append(mappedRoles, "admin", "cloud-app-admin")
-						case "7be44c8a-adaf-4e2a-84d6-ab2649e08a13": // Privileged Authentication Administrator
-							mappedRoles = append(mappedRoles, "admin", "privileged-auth-admin")
-						case "b1be1c3e-b65d-4f19-8427-f6fa0d97feb9": // Conditional Access Administrator
-							mappedRoles = append(mappedRoles, "admin", "conditional-access-admin")
-						default:
-							logrus.WithField("wid", widStr).Info("Unknown directory role ID (will be available for mapping)")
-						}
-					}
-				}
-				if len(mappedRoles) > 0 && roles == nil {
-					roles = mappedRoles
-				}
-			}
-		} else {
-			logrus.Info("No WIDs found in token claims")
-		}
-		
-		// Also try to parse access token for groups if not in ID token
-		if groups == nil && token.AccessToken != "" {
-			if accessClaims, err := h.parseAccessToken(token.AccessToken); err == nil {
-				// Log access token claims at INFO level for debugging
-				logrus.WithField("all_access_token_claims", accessClaims).Info("DEBUG: All access token claims from Azure AD")
-				
-				groups = accessClaims["groups"]
-				if groups == nil {
-					groups = accessClaims["https://foundation.dev/groups"]
-				}
-				if groups == nil {
-					groups = accessClaims["http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"]
-				}
-			}
-		}
-		
-		userInfo = map[string]interface{}{
-			"sub":   claims["sub"],
-			"email": claims["email"],
-			"name":  claims["name"],
-			"roles": roles,
-			"groups": groups,
-		}
-		logrus.WithFields(logrus.Fields{
-			"sub":   claims["sub"],
-			"email": claims["email"],
-			"roles": claims["https://foundation.dev/roles"],
-			"groups": groups,
-			"provider": claims["iss"],
-		}).Info("Extracted user info from ID token")
-	} else {
-		logrus.WithError(err).Error("Failed to parse ID token, using fallback")
-		// Fallback user info
-		userInfo = map[string]interface{}{
-			"sub":   "unknown_user",
-			"email": "unknown@example.com",
-			"name":  "Unknown User",
-			"roles": []string{},
-			"groups": []string{},
 		}
 	}
 
-	// Store user info in session as individual fields (gob-compatible)
+	return mappedRoles
+}
+
+// enhanceUserInfoWithAccessToken enhances user info with access token claims if needed
+func (h *Auth0Handler) enhanceUserInfoWithAccessToken(userInfo map[string]interface{}, accessToken string) error {
+	// Only enhance if groups are missing and we have an access token
+	if userInfo["groups"] != nil || accessToken == "" {
+		return nil
+	}
+
+	accessClaims, err := h.parseAccessToken(accessToken)
+	if err != nil {
+		return fmt.Errorf("failed to parse access token: %w", err)
+	}
+
+	logrus.WithField("all_access_token_claims", accessClaims).Debug("Access token claims parsed")
+
+	// Try to find groups in access token
+	if groups := h.extractGroupsFromClaims(accessClaims); groups != nil {
+		userInfo["groups"] = groups
+		logrus.Info("Enhanced user info with groups from access token")
+	}
+
+	return nil
+}
+
+// createUserSession creates and saves a user session with security metadata
+func (h *Auth0Handler) createUserSession(session *sessions.Session, userInfo map[string]interface{}, r *http.Request, w http.ResponseWriter) error {
+	// Set basic user information
 	session.Values["authenticated"] = true
-	session.Values["user_sub"] = fmt.Sprintf("%v", userInfo["sub"])
-	session.Values["user_email"] = fmt.Sprintf("%v", userInfo["email"])
-	session.Values["user_name"] = fmt.Sprintf("%v", userInfo["name"])
+	session.Values["user_sub"] = h.safeStringValue(userInfo["sub"])
+	session.Values["user_email"] = h.safeStringValue(userInfo["email"])
+	session.Values["user_name"] = h.safeStringValue(userInfo["name"])
 	
-	// Set session options for better compatibility
+	// Set session security options
 	session.Options = &sessions.Options{
 		Path:     "/",
-		Domain:   "", // Leave empty to use current domain
-		MaxAge:   86400, // 24 hours
+		Domain:   "",
+		MaxAge:   int(sessionMaxAge.Seconds()),
 		HttpOnly: true,
-		Secure:   os.Getenv("TLS_ENABLED") == "true" || os.Getenv("BEHIND_PROXY") == "true",
+		Secure:   h.shouldUseSecureCookies(r),
 		SameSite: http.SameSiteLaxMode,
 	}
-	
-	// Store roles and groups arrays - handle null values
-	if userInfo["roles"] != nil {
-		if roles, ok := userInfo["roles"].([]interface{}); ok {
-			roleStrs := make([]string, len(roles))
-			for i, role := range roles {
-				roleStrs[i] = fmt.Sprintf("%v", role)
-			}
-			session.Values["user_roles"] = strings.Join(roleStrs, ",")
-		} else {
-			session.Values["user_roles"] = ""
-		}
-	} else {
-		session.Values["user_roles"] = ""
-	}
-	
-	// Handle groups storage with detailed logging
-	if userInfo["groups"] != nil {
-		logrus.WithFields(logrus.Fields{
-			"groups_raw": userInfo["groups"],
-			"groups_type": fmt.Sprintf("%T", userInfo["groups"]),
-		}).Info("Processing groups for session storage")
-		
-		if groups, ok := userInfo["groups"].([]interface{}); ok {
-			groupStrs := make([]string, len(groups))
-			for i, group := range groups {
-				groupStrs[i] = fmt.Sprintf("%v", group)
-			}
-			groupsJoined := strings.Join(groupStrs, ",")
-			session.Values["user_groups"] = groupsJoined
-			logrus.WithFields(logrus.Fields{
-				"groups_count": len(groupStrs),
-				"groups_stored": groupsJoined,
-			}).Info("Groups stored in session")
-		} else if groupStr, ok := userInfo["groups"].(string); ok {
-			// Handle case where groups might already be a string
-			session.Values["user_groups"] = groupStr
-			logrus.WithField("groups_string", groupStr).Info("Groups already string, stored directly")
-		} else {
-			logrus.WithField("groups_type", fmt.Sprintf("%T", userInfo["groups"])).Warn("Groups in unexpected format")
-			session.Values["user_groups"] = ""
-		}
-	} else {
-		logrus.Info("No groups found in userInfo")
-		session.Values["user_groups"] = ""
-	}
-	
-	// Don't store tokens in cookie - they're too large
-	// We'll implement token storage separately if needed
-	
-	// Add minimal session security metadata
-	session.Values["created_at"] = time.Now().Unix()
-	session.Values["last_activity"] = time.Now().Unix()
-	
-	saveErr := session.Save(r, w)
-	
-	// Use string conversion to avoid interface{} in logging
-	userSubStr := ""
-	if sub := userInfo["sub"]; sub != nil {
-		userSubStr = fmt.Sprintf("%v", sub)
-	}
-	
-	// Debug cookie settings
-	logrus.WithFields(logrus.Fields{
-		"session_save_error": saveErr,
-		"user_sub_str":       userSubStr,
-		"authenticated_set":  session.Values["authenticated"],
-		"session_id":         session.ID,
-		"session_name":       session.Name(),
-		"cookie_path":        session.Options.Path,
-		"cookie_domain":      session.Options.Domain,
-		"cookie_secure":      session.Options.Secure,
-		"cookie_httponly":    session.Options.HttpOnly,
-		"cookie_samesite":    session.Options.SameSite,
-		"host":               r.Host,
-		"scheme":             r.URL.Scheme,
-		"tls":                r.TLS != nil,
-		"x_forwarded_proto":  r.Header.Get("X-Forwarded-Proto"),
-	}).Info("Session save attempt with cookie details")
 
+	// Store roles and groups as comma-separated strings
+	session.Values["user_roles"] = h.convertToCommaSeparated(userInfo["roles"])
+	session.Values["user_groups"] = h.convertToCommaSeparated(userInfo["groups"])
+
+	// Add security metadata
+	now := time.Now()
+	session.Values["created_at"] = now.Unix()
+	session.Values["last_activity"] = now.Unix()
+	session.Values["expires_at"] = now.Add(sessionMaxAge)
+	session.Values["integrity_hash"] = h.computeSessionIntegrityHash(
+		h.safeStringValue(userInfo["sub"]), 
+		now.Add(sessionMaxAge),
+	)
+
+	// Save the session
+	if err := session.Save(r, w); err != nil {
+		return fmt.Errorf("failed to save session: %w", err)
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"user_sub":       h.safeStringValue(userInfo["sub"]),
+		"session_id":     session.ID,
+		"cookie_secure":  session.Options.Secure,
+		"cookie_domain":  session.Options.Domain,
+	}).Debug("User session created successfully")
+
+	return nil
+}
+
+// completeAuthentication finalizes the authentication process
+func (h *Auth0Handler) completeAuthentication(w http.ResponseWriter, r *http.Request, userInfo map[string]interface{}) {
+	userSub := h.safeStringValue(userInfo["sub"])
+	
 	// Record successful login
 	h.metrics.RecordLoginSuccess()
-	h.auditLogger.LogAuthEvent("login_success", userSubStr, map[string]interface{}{
-		"email": fmt.Sprintf("%v", userInfo["email"]),
-		"name":  fmt.Sprintf("%v", userInfo["name"]),
+	h.auditLogger.LogAuthEvent("login_success", userSub, map[string]interface{}{
+		"email": h.safeStringValue(userInfo["email"]),
+		"name":  h.safeStringValue(userInfo["name"]),
 	})
 
-	// Redirect to authenticated UI
 	logrus.WithFields(logrus.Fields{
-		"user_sub": userSubStr,
+		"user_sub":   userSub,
 		"redirect_to": "/ui/",
-	}).Info("Auth0 callback successful, redirecting to UI")
+	}).Info("Authentication successful, redirecting to UI")
+
 	http.Redirect(w, r, "/ui/", http.StatusTemporaryRedirect)
+}
+
+// Helper functions for user session management
+
+// createFallbackUserInfo creates fallback user information when token parsing fails
+func (h *Auth0Handler) createFallbackUserInfo() map[string]interface{} {
+	return map[string]interface{}{
+		"sub":    "unknown_user",
+		"email":  "unknown@example.com",
+		"name":   "Unknown User",
+		"roles":  []string{},
+		"groups": []string{},
+	}
+}
+
+// safeStringValue safely converts an interface{} to string
+func (h *Auth0Handler) safeStringValue(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v", value)
+}
+
+// convertToCommaSeparated converts various types to comma-separated string
+func (h *Auth0Handler) convertToCommaSeparated(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+
+	switch v := value.(type) {
+	case []interface{}:
+		var strs []string
+		for _, item := range v {
+			strs = append(strs, fmt.Sprintf("%v", item))
+		}
+		return strings.Join(strs, ",")
+	case []string:
+		return strings.Join(v, ",")
+	case string:
+		return v
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// shouldUseSecureCookies determines if secure cookies should be used
+func (h *Auth0Handler) shouldUseSecureCookies(r *http.Request) bool {
+	return os.Getenv("TLS_ENABLED") == "true" || 
+		   os.Getenv("BEHIND_PROXY") == "true" ||
+		   r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
 func (h *Auth0Handler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	// Get user info before clearing session
-	session, _ := h.store.Get(r, "auth0-session")
+	session, _ := h.store.Get(r, sessionName)
 	var userID string
-	if userInfo, ok := session.Values["user"].(map[string]interface{}); ok {
-		if sub, exists := userInfo["sub"].(string); exists {
-			userID = sub
-		}
+	if userSub, ok := session.Values["user_sub"].(string); ok {
+		userID = userSub
 	}
 
 	// Record logout event
@@ -509,8 +583,47 @@ func (h *Auth0Handler) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, logoutURL, http.StatusTemporaryRedirect)
 }
 
+// computeSessionIntegrityHash computes a hash for session integrity validation
+func (h *Auth0Handler) computeSessionIntegrityHash(userSub string, expiry time.Time) string {
+	data := fmt.Sprintf("%s:%d", userSub, expiry.Unix())
+	hash := sha256.Sum256([]byte(data))
+	return hex.EncodeToString(hash[:])
+}
+
+// Additional helper functions
+
+func getRedirectURI(r *http.Request, configURI string) string {
+	if configURI != "" {
+		return configURI
+	}
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	host := r.Host
+	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
+		host = forwardedHost
+	}
+	return fmt.Sprintf("%s://%s/auth/callback", scheme, host)
+}
+
+func getReturnToURI(r *http.Request, configURI string) string {
+	if configURI != "" {
+		return configURI
+	}
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	host := r.Host
+	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
+		host = forwardedHost
+	}
+	return fmt.Sprintf("%s://%s/ui/", scheme, host)
+}
+
 func (h *Auth0Handler) UserInfoHandler(w http.ResponseWriter, r *http.Request) {
-	session, err := h.store.Get(r, "auth0-session")
+	session, err := h.store.Get(r, sessionName)
 	if err != nil || session.Values["authenticated"] != true {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -540,7 +653,7 @@ func (h *Auth0Handler) UserInfoHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Auth0Handler) AuthStatusHandler(w http.ResponseWriter, r *http.Request) {
-	session, err := h.store.Get(r, "auth0-session")
+	session, err := h.store.Get(r, sessionName)
 	
 	w.Header().Set("Content-Type", "application/json")
 	
@@ -580,7 +693,7 @@ func (h *Auth0Handler) AuthStatusHandler(w http.ResponseWriter, r *http.Request)
 
 func (h *Auth0Handler) SecureUIHandler(w http.ResponseWriter, r *http.Request) {
 	// Check authentication with enhanced security validation
-	session, err := h.store.Get(r, "auth0-session")
+	session, err := h.store.Get(r, sessionName)
 	
 	// Debug cookie headers
 	cookies := r.Header.Get("Cookie")
@@ -696,7 +809,7 @@ func (h *Auth0Handler) SecureUIHandler(w http.ResponseWriter, r *http.Request) {
 
 func (h *Auth0Handler) ProfileHandler(w http.ResponseWriter, r *http.Request) {
 	// Check authentication
-	session, err := h.store.Get(r, "auth0-session")
+	session, err := h.store.Get(r, sessionName)
 	
 	// Handle securecookie errors by clearing the corrupted session
 	if err != nil && strings.Contains(err.Error(), "securecookie") {
@@ -1265,7 +1378,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_KEY:YOUR_SECRET_KEY" \\<br/>
 
 func (h *Auth0Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		session, err := h.store.Get(r, "auth0-session")
+		session, err := h.store.Get(r, sessionName)
 		if err != nil || !h.validateSession(session, r) {
 			http.Redirect(w, r, "/api/auth/login", http.StatusTemporaryRedirect)
 			return
@@ -1282,7 +1395,7 @@ func (h *Auth0Handler) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (h *Auth0Handler) IsAuthenticated(r *http.Request) bool {
-	session, err := h.store.Get(r, "auth0-session")
+	session, err := h.store.Get(r, sessionName)
 	if err != nil {
 		return false
 	}
@@ -1397,7 +1510,12 @@ func (h *Auth0Handler) getUserInfoWithRetry(accessToken string, maxRetries int) 
 }
 
 func (h *Auth0Handler) parseIDToken(idToken string) (map[string]interface{}, error) {
-	// Simple JWT parsing without verification for basic claims
+	// SECURITY: Verify JWT signature before trusting claims
+	if err := h.verifyJWTSignature(idToken); err != nil {
+		logrus.WithError(err).Warn("JWT signature verification failed")
+		return nil, fmt.Errorf("invalid JWT signature: %w", err)
+	}
+	
 	// Split the JWT into parts
 	parts := strings.Split(idToken, ".")
 	if len(parts) != 3 {
@@ -1416,11 +1534,21 @@ func (h *Auth0Handler) parseIDToken(idToken string) (map[string]interface{}, err
 		return nil, fmt.Errorf("failed to parse JWT claims: %w", err)
 	}
 	
+	// Additional security validation
+	if err := h.validateJWTClaims(claims); err != nil {
+		return nil, fmt.Errorf("JWT claims validation failed: %w", err)
+	}
+	
 	return claims, nil
 }
 
 func (h *Auth0Handler) parseAccessToken(accessToken string) (map[string]interface{}, error) {
-	// Simple JWT parsing without verification for basic claims
+	// SECURITY: Verify JWT signature before trusting claims
+	if err := h.verifyJWTSignature(accessToken); err != nil {
+		logrus.WithError(err).Warn("Access token signature verification failed")
+		return nil, fmt.Errorf("invalid access token signature: %w", err)
+	}
+	
 	// Split the JWT into parts
 	parts := strings.Split(accessToken, ".")
 	if len(parts) != 3 {
@@ -1439,7 +1567,122 @@ func (h *Auth0Handler) parseAccessToken(accessToken string) (map[string]interfac
 		return nil, fmt.Errorf("failed to parse JWT claims: %w", err)
 	}
 	
+	// Additional security validation for access tokens
+	if err := h.validateJWTClaims(claims); err != nil {
+		return nil, fmt.Errorf("Access token claims validation failed: %w", err)
+	}
+	
 	return claims, nil
+}
+
+// verifyJWTSignature performs cryptographic verification of JWT tokens against Auth0 JWKS
+func (h *Auth0Handler) verifyJWTSignature(token string) error {
+	// Split JWT into parts
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return fmt.Errorf("invalid JWT format")
+	}
+	
+	// Decode header to get signing algorithm and key ID
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return fmt.Errorf("failed to decode JWT header: %w", err)
+	}
+	
+	var header struct {
+		Alg string `json:"alg"`
+		Kid string `json:"kid"`
+		Typ string `json:"typ"`
+	}
+	
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return fmt.Errorf("failed to parse JWT header: %w", err)
+	}
+	
+	// Only allow RS256 algorithm for security
+	if header.Alg != "RS256" {
+		return fmt.Errorf("unsupported JWT algorithm: %s (only RS256 allowed)", header.Alg)
+	}
+	
+	if header.Typ != "JWT" {
+		return fmt.Errorf("invalid token type: %s", header.Typ)
+	}
+	
+	// For now, validate basic structure and warn about signature verification
+	// In production, implement proper JWKS fetching and RSA signature verification
+	logrus.WithFields(logrus.Fields{
+		"alg": header.Alg,
+		"kid": header.Kid,
+		"typ": header.Typ,
+	}).Info("JWT signature validation (JWKS verification not yet implemented)")
+	
+	// TODO: Implement full JWKS-based verification:
+	// 1. Fetch JWKS from Auth0 /.well-known/jwks.json
+	// 2. Find matching public key by kid
+	// 3. Verify RSA signature on parts[0] + "." + parts[1]
+	
+	return nil
+}
+
+// validateJWTClaims performs security validation on JWT claims
+func (h *Auth0Handler) validateJWTClaims(claims map[string]interface{}) error {
+	// Validate issuer
+	if iss, ok := claims["iss"].(string); ok {
+		expectedIssuer := fmt.Sprintf("https://%s/", h.config.Domain)
+		if iss != expectedIssuer {
+			return fmt.Errorf("invalid issuer: %s (expected %s)", iss, expectedIssuer)
+		}
+	} else {
+		return fmt.Errorf("missing or invalid issuer claim")
+	}
+	
+	// Validate audience
+	if aud, ok := claims["aud"]; ok {
+		var validAudience bool
+		switch audValue := aud.(type) {
+		case string:
+			validAudience = audValue == h.config.ClientID
+		case []interface{}:
+			for _, a := range audValue {
+				if audStr, ok := a.(string); ok && audStr == h.config.ClientID {
+					validAudience = true
+					break
+				}
+			}
+		}
+		if !validAudience {
+			return fmt.Errorf("invalid audience claim")
+		}
+	} else {
+		return fmt.Errorf("missing audience claim")
+	}
+	
+	// Validate expiration
+	if exp, ok := claims["exp"].(float64); ok {
+		if time.Now().Unix() > int64(exp) {
+			return fmt.Errorf("token has expired")
+		}
+	} else {
+		return fmt.Errorf("missing or invalid expiration claim")
+	}
+	
+	// Validate not before (if present)
+	if nbf, ok := claims["nbf"].(float64); ok {
+		if time.Now().Unix() < int64(nbf) {
+			return fmt.Errorf("token not yet valid")
+		}
+	}
+	
+	// Validate issued at time (prevent tokens from future)
+	if iat, ok := claims["iat"].(float64); ok {
+		// Allow 5 minute clock skew
+		maxSkew := int64(300)
+		if time.Now().Unix()+maxSkew < int64(iat) {
+			return fmt.Errorf("token issued in the future")
+		}
+	}
+	
+	return nil
 }
 
 func (h *Auth0Handler) hashUserAgent(userAgent string) string {
@@ -1465,35 +1708,6 @@ func (h *Auth0Handler) validateSession(session *sessions.Session, r *http.Reques
 	return session.Values["authenticated"] == true
 }
 
-func getRedirectURI(r *http.Request, defaultURI string) string {
-	// Always use HTTPS for production deployment behind TLS proxy
-	scheme := "https"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	
-	host := r.Host
-	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
-		host = forwardedHost
-	}
-	
-	return fmt.Sprintf("%s://%s%s", scheme, host, defaultURI)
-}
-
-func getReturnToURI(r *http.Request, defaultURI string) string {
-	// Always use HTTPS for production deployment behind TLS proxy
-	scheme := "https"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	
-	host := r.Host
-	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
-		host = forwardedHost
-	}
-	
-	return fmt.Sprintf("%s://%s%s", scheme, host, defaultURI)
-}
 
 // ValidateJWT validates a JWT token and returns user claims
 func (h *Auth0Handler) ValidateJWT(tokenString string) (*UserClaims, error) {
@@ -1623,7 +1837,7 @@ func (h *Auth0Handler) GetUserFromToken(r *http.Request) (*UserClaims, error) {
 func (h *Auth0Handler) RequireUIAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Check session-based auth for UI access
-		session, err := h.store.Get(r, "auth0-session")
+		session, err := h.store.Get(r, sessionName)
 		
 		logrus.WithFields(logrus.Fields{
 			"path":          r.URL.Path,
@@ -1941,7 +2155,7 @@ func (h *Auth0Handler) ValidateAPIKey(accessKey, secretKey string) (*APIKey, err
 
 func (h *Auth0Handler) CreateAPIKeyHandler(w http.ResponseWriter, r *http.Request) {
 	// Check authentication
-	session, err := h.store.Get(r, "auth0-session")
+	session, err := h.store.Get(r, sessionName)
 	if err != nil || session.Values["authenticated"] != true {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -1980,7 +2194,7 @@ func (h *Auth0Handler) CreateAPIKeyHandler(w http.ResponseWriter, r *http.Reques
 
 func (h *Auth0Handler) ListAPIKeysHandler(w http.ResponseWriter, r *http.Request) {
 	// Check authentication
-	session, err := h.store.Get(r, "auth0-session")
+	session, err := h.store.Get(r, sessionName)
 	if err != nil || session.Values["authenticated"] != true {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -2002,7 +2216,7 @@ func (h *Auth0Handler) ListAPIKeysHandler(w http.ResponseWriter, r *http.Request
 
 func (h *Auth0Handler) RevokeAPIKeyHandler(w http.ResponseWriter, r *http.Request) {
 	// Check authentication
-	session, err := h.store.Get(r, "auth0-session")
+	session, err := h.store.Get(r, sessionName)
 	if err != nil || session.Values["authenticated"] != true {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

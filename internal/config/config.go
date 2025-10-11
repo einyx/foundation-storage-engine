@@ -24,6 +24,7 @@ type Config struct {
 	ShareLinks ShareLinksConfig `mapstructure:"share_links"`
 	Monitoring MonitoringConfig `mapstructure:"monitoring"`
 	Sentry     SentryConfig     `mapstructure:"sentry"`
+	OPA        OPAConfig        `mapstructure:"opa"`
 }
 
 // ServerConfig contains HTTP server configuration settings
@@ -126,12 +127,20 @@ type FileSystemConfig struct {
 
 // AuthConfig specifies authentication configuration
 type AuthConfig struct {
-	Type       string `mapstructure:"type" envconfig:"AUTH_TYPE" default:"none"` // none, basic, awsv2, awsv4, database
-	Identity   string `mapstructure:"identity" envconfig:"AUTH_IDENTITY"`
-	Credential string `mapstructure:"credential" envconfig:"AUTH_CREDENTIAL"`
+	Type       string     `mapstructure:"type" envconfig:"AUTH_TYPE" default:"none"` // none, basic, awsv2, awsv4, database
+	Identity   string     `mapstructure:"identity" envconfig:"AUTH_IDENTITY"`
+	Credential string     `mapstructure:"credential" envconfig:"AUTH_CREDENTIAL"`
+	AWSV4      *AWSV4Auth `mapstructure:"aws_v4"`
 	// AWS-style environment variables (take precedence if set)
 	AWSAccessKeyID     string `mapstructure:"-" envconfig:"AWS_ACCESS_KEY_ID"`
 	AWSSecretAccessKey string `mapstructure:"-" envconfig:"AWS_SECRET_ACCESS_KEY"`
+}
+
+// AWSV4Auth contains AWS V4 specific authentication configuration
+type AWSV4Auth struct {
+	AccessKey string `mapstructure:"access_key"`
+	SecretKey string `mapstructure:"secret_key"`
+	Region    string `mapstructure:"region"`
 }
 
 // DatabaseConfig specifies database configuration for authentication
@@ -206,7 +215,9 @@ type EncryptionPolicy struct {
 	Mandatory     bool   `mapstructure:"mandatory"`
 }
 
-// Load reads and validates configuration from a file
+// Load reads and validates configuration from a file or environment variables.
+// If configFile is empty, only environment variables are processed.
+// Returns a validated Config struct or an error if validation fails.
 func Load(configFile string) (*Config, error) {
 	cfg := &Config{}
 
@@ -232,6 +243,24 @@ func Load(configFile string) (*Config, error) {
 		cfg.Auth.Credential = cfg.Auth.AWSSecretAccessKey
 	}
 
+	// For awsv4 auth type, populate Identity/Credential from nested aws_v4 structure if not already set
+	if cfg.Auth.Type == "awsv4" {
+		fmt.Printf("DEBUG: Auth type is awsv4, AWSV4 struct: %+v\n", cfg.Auth.AWSV4)
+		if cfg.Auth.AWSV4 != nil {
+			fmt.Printf("DEBUG: Found aws_v4 config - AccessKey: '%s', SecretKey: '%s'\n", cfg.Auth.AWSV4.AccessKey, cfg.Auth.AWSV4.SecretKey)
+			if cfg.Auth.Identity == "" && cfg.Auth.AWSV4.AccessKey != "" {
+				cfg.Auth.Identity = cfg.Auth.AWSV4.AccessKey
+				fmt.Printf("DEBUG: Set Identity to: '%s'\n", cfg.Auth.Identity)
+			}
+			if cfg.Auth.Credential == "" && cfg.Auth.AWSV4.SecretKey != "" {
+				cfg.Auth.Credential = cfg.Auth.AWSV4.SecretKey
+				fmt.Printf("DEBUG: Set Credential to: '%s'\n", cfg.Auth.Credential)
+			}
+		} else {
+			fmt.Printf("DEBUG: AWSV4 struct is nil\n")
+		}
+	}
+
 	if err := validate(cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
@@ -239,6 +268,9 @@ func Load(configFile string) (*Config, error) {
 	return cfg, nil
 }
 
+// validate performs comprehensive validation of the configuration structure.
+// It ensures that all required fields are present and correctly configured
+// based on the selected providers and authentication methods.
 func validate(cfg *Config) error {
 	if cfg.Storage.Provider == "" {
 		return fmt.Errorf("storage provider is required")
@@ -247,16 +279,16 @@ func validate(cfg *Config) error {
 	switch cfg.Storage.Provider {
 	case "azure", "azureblob":
 		if cfg.Storage.Azure == nil {
-			return fmt.Errorf("azure storage config is required")
+			return fmt.Errorf("azure storage config is required for provider '%s'", cfg.Storage.Provider)
 		}
 		if cfg.Storage.Azure.AccountName == "" || cfg.Storage.Azure.AccountKey == "" {
 			if !cfg.Storage.Azure.UseSAS || cfg.Storage.Azure.SASToken == "" {
-				return fmt.Errorf("azure account name and key or SAS token are required")
+				return fmt.Errorf("azure account name and key or SAS token are required for provider '%s'", cfg.Storage.Provider)
 			}
 		}
 	case "s3":
 		if cfg.Storage.S3 == nil {
-			return fmt.Errorf("s3 storage config is required")
+			return fmt.Errorf("s3 storage config is required for provider '%s'", cfg.Storage.Provider)
 		}
 		// When using AWS profile or IAM roles, explicit credentials are not required
 		// Allow the SDK to use its credential chain (env vars, IAM role, etc.)
@@ -264,13 +296,13 @@ func validate(cfg *Config) error {
 		if cfg.Storage.S3.Endpoint != "" {
 			// For custom endpoints, we need explicit credentials
 			if cfg.Storage.S3.Profile == "" && cfg.Storage.S3.AccessKey == "" && cfg.Storage.S3.SecretKey == "" {
-				return fmt.Errorf("s3 credentials are required for custom endpoint: specify profile or access/secret keys")
+				return fmt.Errorf("s3 credentials are required for custom endpoint '%s': specify profile or access/secret keys", cfg.Storage.S3.Endpoint)
 			}
 		}
 		// For real AWS, credentials are optional - can use IAM roles
 	case "filesystem":
 		if cfg.Storage.FileSystem == nil {
-			return fmt.Errorf("filesystem storage config is required")
+			return fmt.Errorf("filesystem storage config is required for provider '%s'", cfg.Storage.Provider)
 		}
 	case "multi":
 		// For multi-provider, at least one backend must be configured
@@ -341,4 +373,11 @@ type SentryConfig struct {
 	ServerName           string   `mapstructure:"server_name" envconfig:"SENTRY_SERVER_NAME"`
 	Release              string   `mapstructure:"release" envconfig:"SENTRY_RELEASE"`
 	EnableLogs           bool     `mapstructure:"enable_logs" envconfig:"SENTRY_ENABLE_LOGS" default:"true"`
+}
+
+// OPAConfig contains Open Policy Agent configuration settings
+type OPAConfig struct {
+	Enabled bool          `mapstructure:"enabled" envconfig:"OPA_ENABLED" default:"false"`
+	URL     string        `mapstructure:"url" envconfig:"OPA_URL" default:"http://localhost:8181"`
+	Timeout time.Duration `mapstructure:"timeout" envconfig:"OPA_TIMEOUT" default:"5s"`
 }
