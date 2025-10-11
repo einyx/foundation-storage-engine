@@ -12,6 +12,13 @@ import (
 	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
+const (
+	// Size multiplier constants
+	bytesPerKB = 1024
+	bytesPerMB = 1024 * 1024
+	bytesPerGB = 1024 * 1024 * 1024
+)
+
 // Scanner provides file scanning capabilities using VirusTotal
 type Scanner struct {
 	client      *Client
@@ -94,13 +101,13 @@ func parseSize(sizeStr string) (int64, error) {
 	
 	multiplier := int64(1)
 	if strings.HasSuffix(sizeStr, "KB") {
-		multiplier = 1024
+		multiplier = bytesPerKB
 		sizeStr = strings.TrimSuffix(sizeStr, "KB")
 	} else if strings.HasSuffix(sizeStr, "MB") {
-		multiplier = 1024 * 1024
+		multiplier = bytesPerMB
 		sizeStr = strings.TrimSuffix(sizeStr, "MB")
 	} else if strings.HasSuffix(sizeStr, "GB") {
-		multiplier = 1024 * 1024 * 1024
+		multiplier = bytesPerGB
 		sizeStr = strings.TrimSuffix(sizeStr, "GB")
 	} else if strings.HasSuffix(sizeStr, "B") {
 		sizeStr = strings.TrimSuffix(sizeStr, "B")
@@ -111,5 +118,14 @@ func parseSize(sizeStr string) (int64, error) {
 		return 0, err
 	}
 	
-	return value * multiplier, nil
+	if value < 0 {
+		return 0, fmt.Errorf("size cannot be negative: %s", sizeStr)
+	}
+	
+	result := value * multiplier
+	if result < 0 {
+		return 0, fmt.Errorf("size overflow: %s", sizeStr)
+	}
+	
+	return result, nil
 }

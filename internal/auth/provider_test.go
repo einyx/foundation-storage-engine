@@ -1,9 +1,14 @@
 package auth
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,8 +62,8 @@ func TestNewProvider(t *testing.T) {
 			name: "awsv2 auth type",
 			cfg: config.AuthConfig{
 				Type:       "awsv2",
-				Identity:   "AKIAEXAMPLEKEY",
-				Credential: "exampleSecretKey",
+				Identity:   "TESTKEY12345",
+				Credential: "fakeSecretForTesting",
 			},
 			wantErr: false,
 		},
@@ -76,8 +81,8 @@ func TestNewProvider(t *testing.T) {
 			name: "awsv4 auth type",
 			cfg: config.AuthConfig{
 				Type:       "awsv4",
-				Identity:   "AKIAEXAMPLEKEY",
-				Credential: "exampleSecretKey",
+				Identity:   "TESTKEY12345",
+				Credential: "fakeSecretForTesting",
 			},
 			wantErr: false,
 		},
@@ -201,8 +206,8 @@ func TestBasicProvider(t *testing.T) {
 
 func TestAWSV2Provider(t *testing.T) {
 	provider := &AWSV2Provider{
-		identity:   "AKIAIOSFODNN7EXAMPLE",
-		credential: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		identity:   "TESTKEY67890EXAMPLE",
+		credential: "fakeTestSecretKey456NotRealCredentials789",
 	}
 
 	tests := []struct {
@@ -215,7 +220,7 @@ func TestAWSV2Provider(t *testing.T) {
 			name: "valid v2 signature",
 			setupReq: func(req *http.Request) {
 				// This is a simplified test - in reality, AWS v2 signatures are complex
-				req.Header.Set("Authorization", "AWS AKIAIOSFODNN7EXAMPLE:signature")
+				req.Header.Set("Authorization", "AWS TESTKEY67890EXAMPLE:signature")
 				req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
 			},
 			wantErr: true, // Will fail signature verification
@@ -262,10 +267,70 @@ func TestAWSV2Provider(t *testing.T) {
 	}
 }
 
+// generateAWSV4Signature generates a proper AWS V4 signature for testing
+func generateAWSV4Signature(method, uri, query, host, amzDate, contentHash, accessKey, secretKey, signedHeaders string) string {
+	// Extract date from amzDate
+	dateStr := amzDate[:8] // YYYYMMDD
+	region := "us-east-1"
+	service := "s3"
+	
+	// Build canonical request
+	canonicalURI := uri
+	if canonicalURI == "" {
+		canonicalURI = "/"
+	}
+	
+	canonicalQueryString := query
+	
+	// Build canonical headers for the signed headers
+	canonicalHeaders := ""
+	headersList := strings.Split(signedHeaders, ";")
+	for _, header := range headersList {
+		switch header {
+		case "host":
+			canonicalHeaders += fmt.Sprintf("host:%s\n", host)
+		case "x-amz-date":
+			canonicalHeaders += fmt.Sprintf("x-amz-date:%s\n", amzDate)
+		case "x-amz-content-sha256":
+			canonicalHeaders += fmt.Sprintf("x-amz-content-sha256:%s\n", contentHash)
+		}
+	}
+	
+	canonicalRequest := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s",
+		method, canonicalURI, canonicalQueryString, canonicalHeaders, signedHeaders, contentHash)
+	
+	// Create string to sign
+	algorithm := "AWS4-HMAC-SHA256"
+	credentialScope := fmt.Sprintf("%s/%s/%s/aws4_request", dateStr, region, service)
+	hashedCanonicalRequest := sha256.Sum256([]byte(canonicalRequest))
+	hashedCanonicalRequestHex := hex.EncodeToString(hashedCanonicalRequest[:])
+	
+	stringToSign := fmt.Sprintf("%s\n%s\n%s\n%s",
+		algorithm, amzDate, credentialScope, hashedCanonicalRequestHex)
+	
+	// Calculate signing key (same as in the main code)
+	kDate := hmacSha256([]byte("AWS4"+secretKey), dateStr)
+	kRegion := hmacSha256(kDate, region)
+	kService := hmacSha256(kRegion, service)
+	kSigning := hmacSha256(kService, "aws4_request")
+	
+	// Calculate signature
+	signature := hmacSha256(kSigning, stringToSign)
+	return hex.EncodeToString(signature)
+}
+
+// hmacSha256 helper function
+func hmacSha256(key []byte, data string) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write([]byte(data))
+	return h.Sum(nil)
+}
+
 func TestAWSV4Provider(t *testing.T) {
+	// These are fake test credentials, not real AWS keys
 	provider := &AWSV4Provider{
-		identity:   "AKIAIOSFODNN7EXAMPLE",
-		credential: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		identity:   "AKIATEST12345EXAMPLE",
+		credential: "testSecretKey123NotRealCredentials456",
 	}
 
 	tests := []struct {
@@ -277,13 +342,34 @@ func TestAWSV4Provider(t *testing.T) {
 		{
 			name: "valid v4 signature",
 			setupReq: func(req *http.Request) {
-				// AWS v4 signature format
+				// Generate proper AWS v4 signature for the test request
+				amzDate := "20230101T000000Z"
+				contentHash := "UNSIGNED-PAYLOAD"
+				signedHeaders := "host;x-amz-date"
+				
+				// Set required headers
+				req.Header.Set("X-Amz-Date", amzDate)
+				req.Header.Set("X-Amz-Content-Sha256", contentHash)
+				
+				// Generate the proper signature
+				signature := generateAWSV4Signature(
+					req.Method,           // GET
+					req.URL.Path,         // /bucket/key
+					"",                   // no query string
+					req.Host,             // host from request
+					amzDate,              // timestamp
+					contentHash,          // content hash
+					"AKIATEST12345EXAMPLE", // fake access key for testing
+					"testSecretKey123NotRealCredentials456", // fake secret key for testing
+					signedHeaders,        // signed headers
+				)
+				
+				// Set authorization header with proper signature
 				req.Header.Set("Authorization",
-					"AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20230101/us-east-1/s3/aws4_request, "+
-						"SignedHeaders=host;x-amz-date, Signature=abcd")
-				req.Header.Set("X-Amz-Date", "20230101T000000Z")
+					"AWS4-HMAC-SHA256 Credential=AKIATEST12345EXAMPLE/20230101/us-east-1/s3/aws4_request, "+
+						"SignedHeaders="+signedHeaders+", Signature="+signature)
 			},
-			wantErr: false, // Simplified validation in test implementation
+			wantErr: false,
 		},
 		{
 			name: "missing authorization header",
@@ -329,8 +415,8 @@ func TestAWSV4Provider(t *testing.T) {
 
 func TestFastAWSProvider(t *testing.T) {
 	provider := &FastAWSProvider{
-		accessKey: "AKIAIOSFODNN7EXAMPLE",
-		secretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", // pragma: allowlist secret
+		accessKey: "TESTKEY67890EXAMPLE",
+		secretKey: "fakeTestSecretKeyForValidation123456", // fake test secret, not real
 		cache:     make(map[string]cacheEntry),
 	}
 
@@ -343,7 +429,7 @@ func TestFastAWSProvider(t *testing.T) {
 		{
 			name: "valid v4 signature",
 			setupReq: func(req *http.Request) {
-				req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20230101/us-east-1/s3/aws4_request")
+				req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=TESTKEY67890EXAMPLE/20230101/us-east-1/s3/aws4_request")
 				req.Header.Set("X-Amz-Date", "20230101T000000Z")
 			},
 			wantErr: false, // Fast path validation
@@ -351,7 +437,7 @@ func TestFastAWSProvider(t *testing.T) {
 		{
 			name: "valid v2 signature",
 			setupReq: func(req *http.Request) {
-				req.Header.Set("Authorization", "AWS AKIAIOSFODNN7EXAMPLE:signature")
+				req.Header.Set("Authorization", "AWS TESTKEY67890EXAMPLE:signature")
 			},
 			wantErr: false, // Fast path validation
 		},

@@ -10,6 +10,8 @@ import (
 	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
+// Backend defines the interface for storage implementations.
+// It provides S3-compatible operations for bucket and object management.
 type Backend interface {
 	ListBuckets(ctx context.Context) ([]BucketInfo, error)
 	CreateBucket(ctx context.Context, bucket string) error
@@ -35,11 +37,13 @@ type Backend interface {
 	ListParts(ctx context.Context, bucket, key, uploadID string, maxParts int, partNumberMarker int) (*ListPartsResult, error)
 }
 
+// BucketInfo contains metadata about a storage bucket.
 type BucketInfo struct {
 	Name         string
 	CreationDate time.Time
 }
 
+// ListObjectsResult contains the result of a list objects operation.
 type ListObjectsResult struct {
 	IsTruncated    bool
 	Contents       []ObjectInfo
@@ -47,6 +51,7 @@ type ListObjectsResult struct {
 	CommonPrefixes []string
 }
 
+// Object represents a storage object with its content and metadata.
 type Object struct {
 	Body         io.ReadCloser
 	ContentType  string
@@ -56,6 +61,7 @@ type Object struct {
 	LastModified time.Time
 }
 
+// ObjectInfo contains metadata about a storage object without its content.
 type ObjectInfo struct {
 	Key          string
 	Size         int64
@@ -112,6 +118,9 @@ type Part struct {
 	LastModified time.Time
 }
 
+// NewBackend creates a new storage backend based on the provided configuration.
+// Supported providers: azure, azureblob, s3, filesystem, multi.
+// Returns an error if the provider is unsupported or configuration is invalid.
 func NewBackend(cfg config.StorageConfig) (Backend, error) {
 	switch cfg.Provider {
 	case "azure", "azureblob":
@@ -120,12 +129,12 @@ func NewBackend(cfg config.StorageConfig) (Backend, error) {
 		return NewS3Backend(cfg.S3)
 	case "filesystem":
 		if cfg.FileSystem == nil {
-			return nil, fmt.Errorf("filesystem configuration required")
+			return nil, fmt.Errorf("filesystem configuration required for provider '%s'", cfg.Provider)
 		}
 		return NewFileSystemBackend(cfg.FileSystem)
 	case "multi":
 		return NewMultiBackendSimple(&cfg)
 	default:
-		return nil, fmt.Errorf("unsupported storage provider: %s", cfg.Provider)
+		return nil, fmt.Errorf("unsupported storage provider: '%s' (supported: azure, azureblob, s3, filesystem, multi)", cfg.Provider)
 	}
 }

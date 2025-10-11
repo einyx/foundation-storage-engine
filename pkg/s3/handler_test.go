@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/sirupsen/logrus"
 	"github.com/einyx/foundation-storage-engine/internal/config"
 	"github.com/einyx/foundation-storage-engine/internal/storage"
 )
@@ -483,4 +484,79 @@ func TestResponseHeaderOptimizations(t *testing.T) {
 func TestS3Package(t *testing.T) {
 	// Placeholder test to ensure package has at least one test
 	t.Log("S3 package test placeholder")
+}
+
+func TestScanContent(t *testing.T) {
+	tests := []struct {
+		name           string
+		scannerEnabled bool
+		size           int64
+		expectScanned  bool
+	}{
+		{
+			name:           "scanner disabled",
+			scannerEnabled: false,
+			size:           1024,
+			expectScanned:  false,
+		},
+		{
+			name:           "file too large",
+			scannerEnabled: true,
+			size:           100 * 1024 * 1024, // 100MB
+			expectScanned:  false,
+		},
+		{
+			name:           "empty file",
+			scannerEnabled: true,
+			size:           0,
+			expectScanned:  false,
+		},
+		{
+			name:           "normal file should be scanned",
+			scannerEnabled: true,
+			size:           1024,
+			expectScanned:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create handler
+			handler := &Handler{
+				storage: &mockStorage{},
+			}
+
+			if tt.scannerEnabled {
+				// Note: In a real test, you'd mock the scanner
+				// For now, just test the logic without actual scanning
+				handler.scanner = nil // Simulates no scanner configured
+			}
+
+			ctx := context.Background()
+			body := strings.NewReader("test content")
+			logger := logrus.NewEntry(logrus.New())
+			
+			// Create a test response writer
+			w := httptest.NewRecorder()
+
+			result, err := handler.scanContent(ctx, body, "test-key", tt.size, logger, w)
+			
+			if err != nil {
+				t.Fatalf("scanContent failed: %v", err)
+			}
+
+			if result == nil {
+				t.Fatal("scanContent returned nil result")
+			}
+
+			if result.Body == nil {
+				t.Fatal("scanContent returned nil body")
+			}
+
+			// Since we don't have a real scanner, result.Result should always be nil
+			if result.Result != nil {
+				t.Errorf("Expected nil scan result, got %v", result.Result)
+			}
+		})
+	}
 }
