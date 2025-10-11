@@ -429,16 +429,88 @@ func (fs *FileSystemBackend) DeleteObject(ctx context.Context, bucket, key strin
 		return fmt.Errorf("invalid path parameters: %w", err)
 	}
 
+	// Check if this is a directory marker
+	isDirectoryMarker := strings.HasSuffix(key, "/")
+
+	if isDirectoryMarker {
+		// For directory markers, remove the directory and all empty parent directories
+		err = os.RemoveAll(objectPath)
+		if os.IsNotExist(err) {
+			return nil // S3 behavior: deleting non-existent object succeeds
+		}
+		if err != nil {
+			return err
+		}
+		
+		// Clean up empty parent directories
+		fs.cleanupEmptyDirectories(bucket, filepath.Dir(key))
+		return nil
+	}
+
+	// Regular file deletion
 	err = os.Remove(objectPath)
 	if os.IsNotExist(err) {
 		return nil // S3 behavior: deleting non-existent object succeeds
+	}
+	if err != nil {
+		return err
 	}
 
 	// Clean up metadata file if it exists
 	metadataPath := objectPath + ".meta"
 	_ = os.Remove(metadataPath)
 
-	return err
+	// Clean up empty parent directories after deleting the file
+	fs.cleanupEmptyDirectories(bucket, filepath.Dir(key))
+
+	return nil
+}
+
+// cleanupEmptyDirectories recursively removes empty directories starting from the given path
+func (fs *FileSystemBackend) cleanupEmptyDirectories(bucket, dirPath string) {
+	// Don't clean up the bucket root directory
+	if dirPath == "" || dirPath == "." || dirPath == "/" {
+		return
+	}
+
+	fullDirPath, err := fs.secureObjectPath(bucket, dirPath)
+	if err != nil {
+		return // Skip cleanup if path is invalid
+	}
+
+	// Check if directory exists and is empty
+	entries, err := os.ReadDir(fullDirPath)
+	if err != nil {
+		return // Directory doesn't exist or can't be read
+	}
+
+	// Filter out any .meta files when checking if directory is empty
+	hasNonMetaFiles := false
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".meta") {
+			hasNonMetaFiles = true
+			break
+		}
+	}
+
+	// If directory is empty (or only contains .meta files), remove it
+	if !hasNonMetaFiles {
+		// Remove any .meta files first
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name(), ".meta") {
+				_ = os.Remove(filepath.Join(fullDirPath, entry.Name()))
+			}
+		}
+		
+		// Remove the empty directory
+		if err := os.Remove(fullDirPath); err == nil {
+			// Successfully removed directory, try to clean up parent
+			parentDir := filepath.Dir(dirPath)
+			if parentDir != dirPath { // Avoid infinite recursion
+				fs.cleanupEmptyDirectories(bucket, parentDir)
+			}
+		}
+	}
 }
 
 func (fs *FileSystemBackend) HeadObject(ctx context.Context, bucket, key string) (*ObjectInfo, error) {
