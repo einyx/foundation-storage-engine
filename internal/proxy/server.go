@@ -431,8 +431,6 @@ func (s *Server) setupRoutes() {
 }
 
 func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
-	// Store user context for admin checks
-	ctx := r.Context()
 	// Handle virtual-hosted-style requests
 	// Extract bucket from Host header if it matches pattern: bucket.s3.domain
 	host := r.Host
@@ -475,36 +473,50 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 
 	if s.config.Auth.Type != "none" {
 		// Allow unauthenticated access to monitoring endpoints and docs
-		// UI access is now handled by Auth0 middleware in setupRoutes
 		isPublicPath := s.isPublicPath(r.URL.Path)
+		isUIPath := strings.HasPrefix(r.URL.Path, "/ui/") || r.URL.Path == "/ui"
 
 		authenticated := s.checkAuth0Session(r)
 
 		if !authenticated && !isPublicPath {
 			s.cleanMinIOClientHeaders(r)
 
+			// For UI paths, redirect to Auth0 login - don't try AWS auth
+			if isUIPath {
+				if s.auth0 != nil && s.auth0.config.Enabled {
+					// Let Auth0 middleware handle the redirect
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+			}
+
+			// Try API key authentication for S3 operations
 			if !authenticated {
 				authenticated = s.tryAPIKeyAuth(r)
 			}
 
-			if !authenticated {
-				// Fall back to standard authentication (which may include configured fallback credentials)
+			// For S3 operations (non-UI paths), require AWS signature authentication
+			if !authenticated && !isUIPath {
 				if err := s.auth.Authenticate(r); err != nil {
+					logrus.WithFields(logrus.Fields{
+						"path": r.URL.Path,
+						"method": r.Method,
+						"error": err.Error(),
+					}).Warn("AWS signature authentication failed")
 					w.WriteHeader(http.StatusForbidden)
 					_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
 					return
 				}
 			}
 			
-			// Store user context if we have Auth0 info
-			if authenticated && s.auth0 != nil {
+			// Store user context if we have Auth0 info for UI operations
+			if authenticated && isUIPath && s.auth0 != nil {
 				if session, err := s.auth0.store.Get(r, sessionName); err == nil {
-					// Create context with user info for downstream handlers
 					var userRoles []string
 					if rolesStr, ok := session.Values["user_roles"].(string); ok && rolesStr != "" {
 						userRoles = strings.Split(rolesStr, ",")
 					}
-					ctx = r.Context()
+					ctx := r.Context()
 					ctx = context.WithValue(ctx, "user_roles", userRoles)
 					ctx = context.WithValue(ctx, "user_sub", session.Values["user_sub"])
 					ctx = context.WithValue(ctx, "is_admin", isAdminUser(userRoles))

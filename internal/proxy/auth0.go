@@ -24,6 +24,11 @@ import (
 	"gopkg.in/square/go-jose.v2/jwt"
 )
 
+func init() {
+	// Register time.Time with gob to prevent encoding errors if it's ever stored in sessions
+	gob.Register(time.Time{})
+}
+
 // Auth0 configuration constants
 const (
 	// Session configuration
@@ -459,12 +464,13 @@ func (h *Auth0Handler) createUserSession(session *sessions.Session, userInfo map
 
 	// Add security metadata
 	now := time.Now()
+	expiryTime := now.Add(sessionMaxAge)
 	session.Values["created_at"] = now.Unix()
 	session.Values["last_activity"] = now.Unix()
-	session.Values["expires_at"] = now.Add(sessionMaxAge)
+	session.Values["expires_at"] = expiryTime.Unix() // Store as Unix timestamp, not time.Time
 	session.Values["integrity_hash"] = h.computeSessionIntegrityHash(
 		h.safeStringValue(userInfo["sub"]), 
-		now.Add(sessionMaxAge),
+		expiryTime,
 	)
 
 	// Save the session
@@ -593,9 +599,6 @@ func (h *Auth0Handler) computeSessionIntegrityHash(userSub string, expiry time.T
 // Additional helper functions
 
 func getRedirectURI(r *http.Request, configURI string) string {
-	if configURI != "" {
-		return configURI
-	}
 	scheme := "http"
 	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
 		scheme = "https"
@@ -604,6 +607,18 @@ func getRedirectURI(r *http.Request, configURI string) string {
 	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
 		host = forwardedHost
 	}
+	
+	// If configURI is set, check if it's a relative path and convert to full URL
+	if configURI != "" {
+		if strings.HasPrefix(configURI, "/") {
+			// Relative path - convert to full URL
+			return fmt.Sprintf("%s://%s%s", scheme, host, configURI)
+		}
+		// Already a full URL
+		return configURI
+	}
+	
+	// Default callback path
 	return fmt.Sprintf("%s://%s/auth/callback", scheme, host)
 }
 

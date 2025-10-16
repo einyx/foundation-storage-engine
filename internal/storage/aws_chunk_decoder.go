@@ -3,10 +3,12 @@ package storage
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
+	"time"
 	
 	"github.com/sirupsen/logrus"
 )
@@ -136,9 +138,19 @@ func (d *AWSChunkDecoder) streamChunkData(p []byte, chunkSize int64) (int, error
 		toRead = chunkSize
 	}
 
-	// Read in smaller chunks to avoid timeouts
+	// Read with timeout to avoid hanging
 	totalRead := 0
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	
 	for totalRead < int(toRead) {
+		// Check for timeout
+		select {
+		case <-ctx.Done():
+			return totalRead, fmt.Errorf("chunk read timeout after 30 seconds")
+		default:
+		}
+		
 		n, err := d.reader.Read(p[totalRead:toRead])
 		totalRead += n
 		if err != nil {
@@ -146,6 +158,11 @@ func (d *AWSChunkDecoder) streamChunkData(p []byte, chunkSize int64) (int, error
 				break // We got some data before EOF
 			}
 			return totalRead, fmt.Errorf("failed to read chunk data: %w", err)
+		}
+		
+		// If no progress is made, break to avoid infinite loop
+		if n == 0 {
+			break
 		}
 	}
 	n := totalRead
@@ -159,42 +176,98 @@ func (d *AWSChunkDecoder) streamChunkData(p []byte, chunkSize int64) (int, error
 		remaining := chunkSize - int64(n)
 		
 		// Protect against unreasonably large allocations
-		const maxChunkSize = 100 * 1024 * 1024 // 100MB max chunk
 		if remaining > maxChunkSize {
 			return n, fmt.Errorf("chunk size too large: %d bytes", remaining)
 		}
 		
 		d.currentChunk = make([]byte, remaining)
-		_, err := io.ReadFull(d.reader, d.currentChunk)
+		
+		// Use timeout for ReadFull to prevent hanging
+		readCtx, readCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer readCancel()
+		
+		// Read remaining data with timeout
+		err := d.readFullWithTimeout(readCtx, d.currentChunk)
 		if err != nil {
 			return n, fmt.Errorf("failed to read remaining chunk data: %w", err)
 		}
 		d.currentChunkPos = 0
 	}
 
-	// Read trailing CRLF
+	// Read trailing CRLF with timeout
 	crlf := make([]byte, 2)
-	if _, err := io.ReadFull(d.reader, crlf); err != nil {
+	crlfCtx, crlfCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer crlfCancel()
+	
+	if err := d.readFullWithTimeout(crlfCtx, crlf); err != nil {
 		if err != io.EOF && err != io.ErrUnexpectedEOF {
 			// This might be the last chunk without trailing CRLF
-			// Continue anyway
+			// Log but continue anyway
+			logrus.WithError(err).Debug("Failed to read trailing CRLF, continuing")
 		}
 	}
 
 	return n, nil
 }
 
+// readFullWithTimeout reads exactly len(buf) bytes with a timeout
+func (d *AWSChunkDecoder) readFullWithTimeout(ctx context.Context, buf []byte) error {
+	total := 0
+	for total < len(buf) {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("read timeout: %w", ctx.Err())
+		default:
+		}
+		
+		n, err := d.reader.Read(buf[total:])
+		total += n
+		if err != nil {
+			if err == io.EOF && total > 0 {
+				return io.ErrUnexpectedEOF
+			}
+			return err
+		}
+		
+		// If no progress is made, return error to avoid infinite loop
+		if n == 0 {
+			return io.ErrUnexpectedEOF
+		}
+	}
+	return nil
+}
+
 func (d *AWSChunkDecoder) readLine() (string, error) {
-	line, err := d.reader.ReadString('\n')
-	if err != nil {
+	// Add timeout to prevent hanging on ReadString
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	// Read line with timeout
+	lineChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+	
+	go func() {
+		line, err := d.reader.ReadString('\n')
+		if err != nil {
+			errChan <- err
+			return
+		}
+		
+		// Trim line ending
+		line = strings.TrimSuffix(line, "\n")
+		line = strings.TrimSuffix(line, "\r")
+		
+		lineChan <- line
+	}()
+	
+	select {
+	case <-ctx.Done():
+		return "", fmt.Errorf("readline timeout after 10 seconds")
+	case line := <-lineChan:
+		return line, nil
+	case err := <-errChan:
 		return "", err
 	}
-
-	// Trim line ending
-	line = strings.TrimSuffix(line, "\n")
-	line = strings.TrimSuffix(line, "\r")
-
-	return line, nil
 }
 
 // GetBytesRead returns the total bytes read (including chunk overhead)

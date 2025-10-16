@@ -24,6 +24,7 @@ const (
 	multipartThreshold = 10 * 1024 * 1024  // 10MB - use multipart early to avoid large single uploads
 	partSize           = 5 * 1024 * 1024   // 5MB - smaller parts to avoid timeouts
 	maxPartSize        = 10 * 1024 * 1024  // 10MB - keep parts small for reliability
+	minPartSize        = 1 * 1024 * 1024   // 1MB - minimum part size for very slow clients
 )
 
 type chunkedDecodingReader struct {
@@ -307,12 +308,12 @@ func (s *S3Backend) getOrCreateClient(bucketCfg *config.BucketConfig) (*s3.S3, e
 		dialTimeout = 10 * time.Second // Slightly longer for ME region
 	}
 
-	// Reduce retries and timeout for better responsiveness
-	maxRetries := 2
-	httpTimeout := 30 * time.Second
+	// Use longer timeouts for large file uploads
+	maxRetries := 3
+	httpTimeout := 300 * time.Second // 5 minutes for large multipart uploads
 	if bucketCfg.Region == "me-central-1" {
-		maxRetries = 3 // Slightly more for problematic region
-		httpTimeout = 60 * time.Second
+		maxRetries = 5 // More retries for problematic region
+		httpTimeout = 600 * time.Second // 10 minutes for ME region
 	}
 	
 	awsConfig := &aws.Config{
@@ -1175,7 +1176,8 @@ func (s *S3Backend) UploadPart(ctx context.Context, bucket, key, uploadID string
 		
 		// For small parts (<= 10MB), buffer in memory for best performance
 		if size <= 10*1024*1024 {
-			data, err := io.ReadAll(limitedReader)
+			// Use context-aware reading with adaptive timeout for slow clients
+			data, err := s.readWithAdaptiveTimeout(ctx, limitedReader, size)
 			if err != nil {
 				return "", fmt.Errorf("failed to read part data: %w", err)
 			}
@@ -1210,7 +1212,12 @@ func (s *S3Backend) UploadPart(ctx context.Context, bucket, key, uploadID string
 	uploadCtx := ctx
 	if size > 1024*1024 { // For parts > 1MB, ensure reasonable timeout
 		var cancel context.CancelFunc
-		uploadCtx, cancel = context.WithTimeout(ctx, 5*time.Minute)
+		// Use longer timeout for large parts, especially in problematic regions
+		timeout := 10 * time.Minute
+		if strings.Contains(realBucket, "me-central-1") {
+			timeout = 15 * time.Minute
+		}
+		uploadCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	
@@ -1431,12 +1438,23 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 		return s.putObjectMultipartStreaming(ctx, virtualBucket, realBucket, key, reader, metadata)
 	}
 	
-	// Use concurrent uploads with a worker pool
-	const maxConcurrentUploads = 8 // Increased for better throughput
+	// Use fewer concurrent uploads to avoid resource contention in small pods
+	const maxConcurrentUploads = 3 // Reduced for resource-constrained environments
 	
-	// For now use default part size since we might not know total size
-	// TODO: In the future, we could implement dynamic part sizing based on file size
+	// Use dynamic part sizing - smaller parts for better reliability with slow clients
 	actualPartSize := partSize
+	
+	// Check if this client has been having timeout issues
+	if s.shouldUseResilientUpload(virtualBucket) {
+		// Use much smaller parts for problematic clients
+		actualPartSize = minPartSize // 1MB instead of 5MB
+		logrus.WithFields(logrus.Fields{
+			"bucket": virtualBucket,
+			"key":    key,
+			"originalPartSize": partSize / 1024 / 1024,
+			"reducedPartSize": actualPartSize / 1024 / 1024,
+		}).Info("Using smaller parts for slow/problematic client")
+	}
 	type partData struct {
 		partNumber int64
 		data       []byte
@@ -1582,8 +1600,8 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 				"readSize":   readSize,
 			}).Debug("Attempting to read part data")
 			
-			// Use io.ReadAtLeast instead of io.ReadFull to handle partial reads better
-			n, readErr := io.ReadAtLeast(reader, buf[:readSize], 1)
+			// Use adaptive timeout reading for slow clients instead of blocking ReadAtLeast
+			n, readErr := s.readChunkWithTimeout(ctx, reader, buf[:readSize])
 			readDuration := time.Since(readStart)
 			
 			logrus.WithFields(logrus.Fields{
@@ -1594,6 +1612,12 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 			}).Debug("Part data read completed")
 			
 			if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
+				// Check if this is a context cancellation (client disconnected)
+				if ctx.Err() != nil {
+					logrus.WithError(ctx.Err()).Debug("Client cancelled upload")
+					uploadErr = ctx.Err()
+					return
+				}
 				logrus.WithError(readErr).Error("Failed to read part data")
 				uploadErr = fmt.Errorf("failed to read part: %w", readErr)
 				return
@@ -1753,6 +1777,151 @@ func (s *S3Backend) shouldUseResilientUpload(bucket string) bool {
 	}
 	
 	return false
+}
+
+// readWithAdaptiveTimeout reads data with adaptive timeout handling for slow clients
+func (s *S3Backend) readWithAdaptiveTimeout(ctx context.Context, reader io.Reader, maxSize int64) ([]byte, error) {
+	// Start with a reasonable timeout based on size
+	baseTimeout := 30 * time.Second
+	if maxSize > 5*1024*1024 { // For parts > 5MB
+		baseTimeout = 60 * time.Second
+	}
+	
+	data := make([]byte, 0, maxSize)
+	buf := make([]byte, 64*1024) // 64KB chunks
+	totalRead := int64(0)
+	consecutiveTimeouts := 0
+	currentTimeout := baseTimeout
+	
+	for totalRead < maxSize {
+		// Adjust read size for remaining data
+		readSize := len(buf)
+		remaining := maxSize - totalRead
+		if int64(readSize) > remaining {
+			readSize = int(remaining)
+		}
+		
+		// Create timeout context for this chunk
+		readCtx, cancel := context.WithTimeout(ctx, currentTimeout)
+		
+		// Channel for read result
+		type readResult struct {
+			n   int
+			err error
+		}
+		resultChan := make(chan readResult, 1)
+		
+		// Start read in goroutine
+		go func() {
+			n, err := reader.Read(buf[:readSize])
+			resultChan <- readResult{n: n, err: err}
+		}()
+		
+		// Wait for read or timeout
+		select {
+		case result := <-resultChan:
+			cancel()
+			
+			if result.n > 0 {
+				data = append(data, buf[:result.n]...)
+				totalRead += int64(result.n)
+				consecutiveTimeouts = 0 // Reset timeout counter
+				
+				// Adjust timeout based on progress
+				if consecutiveTimeouts == 0 && currentTimeout > baseTimeout {
+					currentTimeout = baseTimeout // Reset to normal timeout
+				}
+			}
+			
+			if result.err == io.EOF {
+				return data, nil
+			}
+			
+			if result.err != nil {
+				return data, fmt.Errorf("read error after %d bytes: %w", totalRead, result.err)
+			}
+			
+		case <-readCtx.Done():
+			cancel()
+			
+			// Check if parent context was cancelled (client disconnected)
+			if ctx.Err() != nil {
+				logrus.WithFields(logrus.Fields{
+					"bytes_read": totalRead,
+					"max_size":   maxSize,
+					"error":      ctx.Err(),
+				}).Debug("Client cancelled request during upload")
+				return data, ctx.Err()
+			}
+			
+			consecutiveTimeouts++
+			
+			logrus.WithFields(logrus.Fields{
+				"bytes_read":          totalRead,
+				"max_size":           maxSize,
+				"timeout":            currentTimeout,
+				"consecutive_timeouts": consecutiveTimeouts,
+			}).Warn("Read timeout - client may be slow, extending timeout")
+			
+			// Progressively increase timeout for slow clients
+			// Be much more patient - allow up to 20 consecutive timeouts
+			if consecutiveTimeouts < 20 {
+				currentTimeout = currentTimeout + 30*time.Second // Increase by 30s each time instead of doubling
+				if currentTimeout > 10*time.Minute {
+					currentTimeout = 10 * time.Minute // Cap at 10 minutes
+				}
+				continue // Retry with longer timeout
+			} else {
+				return data, fmt.Errorf("client too slow - %d consecutive timeouts reading part data", consecutiveTimeouts)
+			}
+		}
+	}
+	
+	return data, nil
+}
+
+// readChunkWithTimeout reads a single chunk with timeout handling for slow clients
+func (s *S3Backend) readChunkWithTimeout(ctx context.Context, reader io.Reader, buf []byte) (int, error) {
+	// Start with 2-minute timeout for chunk reads (more patient)
+	timeout := 2 * time.Minute
+	readCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	
+	type readResult struct {
+		n   int
+		err error
+	}
+	resultChan := make(chan readResult, 1)
+	
+	// Start read in goroutine
+	go func() {
+		// Use ReadAtLeast for at least 1 byte, but don't block indefinitely
+		n, err := io.ReadAtLeast(reader, buf, 1)
+		resultChan <- readResult{n: n, err: err}
+	}()
+	
+	// Wait for read or timeout
+	select {
+	case result := <-resultChan:
+		return result.n, result.err
+	case <-readCtx.Done():
+		// Check if parent context was cancelled (client disconnected)
+		if ctx.Err() != nil {
+			logrus.WithFields(logrus.Fields{
+				"buffer_size": len(buf),
+				"error":       ctx.Err(),
+			}).Debug("Client cancelled request during chunk read")
+			return 0, ctx.Err()
+		}
+		
+		logrus.WithFields(logrus.Fields{
+			"buffer_size": len(buf),
+			"timeout":     timeout,
+		}).Warn("Chunk read timed out - client connection may be slow or unstable")
+		
+		// Return a timeout error that will be handled by the upload logic
+		return 0, fmt.Errorf("chunk read timeout after %v: %w", timeout, readCtx.Err())
+	}
 }
 
 // putObjectMultipartResilient uses the resilient uploader for problematic servers

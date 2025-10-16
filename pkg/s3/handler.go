@@ -1057,8 +1057,8 @@ type ScanContentResult struct {
 
 // scanContent scans the provided content with VirusTotal if enabled and returns the scanned content
 func (h *Handler) scanContent(ctx context.Context, body io.Reader, key string, size int64, logger *logrus.Entry, w http.ResponseWriter) (*ScanContentResult, error) {
-	if h.scanner == nil || !h.scanner.IsEnabled() || size <= 0 || size > 32*1024*1024 {
-		// Skip scanning if scanner disabled, empty file, or file too large
+	if h.scanner == nil || !h.scanner.IsEnabled() || size <= 0 || size > 1024*1024 {
+		// Skip scanning if scanner disabled, empty file, or file > 1MB (reduced from 32MB to avoid upload delays)
 		return &ScanContentResult{Body: body}, nil
 	}
 
@@ -2001,6 +2001,7 @@ func (h *Handler) headBucket(w http.ResponseWriter, r *http.Request, bucket stri
 }
 
 func (h *Handler) sendError(w http.ResponseWriter, err error, status int) {
+
 	type errorResponse struct {
 		XMLName xml.Name `xml:"Error"`
 		Code    string   `xml:"Code"`
@@ -2030,6 +2031,18 @@ func (h *Handler) sendError(w http.ResponseWriter, err error, status int) {
 	}); encErr != nil {
 		logrus.WithError(encErr).Error("Failed to encode error response")
 	}
+}
+
+// getClientIP extracts client IP from various headers and sources
+func (h *Handler) getClientIP(xForwardedFor string) string {
+	if xForwardedFor != "" {
+		// X-Forwarded-For can contain multiple IPs, take the first one
+		parts := strings.Split(xForwardedFor, ",")
+		if len(parts) > 0 {
+			return strings.TrimSpace(parts[0])
+		}
+	}
+	return ""
 }
 
 // Multipart upload operations
@@ -2144,17 +2157,29 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// Handle AWS chunked encoding if present
 	var body io.Reader = r.Body
+	userAgent := r.Header.Get("User-Agent")
+	isAWSCLI := strings.Contains(userAgent, "aws-cli") || strings.Contains(userAgent, "Botocore")
+	
 	if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" ||
 		r.Header.Get("Content-Encoding") == "aws-chunked" {
-		// Use SmartChunkDecoder which can handle both chunked and raw data
-		body = storage.NewSmartChunkDecoder(r.Body)
+		
+		// For AWS CLI clients, bypass SmartChunkDecoder to avoid hanging issues
+		if isAWSCLI {
+			logger.WithField("userAgent", userAgent).Info("AWS CLI detected - using direct body reader to avoid chunked decoder issues")
+			// For AWS CLI, use the body directly and trust the Content-Length
+			// AWS CLI handles chunked encoding correctly at the HTTP level
+		} else {
+			// Use SmartChunkDecoder for other clients that might have chunked encoding issues
+			body = storage.NewSmartChunkDecoder(r.Body)
+			logger.Info("Using smart chunk decoder for part upload")
+		}
+		
 		// For chunked uploads, the size is the decoded content length
 		if decodedSize := r.Header.Get("x-amz-decoded-content-length"); decodedSize != "" {
 			if ds, err := strconv.ParseInt(decodedSize, 10, 64); err == nil {
 				size = ds
 			}
 		}
-		logger.Info("Using smart chunk decoder for part upload")
 	}
 
 	uploadStart := time.Now()
@@ -2524,3 +2549,4 @@ func isClientDisconnectError(err error) bool {
 		strings.Contains(errStr, "connection reset") ||
 		strings.Contains(errStr, "write: connection refused")
 }
+

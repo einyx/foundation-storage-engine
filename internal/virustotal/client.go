@@ -19,9 +19,9 @@ import (
 const (
 	// API limits
 	maxFileSizeDefault = 32 * 1024 * 1024 // 32MB
-	apiTimeout         = 30 * time.Second
-	pollInterval       = 5 * time.Second
-	maxPollAttempts    = 60 // 5 minutes total
+	apiTimeout         = 10 * time.Second  // Reduced from 30s
+	pollInterval       = 2 * time.Second   // Reduced from 5s
+	maxPollAttempts    = 5                 // Reduced from 60 (10 seconds total instead of 5 minutes)
 )
 
 var (

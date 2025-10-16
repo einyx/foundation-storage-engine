@@ -219,18 +219,8 @@ func (p *AWSV4Provider) Authenticate(r *http.Request) error {
 		return fmt.Errorf("no fallback credentials configured - use API keys")
 	}
 	
-	// If using fallback credentials, only allow for API clients (not browsers)
-	if p.identity == "minio" {
-		userAgent := r.Header.Get("User-Agent")
-		isBrowser := strings.Contains(strings.ToLower(userAgent), "mozilla") || 
-			strings.Contains(strings.ToLower(userAgent), "chrome") || 
-			strings.Contains(strings.ToLower(userAgent), "safari") ||
-			strings.Contains(strings.ToLower(userAgent), "edge")
-		
-		if isBrowser {
-			return fmt.Errorf("fallback credentials not allowed for browser clients")
-		}
-	}
+	// Allow browser access to fallback credentials (less secure but more convenient)
+	// Note: In production, consider using proper Auth0 or API key authentication instead
 
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
@@ -298,7 +288,25 @@ func (p *AWSV4Provider) Authenticate(r *http.Request) error {
 	for _, header := range signedHeadersList {
 		value := r.Header.Get(header)
 		if header == "host" {
-			value = r.Host
+			// Try to get the original host from X-Forwarded-Host or X-Original-Host first
+			if originalHost := r.Header.Get("X-Forwarded-Host"); originalHost != "" {
+				value = originalHost
+				logrus.WithFields(logrus.Fields{
+					"original_host": r.Host,
+					"forwarded_host": originalHost,
+				}).Debug("Using X-Forwarded-Host for signature validation")
+			} else if originalHost := r.Header.Get("X-Original-Host"); originalHost != "" {
+				value = originalHost
+				logrus.WithFields(logrus.Fields{
+					"original_host": r.Host,
+					"x_original_host": originalHost,
+				}).Debug("Using X-Original-Host for signature validation")
+			} else {
+				value = r.Host
+				logrus.WithFields(logrus.Fields{
+					"host": r.Host,
+				}).Debug("Using request Host for signature validation")
+			}
 		}
 		canonicalHeaders += fmt.Sprintf("%s:%s\n", strings.ToLower(header), strings.TrimSpace(value))
 	}

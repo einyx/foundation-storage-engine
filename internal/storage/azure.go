@@ -27,6 +27,47 @@ import (
 	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
+// contentLengthValidator wraps an io.ReadCloser to validate content length
+type contentLengthValidator struct {
+	reader       io.ReadCloser
+	expectedSize int64
+	actualSize   int64
+	key          string
+}
+
+func (v *contentLengthValidator) Read(p []byte) (int, error) {
+	n, err := v.reader.Read(p)
+	v.actualSize += int64(n)
+	
+	// Check if we're reading more than expected
+	if v.actualSize > v.expectedSize {
+		logrus.WithFields(logrus.Fields{
+			"key":          v.key,
+			"expected":     v.expectedSize,
+			"actual":       v.actualSize,
+			"excess":       v.actualSize - v.expectedSize,
+		}).Error("Content-length exceeded: reading more data than expected")
+		return n, fmt.Errorf("content-length exceeded: expected %d, got %d+", v.expectedSize, v.actualSize)
+	}
+	
+	// If we hit EOF, validate final size
+	if err == io.EOF && v.actualSize != v.expectedSize {
+		logrus.WithFields(logrus.Fields{
+			"key":          v.key,
+			"expected":     v.expectedSize,
+			"actual":       v.actualSize,
+			"shortfall":    v.expectedSize - v.actualSize,
+		}).Error("Content-length mismatch: premature end of stream")
+		return n, fmt.Errorf("content-length mismatch: expected %d, got %d", v.expectedSize, v.actualSize)
+	}
+	
+	return n, err
+}
+
+func (v *contentLengthValidator) Close() error {
+	return v.reader.Close()
+}
+
 const (
 	// Buffer sizes
 	defaultBufferSize = 1 * 1024 * 1024 // 1MB
@@ -35,11 +76,11 @@ const (
 	// Azure limits and configuration
 	azureBlockIDFormat = "%010d"
 	maxPagesToSearch = 10
-	maxConcurrentUploads = 4
+	maxConcurrentUploads = 10
 	minResultsToTruncate = 10 // Minimum results to continue pagination with blob path marker
 	
 	// Timeouts and delays
-	defaultClientTimeout = 300 * time.Second
+	defaultClientTimeout = 1800 * time.Second  // 30 minutes for large file operations
 	defaultRetryDelay = 500 * time.Millisecond
 	maxRetryDelay = 5 * time.Second
 	maxRetries = 1
@@ -883,10 +924,23 @@ func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 		return nil, wrapAzureError("get blob properties", bucket, normalizedKey, err)
 	}
 
-	// Download the blob
-	downloadResponse, err := blobClient.DownloadStream(ctx, nil)
+	expectedSize := *props.ContentLength
+	
+	// Download the blob with content-length validation
+	downloadResponse, err := blobClient.DownloadStream(ctx, &blob.DownloadStreamOptions{
+		// Force Azure to validate content-length
+		Range: blob.HTTPRange{},
+	})
 	if err != nil {
 		return nil, wrapAzureError("download blob", bucket, normalizedKey, err)
+	}
+
+	// Wrap the response body with content-length validation
+	validatedBody := &contentLengthValidator{
+		reader:       downloadResponse.Body,
+		expectedSize: expectedSize,
+		actualSize:   0,
+		key:          normalizedKey,
 	}
 
 	// Get metadata
@@ -902,9 +956,9 @@ func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 	}
 
 	return &Object{
-		Body:         downloadResponse.Body,
+		Body:         validatedBody,
 		ContentType:  *props.ContentType,
-		Size:         *props.ContentLength,
+		Size:         expectedSize,
 		ETag:         etag,
 		LastModified: *props.LastModified,
 		Metadata:     metadata,
@@ -1204,12 +1258,14 @@ func (a *AzureBackend) InitiateMultipartUpload(ctx context.Context, bucket, key 
 }
 
 func (a *AzureBackend) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, reader io.Reader, size int64) (string, error) {
-	// Acquire semaphore
+	// Acquire semaphore with timeout to prevent blocking
 	select {
 	case a.uploadSem <- struct{}{}:
 		defer func() { <-a.uploadSem }()
 	case <-ctx.Done():
 		return "", ctx.Err()
+	case <-time.After(30 * time.Second):
+		return "", fmt.Errorf("upload semaphore timeout after 30s")
 	}
 
 	logrus.WithFields(logrus.Fields{
@@ -1232,7 +1288,7 @@ func (a *AzureBackend) UploadPart(ctx context.Context, bucket, key, uploadID str
 	// Get block blob client
 	blockBlobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlockBlobClient(key)
 
-	// Buffer the data for Azure SDK
+	// Buffer the data for Azure SDK (required for ReadSeeker interface)
 	data, err := io.ReadAll(io.LimitReader(reader, size))
 	if err != nil {
 		return "", fmt.Errorf("failed to read part data: %w", err)
@@ -1245,7 +1301,7 @@ func (a *AzureBackend) UploadPart(ctx context.Context, bucket, key, uploadID str
 		}).Warn("Part size mismatch")
 	}
 
-	// Stage the block
+	// Stage the block with bytes reader (satisfies ReadSeeker interface)
 	_, err = blockBlobClient.StageBlock(ctx, blockID, streaming.NopCloser(bytes.NewReader(data)), nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to stage block: %w", err)
@@ -1271,7 +1327,7 @@ func (a *AzureBackend) CompleteMultipartUpload(ctx context.Context, bucket, key,
 
 	blockBlobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlockBlobClient(key)
 
-	// Create block list
+	// Create block list with progress logging for large uploads
 	blockList := make([]string, len(parts))
 	for i, part := range parts {
 		// Extract block ID from ETag (remove quotes if present)
@@ -1290,11 +1346,14 @@ func (a *AzureBackend) CompleteMultipartUpload(ctx context.Context, bucket, key,
 		
 		blockList[i] = blockID
 		
-		logrus.WithFields(logrus.Fields{
-			"partNumber": part.PartNumber,
-			"etag": part.ETag,
-			"blockID": blockID,
-		}).Debug("Adding block to commit list")
+		// Log progress every 50 parts for large uploads
+		if len(parts) > 100 && (i+1) % 50 == 0 {
+			logrus.WithFields(logrus.Fields{
+				"processed": i+1,
+				"total": len(parts),
+				"percent": float64(i+1)/float64(len(parts))*100,
+			}).Info("Processing block list for commit")
+		}
 	}
 
 	// Retrieve stored metadata
@@ -1305,7 +1364,17 @@ func (a *AzureBackend) CompleteMultipartUpload(ctx context.Context, bucket, key,
 		}
 	}
 
-	// Commit the block list
+	// Commit the block list with extended timeout for large files
+	// Calculate timeout based on number of parts (minimum 10 minutes, +30s per part)
+	commitTimeout := 10*time.Minute + time.Duration(len(parts))*30*time.Second
+	commitCtx, cancel := context.WithTimeout(ctx, commitTimeout)
+	defer cancel()
+	
+	logrus.WithFields(logrus.Fields{
+		"parts": len(parts),
+		"timeout": commitTimeout,
+	}).Info("Starting Azure block list commit with extended timeout")
+	
 	opts := &blockblob.CommitBlockListOptions{
 		Metadata: convertMetadataToPointers(metadata),
 		HTTPHeaders: &blob.HTTPHeaders{
@@ -1316,7 +1385,7 @@ func (a *AzureBackend) CompleteMultipartUpload(ctx context.Context, bucket, key,
 		},
 	}
 
-	_, err := blockBlobClient.CommitBlockList(ctx, blockList, opts)
+	_, err := blockBlobClient.CommitBlockList(commitCtx, blockList, opts)
 	if err != nil {
 		return fmt.Errorf("failed to commit block list: %w", err)
 	}

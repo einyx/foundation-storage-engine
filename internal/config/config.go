@@ -342,9 +342,9 @@ func validate(cfg *Config) error {
 type VirusTotalConfig struct {
 	Enabled      bool   `mapstructure:"enabled" envconfig:"VIRUSTOTAL_ENABLED" default:"false"`
 	APIKey       string `mapstructure:"api_key" envconfig:"VIRUSTOTAL_API_KEY"`
-	ScanUploads  bool   `mapstructure:"scan_uploads" envconfig:"VIRUSTOTAL_SCAN_UPLOADS" default:"true"`
-	BlockThreats bool   `mapstructure:"block_threats" envconfig:"VIRUSTOTAL_BLOCK_THREATS" default:"true"`
-	MaxFileSize  string `mapstructure:"max_file_size" envconfig:"VIRUSTOTAL_MAX_FILE_SIZE" default:"32MB"`
+	ScanUploads  bool   `mapstructure:"scan_uploads" envconfig:"VIRUSTOTAL_SCAN_UPLOADS" default:"false"`
+	BlockThreats bool   `mapstructure:"block_threats" envconfig:"VIRUSTOTAL_BLOCK_THREATS" default:"false"`
+	MaxFileSize  string `mapstructure:"max_file_size" envconfig:"VIRUSTOTAL_MAX_FILE_SIZE" default:"1MB"`
 }
 
 // ShareLinksConfig contains share link configuration
