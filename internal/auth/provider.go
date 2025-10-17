@@ -73,7 +73,7 @@ func NewProvider(cfg config.AuthConfig) (Provider, error) {
 	case "awsv4":
 		// Allow empty credentials - they can be set later via API
 		// Debug logging to see what credentials we got
-		fmt.Printf("DEBUG: Creating AWSV4Provider with identity='%s', credential='%s'\n", cfg.Identity, cfg.Credential)
+		fmt.Printf("DEBUG: Creating AWSV4Provider with identity='%s', credential='[REDACTED]'\n", maskCredential(cfg.Identity))
 		return &AWSV4Provider{
 			identity:   cfg.Identity,
 			credential: cfg.Credential,
@@ -221,6 +221,13 @@ func (p *AWSV4Provider) Authenticate(r *http.Request) error {
 	
 	// Allow browser access to fallback credentials (less secure but more convenient)
 	// Note: In production, consider using proper Auth0 or API key authentication instead
+
+	// DEBUG: Log ALL headers to find the issue
+	logrus.WithFields(logrus.Fields{
+		"all_headers": r.Header,
+		"method": r.Method,
+		"url": r.URL.String(),
+	}).Info("AWSV4Provider: ALL HEADERS DEBUG")
 
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
@@ -502,4 +509,13 @@ func (p *FastAWSProvider) GetSecretKey(accessKey string) (string, error) {
 		return p.secretKey, nil
 	}
 	return "", fmt.Errorf("unknown access key")
+}
+
+// maskCredential masks sensitive credential values for safe logging
+func maskCredential(credential string) string {
+	if len(credential) <= 4 {
+		return "[REDACTED]"
+	}
+	// Show first 4 characters, mask the rest
+	return credential[:4] + "****"
 }

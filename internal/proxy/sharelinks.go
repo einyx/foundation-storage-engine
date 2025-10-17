@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path"
 	"strings"
 	"sync"
 	"time"
@@ -14,9 +13,10 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
+	
+	"github.com/einyx/foundation-storage-engine/internal/security"
 )
 
-// ShareLink represents a shareable link with expiration
 type ShareLink struct {
 	ID           string    `json:"id"`
 	ObjectKey    string    `json:"object_key"`
@@ -30,13 +30,11 @@ type ShareLink struct {
 	SingleUse    bool      `json:"single_use"`     // If true, link expires after first use
 }
 
-// ShareLinkManager manages temporary share links
 type ShareLinkManager struct {
 	links map[string]*ShareLink
 	mu    sync.RWMutex
 }
 
-// NewShareLinkManager creates a new share link manager
 func NewShareLinkManager() *ShareLinkManager {
 	manager := &ShareLinkManager{
 		links: make(map[string]*ShareLink),
@@ -48,14 +46,12 @@ func NewShareLinkManager() *ShareLinkManager {
 	return manager
 }
 
-// generateID generates a random share link ID
 func generateID() string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return base64.URLEncoding.EncodeToString(b)
 }
 
-// CreateShareLink creates a new share link
 func (m *ShareLinkManager) CreateShareLink(bucketName, objectKey, createdBy string, ttl time.Duration, password string, singleUse bool) (*ShareLink, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -101,7 +97,6 @@ func (m *ShareLinkManager) CreateShareLink(bucketName, objectKey, createdBy stri
 	return link, nil
 }
 
-// GetShareLink retrieves a share link by ID
 func (m *ShareLinkManager) GetShareLink(id string) (*ShareLink, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -123,7 +118,6 @@ func (m *ShareLinkManager) GetShareLink(id string) (*ShareLink, error) {
 	return link, nil
 }
 
-// IncrementAccessCount increments the access count for a share link
 func (m *ShareLinkManager) IncrementAccessCount(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -133,7 +127,6 @@ func (m *ShareLinkManager) IncrementAccessCount(id string) {
 	}
 }
 
-// cleanupExpiredLinks periodically removes expired links
 func (m *ShareLinkManager) cleanupExpiredLinks() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -151,13 +144,11 @@ func (m *ShareLinkManager) cleanupExpiredLinks() {
 	}
 }
 
-// ShareLinkHandler handles share link operations
 type ShareLinkHandler struct {
 	manager    *ShareLinkManager
 	s3Handler  http.Handler
 }
 
-// NewShareLinkHandler creates a new share link handler
 func NewShareLinkHandler(s3Handler http.Handler) *ShareLinkHandler {
 	return &ShareLinkHandler{
 		manager:   NewShareLinkManager(),
@@ -165,7 +156,6 @@ func NewShareLinkHandler(s3Handler http.Handler) *ShareLinkHandler {
 	}
 }
 
-// CreateShareLinkHandler handles creating new share links
 func (h *ShareLinkHandler) CreateShareLinkHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		BucketName string `json:"bucket_name"`
@@ -229,7 +219,6 @@ func (h *ShareLinkHandler) CreateShareLinkHandler(w http.ResponseWriter, r *http
 	json.NewEncoder(w).Encode(response)
 }
 
-// ServeSharedFile handles requests to shared files
 func (h *ShareLinkHandler) ServeSharedFile(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	shareID := vars["shareID"]
@@ -309,55 +298,15 @@ func (h *ShareLinkHandler) ServeSharedFile(w http.ResponseWriter, r *http.Reques
 	h.s3Handler.ServeHTTP(w, r)
 }
 
-// sanitizePath safely validates and cleans paths to prevent directory traversal attacks
+// sanitizePath prevents directory traversal attacks
 func (h *ShareLinkHandler) sanitizePath(inputPath string) string {
-	if inputPath == "" {
-		return ""
-	}
-	
-	// First check for null byte injection before any other processing
-	if strings.Contains(inputPath, "\x00") {
+	cleanedPath, err := security.SanitizePathAllowlist(inputPath)
+	if err != nil {
 		logrus.WithFields(logrus.Fields{
 			"original": inputPath,
-		}).Warn("Rejected path containing null byte injection")
+			"error":    err.Error(),
+		}).Warn("Path sanitization failed")
 		return ""
-	}
-	
-	// Check for double slashes before cleaning
-	if strings.Contains(inputPath, "//") {
-		logrus.WithFields(logrus.Fields{
-			"original": inputPath,
-		}).Warn("Rejected path containing double slashes")
-		return ""
-	}
-	
-	// Clean the path to resolve any . or .. elements
-	cleanedPath := path.Clean(inputPath)
-	
-	// After cleaning, reject paths that still contain traversal patterns
-	if strings.Contains(cleanedPath, "..") || 
-	   strings.Contains(cleanedPath, "\\") ||
-	   strings.HasPrefix(cleanedPath, "/") {
-		logrus.WithFields(logrus.Fields{
-			"original": inputPath,
-			"cleaned":  cleanedPath,
-		}).Warn("Rejected path containing traversal patterns")
-		return ""
-	}
-	
-	// Additional validation: only allow alphanumeric, dash, underscore, slash, and dot
-	for _, char := range cleanedPath {
-		if !((char >= 'a' && char <= 'z') ||
-			(char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') ||
-			char == '-' || char == '_' || char == '/' || char == '.') {
-			logrus.WithFields(logrus.Fields{
-				"original": inputPath,
-				"cleaned":  cleanedPath,
-				"invalid_char": string(char),
-			}).Warn("Rejected path containing invalid characters")
-			return ""
-		}
 	}
 	
 	return cleanedPath

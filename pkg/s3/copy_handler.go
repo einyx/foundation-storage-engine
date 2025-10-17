@@ -4,7 +4,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -25,28 +24,28 @@ func (h *Handler) handleCopyObject(w http.ResponseWriter, r *http.Request) {
 	destBucket := vars["bucket"]
 	destKey := vars["key"]
 	
-	// Get the copy source from headers
+	// Validate destination bucket and key
+	if err := ValidateBucketName(destBucket); err != nil {
+		h.sendError(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := ValidateObjectKey(destKey); err != nil {
+		h.sendError(w, err, http.StatusBadRequest)
+		return
+	}
+	
+	// Get and validate the copy source
 	copySource := r.Header.Get("x-amz-copy-source")
 	if copySource == "" {
 		h.sendError(w, fmt.Errorf("missing x-amz-copy-source header"), http.StatusBadRequest)
 		return
 	}
 	
-	// Parse the copy source (format: /bucket/key or bucket/key)
-	copySource = strings.TrimPrefix(copySource, "/")
-	sourceParts := strings.SplitN(copySource, "/", 2)
-	if len(sourceParts) != 2 {
-		h.sendError(w, fmt.Errorf("invalid x-amz-copy-source format"), http.StatusBadRequest)
-		return
-	}
-	
-	sourceBucket := sourceParts[0]
-	sourceKey := sourceParts[1]
-	
-	// URL decode the source key
-	decodedSourceKey, err := url.QueryUnescape(sourceKey)
+	// Validate and parse copy source
+	sourceBucket, sourceKey, err := ValidateCopySource(copySource)
 	if err != nil {
-		sourceKey = decodedSourceKey
+		h.sendError(w, err, http.StatusBadRequest)
+		return
 	}
 	
 	logger := logrus.WithFields(logrus.Fields{
@@ -81,11 +80,23 @@ func (h *Handler) handleCopyObject(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// Override with any new metadata from request
+	newMetadata := make(map[string]string)
 	for k, v := range r.Header {
 		if strings.HasPrefix(strings.ToLower(k), "x-amz-meta-") {
 			metaKey := strings.TrimPrefix(strings.ToLower(k), "x-amz-meta-")
-			metadata[metaKey] = v[0]
+			newMetadata[metaKey] = v[0]
 		}
+	}
+	
+	// Validate new metadata
+	if err := ValidateMetadata(newMetadata); err != nil {
+		h.sendError(w, err, http.StatusBadRequest)
+		return
+	}
+	
+	// Apply new metadata to existing metadata
+	for k, v := range newMetadata {
+		metadata[k] = v
 	}
 	
 	// Put the object to the destination

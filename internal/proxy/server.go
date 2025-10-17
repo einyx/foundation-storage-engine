@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -56,8 +57,6 @@ func (r *responseRecorder) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-// Server represents the main HTTP server that handles S3-compatible requests
-// and proxies them to various storage backends.
 type Server struct {
 	config           *config.Config
 	storage          storage.Backend
@@ -69,9 +68,10 @@ type Server struct {
 	shareLinkHandler *ShareLinkHandler
 	db               *database.DB // Database connection for auth
 	scanner          *virustotal.Scanner
+	shuttingDown     int32 // atomic flag for shutdown state
 }
 
-// NewServer creates a new proxy server instance
+// NewServer initializes proxy server with configured storage backend
 func NewServer(cfg *config.Config) (*Server, error) {
 	storageBackend, err := storage.NewBackend(cfg.Storage)
 	if err != nil {
@@ -157,8 +157,6 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		}
 	}
 
-	// Remove overhead
-	// Skip limiters
 
 	s := &Server{
 		config:  cfg,
@@ -206,8 +204,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	return s, nil
 }
 
-// ServeHTTP implements the http.Handler interface for the proxy server.
-// It adds security headers and preprocesses requests before routing.
+// ServeHTTP handles incoming requests with security headers and preprocessing
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Add security headers to all responses
 	s.setSecurityHeaders(w)
@@ -221,7 +218,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			cleanedHeader = strings.ReplaceAll(cleanedHeader, "\r", "")
 			if cleanedHeader != authHeader {
 				r.Header.Set("Authorization", cleanedHeader)
-				// logrus.WithField("path", r.URL.Path).Debug("Cleaned MC auth header at ServeHTTP level")
 			}
 		}
 	}
@@ -229,7 +225,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
 }
 
-// setSecurityHeaders adds security headers to all HTTP responses
+// setSecurityHeaders applies security headers
 func (s *Server) setSecurityHeaders(w http.ResponseWriter) {
 	// Prevent clickjacking attacks
 	w.Header().Set("X-Frame-Options", "DENY")
@@ -281,6 +277,7 @@ func (s *Server) setupAPIDocumentation() {
 func (s *Server) setupRoutes() {
 	// Register monitoring endpoints first (highest priority)
 	s.router.HandleFunc("/health", s.healthCheck).Methods("GET", "HEAD")
+	s.router.HandleFunc("/ready", s.readinessCheck).Methods("GET", "HEAD")
 	s.router.Handle("/metrics", s.metrics.Handler()).Methods("GET")
 	s.router.Handle("/stats", s.metrics.StatsHandler()).Methods("GET")
 
@@ -476,6 +473,13 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 		isPublicPath := s.isPublicPath(r.URL.Path)
 		isUIPath := strings.HasPrefix(r.URL.Path, "/ui/") || r.URL.Path == "/ui"
 
+		logrus.WithFields(logrus.Fields{
+			"path": r.URL.Path,
+			"auth_type": s.config.Auth.Type,
+			"is_public_path": isPublicPath,
+			"is_ui_path": isUIPath,
+		}).Info("Proxy authentication check starting")
+
 		authenticated := s.checkAuth0Session(r)
 
 		if !authenticated && !isPublicPath {
@@ -507,6 +511,8 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 					_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code></Error>`))
 					return
 				}
+				// AWS authentication succeeded
+				authenticated = true
 			}
 			
 			// Store user context if we have Auth0 info for UI operations
@@ -523,21 +529,35 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 					r = r.WithContext(ctx)
 				}
 			}
+			
+			// Set authenticated flag in context for S3 handler to skip re-authentication
+			if authenticated || s.config.Auth.Type == "none" {
+				ctx := r.Context()
+				ctx = context.WithValue(ctx, "authenticated", true)
+				r = r.WithContext(ctx)
+			}
 		}
 
-		// Remove Authorization header after successful authentication
-		// to prevent it from being forwarded to the backend S3
-		logrus.WithFields(logrus.Fields{
-			"path":    r.URL.Path,
-			"hadAuth": r.Header.Get("Authorization") != "",
-		}).Debug("Removing auth headers after successful authentication")
+		// Don't remove Authorization header for S3 requests - S3 handler needs it
+		// Only remove auth headers for non-S3 operations (UI, API endpoints)
+		if isUIPath || isPublicPath {
+			logrus.WithFields(logrus.Fields{
+				"path":    r.URL.Path,
+				"hadAuth": r.Header.Get("Authorization") != "",
+			}).Debug("Removing auth headers after successful authentication for non-S3 path")
 
-		r.Header.Del("Authorization")
-		r.Header.Del("X-Amz-Security-Token")
-		r.Header.Del("X-Amz-Credential")
-		r.Header.Del("X-Amz-Date")
-		r.Header.Del("X-Amz-SignedHeaders")
-		r.Header.Del("X-Amz-Signature")
+			r.Header.Del("Authorization")
+			r.Header.Del("X-Amz-Security-Token")
+			r.Header.Del("X-Amz-Credential")
+			r.Header.Del("X-Amz-Date")
+			r.Header.Del("X-Amz-SignedHeaders")
+			r.Header.Del("X-Amz-Signature")
+		} else {
+			logrus.WithFields(logrus.Fields{
+				"path":    r.URL.Path,
+				"hadAuth": r.Header.Get("Authorization") != "",
+			}).Debug("Preserving auth headers for S3 request")
+		}
 
 		logrus.WithFields(logrus.Fields{
 			"path":         r.URL.Path,
@@ -545,13 +565,6 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 		}).Debug("Auth headers removed")
 	}
 
-	// Log request for debugging - commented out for production
-	// if logrus.GetLevel() >= logrus.DebugLevel {
-	// 	logrus.WithFields(logrus.Fields{
-	// 		"method": r.Method,
-	// 		"path":   r.URL.Path,
-	// 		"query":  r.URL.RawQuery,
-	// 	}).Debug("Passing request to S3 handler")
 	// }
 
 	// Debug log before passing to S3 handler
@@ -574,15 +587,49 @@ func (s *Server) handleS3Request(w http.ResponseWriter, r *http.Request) {
 func (s *Server) healthCheck(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	
-	// Add Sentry status header if Sentry is enabled
+	// Check if server is shutting down
+	isShuttingDown := atomic.LoadInt32(&s.shuttingDown) == 1
+	
+	// Add status headers
 	if s.config.Sentry.Enabled {
 		w.Header().Set("X-Sentry-Enabled", "true")
 	} else {
 		w.Header().Set("X-Sentry-Enabled", "false")
 	}
 	
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{"status":"healthy"}`))
+	if isShuttingDown {
+		w.Header().Set("X-Shutdown-Status", "in-progress")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"shutting-down","ready":false}`))
+	} else {
+		w.Header().Set("X-Shutdown-Status", "active")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"healthy","ready":true}`))
+	}
+}
+
+// SetShuttingDown marks the server as shutting down
+func (s *Server) SetShuttingDown() {
+	atomic.StoreInt32(&s.shuttingDown, 1)
+	logrus.Info("Server marked as shutting down - health checks will return 503")
+}
+
+// IsShuttingDown returns true if the server is shutting down
+func (s *Server) IsShuttingDown() bool {
+	return atomic.LoadInt32(&s.shuttingDown) == 1
+}
+
+// readinessCheck indicates if the server is ready to accept requests
+func (s *Server) readinessCheck(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	if s.IsShuttingDown() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"ready":false,"status":"shutting-down"}`))
+	} else {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ready":true,"status":"active"}`))
+	}
 }
 
 // uiHandler returns a handler that serves static files and processes HTML files
@@ -644,7 +691,7 @@ func (s *Server) uiHandler() http.Handler {
 	})
 }
 
-// validateCredentials validates S3-compatible credentials
+// validateCredentials checks S3 credentials
 func (s *Server) validateCredentials(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -696,7 +743,7 @@ func (s *Server) validateCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// getFeatures returns the enabled features/modules
+// getFeatures lists enabled modules
 func (s *Server) getFeatures(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -734,27 +781,13 @@ func (s *Server) getFeatures(w http.ResponseWriter, r *http.Request) {
 //nolint:unused
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Fast path: skip logging for health checks
-		if r.URL.Path == "/health" {
+		// Fast path: skip logging for health and readiness checks  
+		if r.URL.Path == "/health" || r.URL.Path == "/ready" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Only log in debug mode for performance - commented out for production
-		// if logrus.GetLevel() >= logrus.DebugLevel {
-		// 	logger := logrus.WithFields(logrus.Fields{
-		// 		"method": r.Method,
-		// 		"path":   r.URL.Path,
-		// 		"remote": r.RemoteAddr,
-		// 	})
-		// 	// logger.Debug("Request received")
-
-		// 	next.ServeHTTP(w, r)
-
-		// 	logger.Info("Request completed")
-		// } else {
 		next.ServeHTTP(w, r)
-		// }
 	})
 }
 
@@ -763,13 +796,13 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 //nolint:unused
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip auth for health check
-		if r.URL.Path == "/health" {
+		// Skip auth for health and readiness checks
+		if r.URL.Path == "/health" || r.URL.Path == "/ready" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Ultra-fast path: inline auth check
+		// Fast path: inline authentication check
 		if s.auth == nil || s.config.Auth.Type == "none" {
 			next.ServeHTTP(w, r)
 			return
@@ -805,8 +838,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// isPublicPath safely validates if a request path should be publicly accessible
-// This function prevents path traversal attacks and ensures secure path validation
+// isPublicPath checks if path requires no authentication
 func (s *Server) isPublicPath(requestPath string) bool {
 	// Normalize path to prevent traversal attacks like /../, /./, //
 	cleanPath := path.Clean(requestPath)
@@ -817,7 +849,7 @@ func (s *Server) isPublicPath(requestPath string) bool {
 	}
 	
 	// Exact matches for monitoring endpoints (security-critical)
-	exactPaths := []string{"/health", "/metrics", "/stats"}
+	exactPaths := []string{"/health", "/ready", "/metrics", "/stats"}
 	for _, exactPath := range exactPaths {
 		if cleanPath == exactPath {
 			return true
@@ -848,7 +880,7 @@ func (s *Server) isPublicPath(requestPath string) bool {
 	return false
 }
 
-// extractAccessKeyFromV4Auth safely extracts the access key from AWS Signature Version 4 auth header
+// extractAccessKeyFromV4Auth gets access key from v4 signature
 func (s *Server) extractAccessKeyFromV4Auth(authHeader string) string {
 	if authHeader == "" || !strings.Contains(authHeader, "Credential=") {
 		return ""
@@ -891,7 +923,7 @@ func (s *Server) extractAccessKeyFromV4Auth(authHeader string) string {
 	return accessKey
 }
 
-// authenticateWithAPIKey validates a request using an API key for AWS-style authentication
+// authenticateWithAPIKey checks API key authentication
 func (s *Server) authenticateWithAPIKey(accessKey string, r *http.Request) bool {
 	// For AWS-style requests, we need to validate the signature
 	// Since we don't have the secret key in the request, we need to:
@@ -938,7 +970,7 @@ func (s *Server) authenticateWithAPIKey(accessKey string, r *http.Request) bool 
 	return false
 }
 
-// getAllAPIKeys returns all API keys from the store (helper method)
+// getAllAPIKeys retrieves stored API keys
 func (s *Server) getAllAPIKeys() []*APIKey {
 	if s.auth0 == nil || s.auth0.apiKeyStore == nil {
 		return nil
@@ -955,7 +987,7 @@ func (s *Server) getAllAPIKeys() []*APIKey {
 	return keys
 }
 
-// validateSecureSession performs comprehensive security validation on Auth0 sessions
+// validateSecureSession verifies Auth0 session security
 func (s *Server) validateSecureSession(session interface{}) bool {
 	// Type assertion to access session values
 	type sessionInterface interface {
@@ -1005,7 +1037,7 @@ func (s *Server) validateSecureSession(session interface{}) bool {
 	return true
 }
 
-// checkAuth0Session validates Auth0 session and returns authentication status
+// checkAuth0Session verifies Auth0 session
 func (s *Server) checkAuth0Session(r *http.Request) bool {
 	if !s.config.Auth0.Enabled || s.auth0 == nil {
 		return false
@@ -1025,7 +1057,7 @@ func (s *Server) checkAuth0Session(r *http.Request) bool {
 	return false
 }
 
-// cleanMinIOClientHeaders fixes authorization header issues specific to MinIO mc client
+// cleanMinIOClientHeaders fixes mc client auth headers
 func (s *Server) cleanMinIOClientHeaders(r *http.Request) {
 	userAgent := r.Header.Get("User-Agent")
 	if !strings.Contains(strings.ToLower(userAgent), "minio") && !strings.Contains(strings.ToLower(userAgent), "mc") {
@@ -1040,7 +1072,7 @@ func (s *Server) cleanMinIOClientHeaders(r *http.Request) {
 	}
 }
 
-// tryAPIKeyAuth attempts to authenticate using various API key formats (AWS v4, v2, Bearer)
+// tryAPIKeyAuth checks multiple API key formats
 func (s *Server) tryAPIKeyAuth(r *http.Request) bool {
 	if !s.config.Auth0.Enabled || s.auth0 == nil {
 		return false
@@ -1094,7 +1126,7 @@ func (s *Server) tryAPIKeyAuth(r *http.Request) bool {
 	return false
 }
 
-// computeSessionIntegrityHash creates a cryptographic hash for session integrity validation
+// computeSessionIntegrityHash generates session integrity hash
 func (s *Server) computeSessionIntegrityHash(userSub string, expiresAt time.Time) string {
 	// Use server secret (Auth0 client secret) as HMAC key
 	key := s.config.Auth0.ClientSecret
@@ -1110,7 +1142,7 @@ func (s *Server) computeSessionIntegrityHash(userSub string, expiresAt time.Time
 	return hex.EncodeToString(hmacHash.Sum(nil))
 }
 
-// validateAPIKeySignature performs cryptographic validation of API key signatures
+// validateAPIKeySignature verifies API key signature
 func (s *Server) validateAPIKeySignature(r *http.Request, apiKey *APIKey) bool {
 	authHeader := r.Header.Get("Authorization")
 	
@@ -1127,7 +1159,7 @@ func (s *Server) validateAPIKeySignature(r *http.Request, apiKey *APIKey) bool {
 	return false
 }
 
-// validateAWSV4SignatureWithAPIKey validates AWS V4 signatures using API key secrets
+// validateAWSV4SignatureWithAPIKey verifies v4 signature with API key
 func (s *Server) validateAWSV4SignatureWithAPIKey(r *http.Request, apiKey *APIKey, authHeader string) bool {
 	// Parse authorization header components
 	parts := strings.Split(authHeader[17:], ", ")
@@ -1218,7 +1250,7 @@ func (s *Server) validateAWSV4SignatureWithAPIKey(r *http.Request, apiKey *APIKe
 	return subtle.ConstantTimeCompare([]byte(expectedSignature), []byte(signature)) == 1
 }
 
-// validateAWSV2SignatureWithAPIKey validates AWS V2 signatures using API key secrets
+// validateAWSV2SignatureWithAPIKey verifies v2 signature with API key
 func (s *Server) validateAWSV2SignatureWithAPIKey(r *http.Request, apiKey *APIKey, authHeader string) bool {
 	parts := strings.SplitN(authHeader[4:], ":", 2)
 	if len(parts) != 2 {
@@ -1267,7 +1299,7 @@ func (s *Server) validateAWSV2SignatureWithAPIKey(r *http.Request, apiKey *APIKe
 	return subtle.ConstantTimeCompare([]byte(expectedSignature), []byte(providedSignature)) == 1
 }
 
-// getSigningKey generates AWS signature key (duplicate of auth package function for internal use)
+// getSigningKey generates AWS signature key
 func (s *Server) getSigningKey(key, dateStamp, regionName, serviceName string) []byte {
 	kDate := s.hmacSHA256([]byte("AWS4"+key), []byte(dateStamp))
 	kRegion := s.hmacSHA256(kDate, []byte(regionName))
@@ -1276,14 +1308,14 @@ func (s *Server) getSigningKey(key, dateStamp, regionName, serviceName string) [
 	return kSigning
 }
 
-// hmacSHA256 computes HMAC-SHA256 (duplicate of auth package function for internal use)
+// hmacSHA256 computes HMAC-SHA256
 func (s *Server) hmacSHA256(key, data []byte) []byte {
 	h := hmac.New(sha256.New, key)
 	h.Write(data)
 	return h.Sum(nil)
 }
 
-// isAdminUser checks if the user has admin roles
+// isAdminUser checks admin privileges
 func isAdminUser(roles []string) bool {
 	for _, role := range roles {
 		if role == "admin" || role == "storage-admin" || role == "super-admin" {
@@ -1322,11 +1354,52 @@ func (s *Server) serveAdminUI(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filepath.Join(s.config.UI.StaticPath, "admin.html"))
 }
 
-// Close cleanly shuts down the server and releases resources.
-// It closes database connections and other resources held by the server.
+// Close releases server resources gracefully
 func (s *Server) Close() error {
+	// Mark server as shutting down immediately
+	s.SetShuttingDown()
+	
+	logrus.Info("Starting graceful shutdown of proxy server resources...")
+	
+	var errors []error
+	
+	// Close database connections
 	if s.db != nil {
-		return s.db.Close()
+		logrus.Info("Closing database connections...")
+		if err := s.db.Close(); err != nil {
+			logrus.WithError(err).Error("Failed to close database connections")
+			errors = append(errors, fmt.Errorf("database close error: %w", err))
+		} else {
+			logrus.Info("Database connections closed successfully")
+		}
 	}
+	
+	// Close VirusTotal scanner if it has cleanup needs
+	if s.scanner != nil {
+		logrus.Info("Cleaning up VirusTotal scanner...")
+		// VirusTotal scanner doesn't currently have a Close method, but we log for completeness
+		logrus.Info("VirusTotal scanner cleanup completed")
+	}
+	
+	// Close Auth0 resources if enabled
+	if s.auth0 != nil {
+		logrus.Info("Cleaning up Auth0 resources...")
+		// Auth0 handler doesn't currently have cleanup, but we prepare for it
+		logrus.Info("Auth0 cleanup completed")
+	}
+	
+	// Close storage backend if it has cleanup needs
+	if s.storage != nil {
+		logrus.Info("Cleaning up storage backend...")
+		// Storage backends don't currently implement Close(), but we prepare for it
+		logrus.Info("Storage backend cleanup completed")
+	}
+	
+	if len(errors) > 0 {
+		logrus.WithField("error_count", len(errors)).Error("Some resources failed to close gracefully")
+		return fmt.Errorf("multiple close errors: %v", errors)
+	}
+	
+	logrus.Info("Proxy server resources closed successfully")
 	return nil
 }

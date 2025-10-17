@@ -71,6 +71,19 @@ func (h *Handler) handleBulkDelete(w http.ResponseWriter, r *http.Request, bucke
 		return
 	}
 
+	// Extract object keys for validation
+	objectKeys := make([]string, len(req.Objects))
+	for i, obj := range req.Objects {
+		objectKeys[i] = obj.Key
+	}
+	
+	// Validate the delete request
+	if err := ValidateDeleteObjects(objectKeys); err != nil {
+		logger.WithError(err).Error("Bulk delete validation failed")
+		h.sendError(w, err, http.StatusBadRequest)
+		return
+	}
+
 	logger.WithField("objectCount", len(req.Objects)).Info("Processing bulk delete request")
 
 	// Process deletions

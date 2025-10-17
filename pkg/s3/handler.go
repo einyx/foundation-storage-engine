@@ -22,6 +22,7 @@ import (
 
 	"github.com/einyx/foundation-storage-engine/internal/auth"
 	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/middleware"
 	"github.com/einyx/foundation-storage-engine/internal/storage"
 	"github.com/einyx/foundation-storage-engine/internal/virustotal"
 )
@@ -112,15 +113,17 @@ func (h *Handler) isValidBucket(bucket string) bool {
 	ctx := context.Background()
 	exists, err := h.storage.BucketExists(ctx, bucket)
 	if err != nil {
-		// logrus.WithError(err).WithField("bucket", bucket).Debug("Error checking bucket existence")
 		return false
 	}
 	return exists
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Log every request to debug hanging
 	start := time.Now()
+	
+	// Add S3-compatible headers early to help clients recognize this as S3
+	w.Header().Set("Server", "AmazonS3")
+	w.Header().Set("x-amz-request-id", fmt.Sprintf("%d", start.UnixNano()))
 	
 	// Wrap response writer to capture status
 	wrapped := &responseWriter{
@@ -134,6 +137,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"path":   r.URL.Path,
 		"query":  r.URL.RawQuery,
 		"userAgent": r.Header.Get("User-Agent"),
+		"has_auth": r.Header.Get("Authorization") != "",
+		"has_amz_date": r.Header.Get("X-Amz-Date") != "",
+		"all_headers": r.Header,
 	}).Info("Incoming S3 request")
 	
 	h.router.ServeHTTP(wrapped, r)
@@ -179,23 +185,62 @@ func isResponseStarted(w http.ResponseWriter) bool {
 }
 
 func (h *Handler) setupRoutes() {
-	// Service operations
-	h.router.HandleFunc("/", h.listBuckets).Methods("GET").MatcherFunc(noBucketMatcher)
+	// Apply authentication middleware to all routes
+	authMiddleware := middleware.AuthenticationMiddleware(h.auth)
+	bucketAccessMiddleware := middleware.BucketAccessMiddleware()
+	adminMiddleware := middleware.AdminAuthMiddleware()
 
-	// Bucket operations
-	h.router.HandleFunc("/{bucket}", h.handleBucket).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
-	h.router.HandleFunc("/{bucket}/", h.handleBucket).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+	// Service operations (requires authentication) - EXACT match for root
+	h.router.Handle("/", authMiddleware(http.HandlerFunc(h.listBuckets))).Methods("GET")
+	h.router.HandleFunc("/", h.handleOptions).Methods("OPTIONS")
 
-	// Object operations
-	h.router.HandleFunc("/{bucket}/{key:.*}", h.handleObject).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+	// Bucket operations (requires authentication + bucket access)
+	bucketAuth := func(h http.HandlerFunc) http.Handler {
+		return authMiddleware(bucketAccessMiddleware(h))
+	}
+	
+	// Admin bucket operations  
+	adminAuth := func(h http.HandlerFunc) http.Handler {
+		return authMiddleware(adminMiddleware(bucketAccessMiddleware(h)))
+	}
+
+	// Object routes - ensure bucket name is not empty (MUST come first for proper matching)
+	h.router.Handle("/{bucket:[^/]+}/{key:.+}", bucketAuth(h.handleObject)).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+
+	// Bucket admin routes - ensure bucket name is not empty  
+	h.router.Handle("/{bucket:[^/]+}", adminAuth(h.handleBucketAdmin)).Methods("PUT", "DELETE")
+	h.router.Handle("/{bucket:[^/]+}/", adminAuth(h.handleBucketAdmin)).Methods("PUT", "DELETE")
+	
+	// Regular bucket routes - ensure bucket name is not empty
+	h.router.Handle("/{bucket:[^/]+}", bucketAuth(h.handleBucket)).Methods("GET", "HEAD", "POST")
+	h.router.Handle("/{bucket:[^/]+}/", bucketAuth(h.handleBucket)).Methods("GET", "HEAD", "POST")
 }
 
 func noBucketMatcher(r *http.Request, rm *mux.RouteMatch) bool {
 	return r.URL.Path == "/" || r.URL.Path == ""
 }
 
+func (h *Handler) handleOptions(w http.ResponseWriter, r *http.Request) {
+	// Add S3-compatible CORS and discovery headers
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Amz-*")
+	w.Header().Set("Server", "AmazonS3")
+	w.Header().Set("x-amz-request-id", fmt.Sprintf("%d", time.Now().UnixNano()))
+	w.Header().Set("x-amz-id-2", "S3/OPTIONS")
+	w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
+	w.WriteHeader(http.StatusOK)
+}
+
 func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	
+	// Add S3-compatible headers to identify this as an S3 service
+	w.Header().Set("Server", "AmazonS3")
+	w.Header().Set("x-amz-request-id", fmt.Sprintf("%d", time.Now().UnixNano()))
+	w.Header().Set("x-amz-id-2", "S3/ListBuckets")
+	w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
+	
 	buckets, err := h.storage.ListBuckets(ctx)
 	if err != nil {
 		h.sendError(w, err, http.StatusInternalServerError)
@@ -241,7 +286,12 @@ func (h *Handler) handleBucket(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 
-	// Debug mc client requests
+	// Validate bucket name
+	if err := ValidateBucketName(bucket); err != nil {
+		h.sendError(w, err, http.StatusBadRequest)
+		return
+	}
+
 	userAgent := r.Header.Get("User-Agent")
 	if strings.Contains(strings.ToLower(userAgent), "minio") || strings.Contains(strings.ToLower(userAgent), "mc") {
 		logrus.WithFields(logrus.Fields{
@@ -259,19 +309,9 @@ func (h *Handler) handleBucket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	logger := logrus.WithFields(logrus.Fields{
-		"method": r.Method,
-		"bucket": bucket,
-		"remote": r.RemoteAddr,
-	})
-
 	switch r.Method {
 	case "GET":
-		// logger.Debug("Listing objects for bucket")
 		h.listObjects(w, r, bucket)
-	case "PUT":
-		logger.Info("Creating bucket")
-		h.createBucket(w, r, bucket)
 	case "POST":
 		// Check if this is a bulk delete request
 		if _, hasDelete := r.URL.Query()["delete"]; hasDelete {
@@ -280,12 +320,38 @@ func (h *Handler) handleBucket(w http.ResponseWriter, r *http.Request) {
 		}
 		// Handle other POST operations
 		h.sendError(w, fmt.Errorf("operation not supported"), http.StatusNotImplemented)
-	case "DELETE":
-		logger.Info("Deleting bucket")
-		h.deleteBucket(w, r, bucket)
 	case "HEAD":
-		// logger.Debug("Checking bucket existence")
 		h.headBucket(w, r, bucket)
+	default:
+		h.sendError(w, fmt.Errorf("method not allowed"), http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) handleBucketAdmin(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+
+	// Validate bucket name
+	if err := ValidateBucketName(bucket); err != nil {
+		h.sendError(w, err, http.StatusBadRequest)
+		return
+	}
+
+	logger := logrus.WithFields(logrus.Fields{
+		"method": r.Method,
+		"bucket": bucket,
+		"remote": r.RemoteAddr,
+	})
+
+	switch r.Method {
+	case "PUT":
+		logger.Info("Creating bucket (admin operation)")
+		h.createBucket(w, r, bucket)
+	case "DELETE":
+		logger.Info("Deleting bucket (admin operation)")
+		h.deleteBucket(w, r, bucket)
+	default:
+		h.sendError(w, fmt.Errorf("method not allowed"), http.StatusMethodNotAllowed)
 	}
 }
 
@@ -293,6 +359,17 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 	key := vars["key"]
+
+	// Validate bucket name and object key
+	if err := ValidateBucketName(bucket); err != nil {
+		h.sendError(w, err, http.StatusBadRequest)
+		return
+	}
+	
+	if err := ValidateObjectKey(key); err != nil {
+		h.sendError(w, err, http.StatusBadRequest)
+		return
+	}
 
 	// Log object operation
 	logger := logrus.WithFields(logrus.Fields{
@@ -304,34 +381,39 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 		"path":   r.URL.Path,
 	})
 	
-	// Debug logging for download issues
 	logger.WithFields(logrus.Fields{
 		"rawPath": r.URL.Path,
 		"bucket": bucket,
 		"key": key,
 	}).Debug("handleObject called")
 
-	// logger.Debug("Handling object request")
 
 	// Handle multipart upload operations
 	if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" {
+		// Validate upload ID
+		if err := ValidateUploadID(uploadID); err != nil {
+			h.sendError(w, err, http.StatusBadRequest)
+			return
+		}
+		
 		logger = logger.WithField("uploadId", uploadID)
 		if r.Method == "POST" {
-			// logger.Debug("Completing multipart upload")
 			h.completeMultipartUpload(w, r, bucket, key, uploadID)
 			return
 		} else if r.Method == "DELETE" {
-			// logger.Debug("Aborting multipart upload")
 			h.abortMultipartUpload(w, r, bucket, key, uploadID)
 			return
 		} else if r.Method == "GET" {
-			// logger.Debug("Listing multipart upload parts")
 			h.listParts(w, r, bucket, key, uploadID)
 			return
 		} else if r.Method == "PUT" {
-			if partNumber := r.URL.Query().Get("partNumber"); partNumber != "" {
-				// logger.WithField("partNumber", partNumber).Debug("Uploading part")
-				h.uploadPart(w, r, bucket, key, uploadID, partNumber)
+			if partNumberStr := r.URL.Query().Get("partNumber"); partNumberStr != "" {
+				// Validate part number
+				if _, err := ValidatePartNumber(partNumberStr); err != nil {
+					h.sendError(w, err, http.StatusBadRequest)
+					return
+				}
+				h.uploadPart(w, r, bucket, key, uploadID, partNumberStr)
 				return
 			}
 		}
@@ -354,11 +436,9 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 	// Handle ACL operations
 	if r.URL.Query().Get("acl") != "" {
 		if r.Method == "GET" {
-			// logger.Debug("Getting object ACL")
 			h.getObjectACL(w, r, bucket, key)
 			return
 		} else if r.Method == "PUT" {
-			// logger.Debug("Setting object ACL")
 			h.putObjectACL(w, r, bucket, key)
 			return
 		}
@@ -376,7 +456,6 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case "GET":
-		// logger.Debug("Getting object")
 		h.getObject(w, r, bucket, key)
 	case "PUT":
 		// Check if this is a copy operation
@@ -385,7 +464,6 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 			h.handleCopyObject(w, r)
 			return
 		}
-		// logger.WithField("size", r.ContentLength).Debug("Putting object")
 		h.putObject(w, r, bucket, key)
 	case "POST":
 		// Check if this is a bulk delete request
@@ -418,10 +496,8 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 		// Handle other POST operations
 		h.sendError(w, fmt.Errorf("operation not supported"), http.StatusNotImplemented)
 	case "DELETE":
-		// logger.Debug("Deleting object")
 		h.deleteObject(w, r, bucket, key)
 	case "HEAD":
-		// logger.Debug("Getting object metadata")
 		h.headObject(w, r, bucket, key)
 	}
 }
@@ -439,19 +515,37 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 	maxKeysStr := r.URL.Query().Get("max-keys")
 	includeDeleted := r.URL.Query().Get("deleted") == "true"
 	
+	// Validate query parameters
+	if err := ValidateQueryParameter("prefix", prefix); err != nil {
+		h.sendError(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := ValidateQueryParameter("delimiter", delimiter); err != nil {
+		h.sendError(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := ValidateQueryParameter("marker", marker); err != nil {
+		h.sendError(w, err, http.StatusBadRequest)
+		return
+	}
+	
 	// For V2 requests, use continuation-token instead of marker
 	if isV2 {
 		continuationToken := r.URL.Query().Get("continuation-token")
 		if continuationToken != "" {
+			if err := ValidateContinuationToken(continuationToken); err != nil {
+				h.sendError(w, err, http.StatusBadRequest)
+				return
+			}
 			marker = continuationToken
 		}
 	}
 
-	maxKeys := 1000
-	if maxKeysStr != "" {
-		if mk, err := strconv.Atoi(maxKeysStr); err == nil && mk > 0 {
-			maxKeys = mk
-		}
+	// Validate and set max-keys
+	maxKeys, err := ValidateMaxKeys(maxKeysStr)
+	if err != nil {
+		h.sendError(w, err, http.StatusBadRequest)
+		return
 	}
 
 	userAgent := r.Header.Get("User-Agent")
@@ -476,11 +570,9 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		"marker":    marker,
 		"includeDeleted": includeDeleted,
 	})
-	// logger.Debug("Listing objects")
 
 	// Handle soft delete listing
 	var result *storage.ListObjectsResult
-	var err error
 	
 	if includeDeleted {
 		// List deleted objects (no delimiter support for deleted objects)
@@ -556,7 +648,6 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 			"bucket": bucket,
 		}).Info("Returning deleted objects XML response")
 		
-		// Log first few items for debugging
 		if len(response.Contents) > 0 {
 			logrus.WithFields(logrus.Fields{
 				"firstKey": response.Contents[0].Key,
@@ -573,7 +664,6 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		return
 	}
 	
-	// Debug logging for pagination issues
 	if isV2 && result.IsTruncated {
 		logger.WithFields(logrus.Fields{
 			"marker": marker,
@@ -583,11 +673,6 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		}).Debug("V2 list pagination state")
 	}
 
-	// logger.WithFields(logrus.Fields{
-	// 	"objects":        len(result.Contents),
-	// 	"commonPrefixes": len(result.CommonPrefixes),
-	// 	"truncated":      result.IsTruncated,
-	// }).Debug("Listed objects successfully")
 
 	type contents struct {
 		Key          string `xml:"Key"`
@@ -756,7 +841,6 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	// Check for range requests
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
-		// logger.WithField("range", rangeHeader).Debug("Range request")
 		h.getRangeObject(w, r, bucket, key, rangeHeader)
 		return
 	}
@@ -769,11 +853,6 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	}
 	defer func() { _ = obj.Body.Close() }()
 
-	// logger.WithFields(logrus.Fields{
-	// 	"size":        obj.Size,
-	// 	"contentType": obj.ContentType,
-	// 	"etag":        obj.ETag,
-	// }).Debug("Retrieved object")
 
 	headers := w.Header()
 	headers.Set("Content-Type", obj.ContentType)
@@ -828,9 +907,6 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		}).Info("Successfully retrieved object")
 	}
 
-	// if logrus.GetLevel() >= logrus.DebugLevel {
-	// 	logger.WithField("duration", time.Since(start)).Debug("GET completed")
-	// }
 }
 
 func (h *Handler) getRangeObject(w http.ResponseWriter, r *http.Request, bucket, key, rangeHeader string) {
@@ -1149,12 +1225,27 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 	size := r.ContentLength
 	
+	// Validate Content-Length header if present
+	contentLengthHeader := r.Header.Get("Content-Length")
+	if contentLengthHeader != "" {
+		if _, err := ValidateContentLength(contentLengthHeader); err != nil {
+			logrus.WithError(err).Error("Content-Length validation failed")
+			h.sendError(w, err, http.StatusBadRequest)
+			return
+		}
+	}
+	
 	// AWS CLI with chunked transfer doesn't send Content-Length, 
 	// but sends X-Amz-Decoded-Content-Length instead
 	if size < 0 && r.Header.Get("X-Amz-Decoded-Content-Length") != "" {
-		decodedLength, err := strconv.ParseInt(r.Header.Get("X-Amz-Decoded-Content-Length"), 10, 64)
-		if err == nil {
-			size = decodedLength
+		decodedContentLengthHeader := r.Header.Get("X-Amz-Decoded-Content-Length")
+		// Validate X-Amz-Decoded-Content-Length
+		if validatedLength, err := ValidateContentLength(decodedContentLengthHeader); err != nil {
+			logrus.WithError(err).Error("X-Amz-Decoded-Content-Length validation failed")
+			h.sendError(w, err, http.StatusBadRequest)
+			return
+		} else {
+			size = validatedLength
 		}
 	}
 	
@@ -1315,12 +1406,17 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 		// If x-amz-decoded-content-length is provided, use it as the actual size
 		if decodedLength := r.Header.Get("x-amz-decoded-content-length"); decodedLength != "" {
-			if decodedSize, err := strconv.ParseInt(decodedLength, 10, 64); err == nil {
+			// Validate the decoded content length
+			if validatedSize, err := ValidateContentLength(decodedLength); err != nil {
+				logger.WithError(err).Error("x-amz-decoded-content-length validation failed")
+				h.sendError(w, err, http.StatusBadRequest)
+				return
+			} else {
 				logger.WithFields(logrus.Fields{
 					"originalSize": size,
-					"decodedSize":  decodedSize,
+					"decodedSize":  validatedSize,
 				}).Debug("Using x-amz-decoded-content-length for actual content size")
-				size = decodedSize
+				size = validatedSize
 				
 				// Update logger with corrected size
 				logger = logrus.WithFields(logrus.Fields{
@@ -1813,9 +1909,6 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		"key": key,
 	}).Info("PUT handler completed - response sent and flushed")
 
-	// if logrus.GetLevel() >= logrus.DebugLevel {
-	// 	logger.WithField("duration", time.Since(start)).Debug("PUT completed")
-	// }
 }
 
 func (h *Handler) deleteObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -2047,10 +2140,6 @@ func (h *Handler) getClientIP(xForwardedFor string) string {
 
 // Multipart upload operations
 func (h *Handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	// logrus.WithFields(logrus.Fields{
-	// 	"bucket": bucket,
-	// 	"key":    key,
-	// }).Debug("Initiating multipart upload")
 
 	ctx := r.Context()
 
@@ -2062,11 +2151,6 @@ func (h *Handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// logrus.WithFields(logrus.Fields{
-	// 	"bucket":   bucket,
-	// 	"key":      key,
-	// 	"metadata": metadata,
-	// }).Debug("About to initiate multipart upload")
 
 	uploadID, err := h.storage.InitiateMultipartUpload(ctx, bucket, key, metadata)
 	if err != nil {

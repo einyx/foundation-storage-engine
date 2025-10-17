@@ -245,16 +245,16 @@ func Load(configFile string) (*Config, error) {
 
 	// For awsv4 auth type, populate Identity/Credential from nested aws_v4 structure if not already set
 	if cfg.Auth.Type == "awsv4" {
-		fmt.Printf("DEBUG: Auth type is awsv4, AWSV4 struct: %+v\n", cfg.Auth.AWSV4)
+		fmt.Printf("DEBUG: Auth type is awsv4, AWSV4 config detected\n")
 		if cfg.Auth.AWSV4 != nil {
-			fmt.Printf("DEBUG: Found aws_v4 config - AccessKey: '%s', SecretKey: '%s'\n", cfg.Auth.AWSV4.AccessKey, cfg.Auth.AWSV4.SecretKey)
+			fmt.Printf("DEBUG: Found aws_v4 config - AccessKey: '%s', SecretKey: [REDACTED]\n", maskCredential(cfg.Auth.AWSV4.AccessKey))
 			if cfg.Auth.Identity == "" && cfg.Auth.AWSV4.AccessKey != "" {
 				cfg.Auth.Identity = cfg.Auth.AWSV4.AccessKey
-				fmt.Printf("DEBUG: Set Identity to: '%s'\n", cfg.Auth.Identity)
+				fmt.Printf("DEBUG: Set Identity to: '%s'\n", maskCredential(cfg.Auth.Identity))
 			}
 			if cfg.Auth.Credential == "" && cfg.Auth.AWSV4.SecretKey != "" {
 				cfg.Auth.Credential = cfg.Auth.AWSV4.SecretKey
-				fmt.Printf("DEBUG: Set Credential to: '%s'\n", cfg.Auth.Credential)
+				fmt.Printf("DEBUG: Set Credential to: [REDACTED]\n")
 			}
 		} else {
 			fmt.Printf("DEBUG: AWSV4 struct is nil\n")
@@ -380,4 +380,13 @@ type OPAConfig struct {
 	Enabled bool          `mapstructure:"enabled" envconfig:"OPA_ENABLED" default:"false"`
 	URL     string        `mapstructure:"url" envconfig:"OPA_URL" default:"http://localhost:8181"`
 	Timeout time.Duration `mapstructure:"timeout" envconfig:"OPA_TIMEOUT" default:"5s"`
+}
+
+// maskCredential masks sensitive credential values for safe logging
+func maskCredential(credential string) string {
+	if len(credential) <= 4 {
+		return "[REDACTED]"
+	}
+	// Show first 4 characters, mask the rest
+	return credential[:4] + "****"
 }

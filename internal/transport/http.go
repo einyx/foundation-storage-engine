@@ -109,8 +109,6 @@ func NewFastHTTPTransport() *http.Transport {
 			Timeout:   200 * time.Millisecond,
 			KeepAlive: 5 * time.Second,
 			DualStack: true,
-			// Low latency
-			Control: setTCPOptions,
 		},
 		dnsCache: dnsCache,
 	}
@@ -136,7 +134,7 @@ func NewFastHTTPTransport() *http.Transport {
 		},
 		// Enable HTTP/2
 		TLSNextProto: make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
-		// EXTREME: Maximum buffer sizes for raw speed
+		// Large buffer sizes for high throughput
 		WriteBufferSize: 2048 * 1024, // 2MB write buffer (doubled)
 		ReadBufferSize:  2048 * 1024, // 2MB read buffer (doubled)
 	}
@@ -156,18 +154,17 @@ func ReturnPooledTransport(t *http.Transport) {
 	transportPool.Put(t)
 }
 
-// GetSDKOptimizedTransport creates an ultra-optimized transport for SDK operations
+// GetSDKOptimizedTransport creates an optimized transport for SDK operations
 func GetSDKOptimizedTransport() *http.Transport {
-	// SDK EXTREME: Even more aggressive settings for SDK operations
+	// Aggressive settings for SDK operations
 	maxConns := runtime.GOMAXPROCS(0) * 4000       // 16x increase for SDK operations
 	maxConnsPerHost := runtime.GOMAXPROCS(0) * 800 // 16x increase for SDK operations
 
 	dialer := &FastDialer{
 		Dialer: &net.Dialer{
-			Timeout:   250 * time.Millisecond, // SDK EXTREME: 250ms timeout
-			KeepAlive: 15 * time.Second,       // SDK OPTIMIZATION: Longer keepalive
+			Timeout:   250 * time.Millisecond, // 250ms timeout for SDK operations
+			KeepAlive: 15 * time.Second,       // Longer keepalive for SDK operations
 			DualStack: true,
-			Control:   setTCPOptions,
 		},
 		dnsCache: dnsCache,
 	}
@@ -179,19 +176,19 @@ func GetSDKOptimizedTransport() *http.Transport {
 		MaxIdleConns:          maxConns,
 		MaxIdleConnsPerHost:   maxConnsPerHost,
 		MaxConnsPerHost:       maxConnsPerHost,
-		IdleConnTimeout:       120 * time.Second,      // SDK OPTIMIZATION: Longer idle
-		TLSHandshakeTimeout:   500 * time.Millisecond, // SDK EXTREME: 500ms TLS
-		ExpectContinueTimeout: 250 * time.Millisecond, // SDK EXTREME: 250ms
+		IdleConnTimeout:       120 * time.Second,      // Longer idle timeout for SDK operations
+		TLSHandshakeTimeout:   500 * time.Millisecond, // 500ms TLS handshake timeout
+		ExpectContinueTimeout: 250 * time.Millisecond, // 250ms expect continue timeout
 		DisableCompression:    true,                   // No compression for speed
 		DisableKeepAlives:     false,
-		ResponseHeaderTimeout: 1 * time.Second, // SDK EXTREME: 1s headers
+		ResponseHeaderTimeout: 1 * time.Second, // 1s response header timeout
 		TLSClientConfig: &tls.Config{
 			MinVersion:             tls.VersionTLS12,
 			SessionTicketsDisabled: false,
 			ClientSessionCache:     tls.NewLRUClientSessionCache(2000), // Larger cache
 		},
 		TLSNextProto: make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
-		// SDK EXTREME: Even larger buffers for raw throughput
+		// Large buffers for high throughput operations
 		WriteBufferSize: 4096 * 1024, // 4MB write buffer
 		ReadBufferSize:  4096 * 1024, // 4MB read buffer
 	}

@@ -158,20 +158,12 @@ func (m *MetadataCache) Delete(key string) {
 func (s *S3Backend) mapBucket(virtualBucket string) string {
 	if s.bucketConfigs != nil {
 		if cfg, ok := s.bucketConfigs[virtualBucket]; ok && cfg.RealName != "" {
-			// logrus.WithFields(logrus.Fields{
-			// 	"virtual": virtualBucket,
-			// 	"real":    cfg.RealName,
-			// }).Debug("Mapping bucket name from bucket config")
 			return cfg.RealName
 		}
 	}
 
 	if s.bucketMapping != nil {
 		if realBucket, ok := s.bucketMapping[virtualBucket]; ok {
-			// logrus.WithFields(logrus.Fields{
-			// 	"virtual": virtualBucket,
-			// 	"real":    realBucket,
-			// }).Debug("Mapping bucket name from simple mapping")
 			return realBucket
 		}
 	}
@@ -180,11 +172,6 @@ func (s *S3Backend) mapBucket(virtualBucket string) string {
 }
 
 func (s *S3Backend) getPrefixForBucket(virtualBucket string) string {
-	// logrus.WithFields(logrus.Fields{
-	// 	"virtualBucket": virtualBucket,
-	// 	"hasConfigs":    s.bucketConfigs != nil,
-	// 	"configCount":   len(s.bucketConfigs),
-	// }).Debug("getPrefixForBucket called")
 
 	if s.bucketConfigs != nil {
 		if cfg, ok := s.bucketConfigs[virtualBucket]; ok {
@@ -210,7 +197,6 @@ func (s *S3Backend) getPrefixForBucket(virtualBucket string) string {
 		}
 	}
 
-	// logrus.WithField("virtualBucket", virtualBucket).Debug("No prefix found for bucket")
 	return ""
 }
 
@@ -246,27 +232,16 @@ func (s *S3Backend) GetBucketConfig(bucket string) *config.BucketConfig {
 func (s *S3Backend) getClientForBucket(bucket string) (*s3.S3, error) {
 	if s.bucketConfigs != nil {
 		if cfg, ok := s.bucketConfigs[bucket]; ok {
-			// logrus.WithFields(logrus.Fields{
-			// 	"virtualBucket": bucket,
-			// 	"realBucket":    cfg.RealName,
-			// 	"region":        cfg.Region,
-			// }).Debug("Using bucket-specific configuration")
 			return s.getOrCreateClient(cfg)
 		}
 
 		for _, cfg := range s.bucketConfigs {
 			if cfg.RealName == bucket {
-				// logrus.WithFields(logrus.Fields{
-				// 	"realBucket":    bucket,
-				// 	"virtualBucket": virtualBucket,
-				// 	"region":        cfg.Region,
-				// }).Debug("Using configuration from virtual bucket mapping")
 				return s.getOrCreateClient(cfg)
 			}
 		}
 	}
 
-	// logrus.WithField("bucket", bucket).Debug("Using default client for bucket")
 	// Use default client
 	return s.defaultClient, nil
 }
@@ -951,7 +926,6 @@ func (s *S3Backend) PutObject(ctx context.Context, bucket, key string, reader io
 		return fmt.Errorf("failed to get client for bucket: %w", err)
 	}
 
-	// Debug: Log what we're about to do
 	logrus.WithFields(logrus.Fields{
 		"bucket": realBucket,
 		"key": realKey,
@@ -1111,11 +1085,6 @@ func (s *S3Backend) PutObjectACL(ctx context.Context, bucket, key string, acl *A
 }
 
 func (s *S3Backend) InitiateMultipartUpload(ctx context.Context, bucket, key string, metadata map[string]string) (string, error) {
-	// logrus.WithFields(logrus.Fields{
-	// 	"bucket":   bucket,
-	// 	"key":      key,
-	// 	"metadata": metadata,
-	// }).Debug("Initiating multipart upload")
 
 	realBucket := s.mapBucket(bucket)
 	realKey := s.addPrefixToKey(bucket, key)
