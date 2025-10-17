@@ -63,7 +63,7 @@ func (h *Handler) handleBulkDelete(w http.ResponseWriter, r *http.Request, bucke
 	// Disable external entity processing to prevent XXE
 	decoder.Strict = false
 	decoder.Entity = xml.HTMLEntity
-	
+
 	var req DeleteObjectsRequest
 	if unmarshalErr := decoder.Decode(&req); unmarshalErr != nil {
 		logger.WithError(unmarshalErr).Error("Failed to parse XML")
@@ -76,7 +76,7 @@ func (h *Handler) handleBulkDelete(w http.ResponseWriter, r *http.Request, bucke
 	for i, obj := range req.Objects {
 		objectKeys[i] = obj.Key
 	}
-	
+
 	// Validate the delete request
 	if err := ValidateDeleteObjects(objectKeys); err != nil {
 		logger.WithError(err).Error("Bulk delete validation failed")

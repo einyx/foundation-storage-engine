@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
-	
+
 	"github.com/einyx/foundation-storage-engine/internal/security"
 )
 
@@ -17,13 +17,13 @@ const (
 	maxBucketNameLength = 63
 	minBucketNameLength = 3
 	maxObjectKeyLength  = 1024
-	maxMetadataSize     = 2048  // 2KB total metadata
+	maxMetadataSize     = 2048 // 2KB total metadata
 	maxMetadataKeyLen   = 128
 	maxMetadataValueLen = 256
 	maxObjectsPerDelete = 1000
 	maxListKeys         = 1000
 	maxPartNumber       = 10000
-	minPartSize         = 5 * 1024 * 1024 // 5MB
+	minPartSize         = 5 * 1024 * 1024               // 5MB
 	maxObjectSize       = 5 * 1024 * 1024 * 1024 * 1024 // 5TB
 	maxQueryParamLen    = 512
 	maxContinuationLen  = 1024
@@ -32,13 +32,13 @@ const (
 var (
 	// S3 bucket name pattern: lowercase letters, numbers, hyphens
 	bucketNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9\-]*[a-z0-9]$`)
-	
+
 	// IP address pattern to reject bucket names that look like IP addresses
 	ipAddressPattern = regexp.MustCompile(`^\d+\.\d+\.\d+\.\d+$`)
-	
+
 	// Invalid sequences for object keys
 	pathTraversalPattern = regexp.MustCompile(`(\.\.\/|\.\.\\|\.\.\x00)`)
-	
+
 	// Metadata key pattern
 	metadataKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9\-_.]+$`)
 )
@@ -64,8 +64,8 @@ func ValidateBucketName(bucket string) error {
 	// Length validation
 	if len(bucket) < minBucketNameLength || len(bucket) > maxBucketNameLength {
 		return &ValidationError{
-			Field:   "bucket", 
-			Value:   bucket, 
+			Field:   "bucket",
+			Value:   bucket,
 			Message: fmt.Sprintf("bucket name must be between %d and %d characters", minBucketNameLength, maxBucketNameLength),
 		}
 	}
@@ -89,7 +89,7 @@ func ValidateBucketName(bucket string) error {
 	if !unicode.IsLetter(rune(bucket[0])) && !unicode.IsDigit(rune(bucket[0])) {
 		return &ValidationError{Field: "bucket", Value: bucket, Message: "bucket name must start with a letter or number"}
 	}
-	
+
 	lastChar := rune(bucket[len(bucket)-1])
 	if !unicode.IsLetter(lastChar) && !unicode.IsDigit(lastChar) {
 		return &ValidationError{Field: "bucket", Value: bucket, Message: "bucket name must end with a letter or number"}
@@ -108,8 +108,8 @@ func ValidateObjectKey(key string) error {
 	// Length validation
 	if len(key) > maxObjectKeyLength {
 		return &ValidationError{
-			Field:   "key", 
-			Value:   key, 
+			Field:   "key",
+			Value:   key,
 			Message: fmt.Sprintf("object key cannot exceed %d bytes", maxObjectKeyLength),
 		}
 	}
@@ -129,13 +129,13 @@ func ValidateMetadata(metadata map[string]string) error {
 	}
 
 	totalSize := 0
-	
+
 	for key, value := range metadata {
 		// Validate key format
 		if !metadataKeyPattern.MatchString(key) {
 			return &ValidationError{
-				Field:   "metadata_key", 
-				Value:   key, 
+				Field:   "metadata_key",
+				Value:   key,
 				Message: "metadata key can only contain letters, numbers, hyphens, underscores, and dots",
 			}
 		}
@@ -143,8 +143,8 @@ func ValidateMetadata(metadata map[string]string) error {
 		// Validate key length
 		if len(key) > maxMetadataKeyLen {
 			return &ValidationError{
-				Field:   "metadata_key", 
-				Value:   key, 
+				Field:   "metadata_key",
+				Value:   key,
 				Message: fmt.Sprintf("metadata key cannot exceed %d characters", maxMetadataKeyLen),
 			}
 		}
@@ -152,8 +152,8 @@ func ValidateMetadata(metadata map[string]string) error {
 		// Validate value length
 		if len(value) > maxMetadataValueLen {
 			return &ValidationError{
-				Field:   "metadata_value", 
-				Value:   value, 
+				Field:   "metadata_value",
+				Value:   value,
 				Message: fmt.Sprintf("metadata value cannot exceed %d characters", maxMetadataValueLen),
 			}
 		}
@@ -162,8 +162,8 @@ func ValidateMetadata(metadata map[string]string) error {
 		for i, r := range value {
 			if r < 32 && r != 9 && r != 10 && r != 13 { // Allow tab, LF, CR
 				return &ValidationError{
-					Field:   "metadata_value", 
-					Value:   value, 
+					Field:   "metadata_value",
+					Value:   value,
 					Message: fmt.Sprintf("metadata value contains invalid control character at position %d", i),
 				}
 			}
@@ -180,8 +180,8 @@ func ValidateMetadata(metadata map[string]string) error {
 	// Check total metadata size
 	if totalSize > maxMetadataSize {
 		return &ValidationError{
-			Field:   "metadata", 
-			Value:   fmt.Sprintf("%d bytes", totalSize), 
+			Field:   "metadata",
+			Value:   fmt.Sprintf("%d bytes", totalSize),
 			Message: fmt.Sprintf("total metadata size cannot exceed %d bytes", maxMetadataSize),
 		}
 	}
@@ -202,8 +202,8 @@ func ValidatePartNumber(partNumberStr string) (int, error) {
 
 	if partNumber < 1 || partNumber > maxPartNumber {
 		return 0, &ValidationError{
-			Field:   "partNumber", 
-			Value:   partNumberStr, 
+			Field:   "partNumber",
+			Value:   partNumberStr,
 			Message: fmt.Sprintf("part number must be between 1 and %d", maxPartNumber),
 		}
 	}
@@ -224,7 +224,7 @@ func ValidateUploadID(uploadID string) error {
 
 	// Check for valid characters (base64 URL-safe + some extras used by S3)
 	for _, r := range uploadID {
-		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || 
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
 			(r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' || r == '~') {
 			return &ValidationError{Field: "uploadId", Value: uploadID, Message: "upload ID contains invalid characters"}
 		}
@@ -259,8 +259,8 @@ func ValidateMaxKeys(maxKeysStr string) (int, error) {
 func ValidateQueryParameter(name, value string) error {
 	if len(value) > maxQueryParamLen {
 		return &ValidationError{
-			Field:   name, 
-			Value:   value, 
+			Field:   name,
+			Value:   value,
 			Message: fmt.Sprintf("query parameter cannot exceed %d characters", maxQueryParamLen),
 		}
 	}
@@ -269,8 +269,8 @@ func ValidateQueryParameter(name, value string) error {
 	for i, r := range value {
 		if r < 32 && r != 9 && r != 10 && r != 13 {
 			return &ValidationError{
-				Field:   name, 
-				Value:   value, 
+				Field:   name,
+				Value:   value,
 				Message: fmt.Sprintf("query parameter contains invalid control character at position %d", i),
 			}
 		}
@@ -287,15 +287,15 @@ func ValidateContinuationToken(token string) error {
 
 	if len(token) > maxContinuationLen {
 		return &ValidationError{
-			Field:   "continuation-token", 
-			Value:   token, 
+			Field:   "continuation-token",
+			Value:   token,
 			Message: fmt.Sprintf("continuation token cannot exceed %d characters", maxContinuationLen),
 		}
 	}
 
 	// Validate base64-like format
 	for _, r := range token {
-		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || 
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
 			(r >= '0' && r <= '9') || r == '+' || r == '/' || r == '=' || r == '-' || r == '_') {
 			return &ValidationError{Field: "continuation-token", Value: token, Message: "continuation token contains invalid characters"}
 		}
@@ -318,7 +318,7 @@ func ValidateCopySource(copySource string) (bucket, key string, err error) {
 
 	// Remove leading slash if present
 	source := strings.TrimPrefix(decoded, "/")
-	
+
 	// Split into bucket and key
 	parts := strings.SplitN(source, "/", 2)
 	if len(parts) != 2 {
@@ -357,8 +357,8 @@ func ValidateContentLength(contentLengthStr string) (int64, error) {
 
 	if contentLength > maxObjectSize {
 		return 0, &ValidationError{
-			Field:   "Content-Length", 
-			Value:   contentLengthStr, 
+			Field:   "Content-Length",
+			Value:   contentLengthStr,
 			Message: fmt.Sprintf("Content-Length cannot exceed %d bytes", maxObjectSize),
 		}
 	}
@@ -374,8 +374,8 @@ func ValidateDeleteObjects(objectKeys []string) error {
 
 	if len(objectKeys) > maxObjectsPerDelete {
 		return &ValidationError{
-			Field:   "objects", 
-			Value:   fmt.Sprintf("%d objects", len(objectKeys)), 
+			Field:   "objects",
+			Value:   fmt.Sprintf("%d objects", len(objectKeys)),
 			Message: fmt.Sprintf("cannot delete more than %d objects in a single request", maxObjectsPerDelete),
 		}
 	}

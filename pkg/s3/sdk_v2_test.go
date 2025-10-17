@@ -28,7 +28,7 @@ func TestHandleSDKv2Request(t *testing.T) {
 			description: "Trino requests should be proxied",
 		},
 		{
-			name:        "Hive SDK request", 
+			name:        "Hive SDK request",
 			userAgent:   "aws-sdk-java/1.12.0 Linux/5.15.0 OpenJDK_64-Bit_Server_VM/11.0.16 java/11.0.16 vendor/Eclipse_Adoptium hive/3.1.2",
 			path:        "/warehouse/data.parquet",
 			shouldProxy: true,

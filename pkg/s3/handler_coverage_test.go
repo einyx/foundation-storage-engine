@@ -13,13 +13,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Helper function to create an authenticated admin context
-func createAdminContext(req *http.Request) *http.Request {
-	ctx := context.WithValue(req.Context(), "authenticated", true)
-	ctx = context.WithValue(ctx, "is_admin", true)
-	ctx = context.WithValue(ctx, "user_sub", "test-admin-user")
-	return req.WithContext(ctx)
-}
+// Note: createAdminContext is defined in client_operations_test.go
 
 func TestSetScanner(t *testing.T) {
 	s3cfg := config.S3Config{}
@@ -278,7 +272,7 @@ func TestHandleBucket(t *testing.T) {
 
 			req := httptest.NewRequest(tt.method, url, nil)
 			req = mux.SetURLVars(req, map[string]string{"bucket": tt.bucket})
-			
+
 			// Add authentication context for all operations
 			if tt.method == "PUT" || tt.method == "DELETE" {
 				// Admin context for admin-only operations
@@ -289,7 +283,7 @@ func TestHandleBucket(t *testing.T) {
 				ctx = context.WithValue(ctx, "user_sub", "test-user")
 				req = req.WithContext(ctx)
 			}
-			
+
 			rr := httptest.NewRecorder()
 
 			// Use the full handler to test middleware integration

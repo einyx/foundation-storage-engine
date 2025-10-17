@@ -2,10 +2,18 @@ package proxy
 
 import (
 	"testing"
+	
+	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
 func TestIsPublicPath_SecurityValidation(t *testing.T) {
-	server := &Server{}
+	cfg := &config.Config{}
+	server := &Server{
+		config: cfg,
+	}
+	
+	// Initialize the authentication manager for testing
+	server.authManager = NewAuthenticationManager(cfg, nil, nil)
 	
 	tests := []struct {
 		name     string
@@ -19,9 +27,9 @@ func TestIsPublicPath_SecurityValidation(t *testing.T) {
 		{name: "docs_normal", path: "/docs/api.html", expected: true, desc: "Normal docs path should be public"},
 		{name: "auth_endpoint", path: "/api/auth/login", expected: true, desc: "Auth endpoint should be public"},
 		
-		// Path normalization (these are actually OK after path.Clean)
-		{name: "double_slash_docs", path: "//docs/secret", expected: true, desc: "Double slash gets normalized to /docs/secret"},
-		{name: "dot_slash_docs", path: "/./docs/admin", expected: true, desc: "Dot slash gets normalized to /docs/admin"},
+		// Security: reject all paths with traversal attempts (new secure implementation)
+		{name: "double_slash_docs", path: "//docs/secret", expected: false, desc: "Double slash should be rejected for security"},
+		{name: "dot_slash_docs", path: "/./docs/admin", expected: false, desc: "Dot slash should be rejected for security"},
 		{name: "auth_traversal", path: "/api/auth/../admin", expected: false, desc: "Path traversal in auth should be blocked"},
 		{name: "docs_traversal", path: "/docs/../admin/secrets", expected: false, desc: "Path traversal in docs should be blocked"},
 		{name: "encoded_traversal", path: "/api/auth%2f..%2fadmin", expected: false, desc: "URL encoded traversal should be blocked"},
@@ -40,7 +48,7 @@ func TestIsPublicPath_SecurityValidation(t *testing.T) {
 	
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := server.isPublicPath(tt.path)
+			result := server.authManager.isPublicPath(tt.path)
 			if result != tt.expected {
 				t.Errorf("isPublicPath(%q) = %v, expected %v: %s", tt.path, result, tt.expected, tt.desc)
 			}
@@ -49,7 +57,13 @@ func TestIsPublicPath_SecurityValidation(t *testing.T) {
 }
 
 func TestExtractAccessKeyFromV4Auth_Security(t *testing.T) {
-	server := &Server{}
+	cfg := &config.Config{}
+	server := &Server{
+		config: cfg,
+	}
+	
+	// Initialize the authentication manager for testing
+	server.authManager = NewAuthenticationManager(cfg, nil, nil)
 	
 	tests := []struct {
 		name      string
@@ -72,7 +86,7 @@ func TestExtractAccessKeyFromV4Auth_Security(t *testing.T) {
 	
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := server.extractAccessKeyFromV4Auth(tt.authHeader)
+			result := server.authManager.extractAccessKeyFromV4Auth(tt.authHeader)
 			if result != tt.expected {
 				t.Errorf("extractAccessKeyFromV4Auth(%q) = %q, expected %q: %s", tt.authHeader, result, tt.expected, tt.desc)
 			}

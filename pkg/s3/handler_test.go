@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/mux"
-	"github.com/sirupsen/logrus"
 	"github.com/einyx/foundation-storage-engine/internal/config"
 	"github.com/einyx/foundation-storage-engine/internal/storage"
+	"github.com/gorilla/mux"
+	"github.com/sirupsen/logrus"
 )
 
 // Mock storage backend for testing
@@ -217,27 +217,27 @@ func TestPUTRequestWithJavaSDKOptimization(t *testing.T) {
 	auth := &mockAuth{}
 	cfg := config.S3Config{}
 	chunking := config.ChunkingConfig{}
-	
+
 	handler := NewHandler(storage, auth, cfg, chunking)
 
 	tests := []struct {
-		name      string
-		userAgent string
+		name           string
+		userAgent      string
 		shouldOptimize bool
 	}{
 		{
-			name:      "TrinoRequest",
-			userAgent: "aws-sdk-java/2.30.12 app/Trino",
+			name:           "TrinoRequest",
+			userAgent:      "aws-sdk-java/2.30.12 app/Trino",
 			shouldOptimize: true,
 		},
 		{
-			name:      "HiveRequest", 
-			userAgent: "aws-sdk-java/1.12.0 hive/3.1.2",
+			name:           "HiveRequest",
+			userAgent:      "aws-sdk-java/1.12.0 hive/3.1.2",
 			shouldOptimize: true,
 		},
 		{
-			name:      "RegularRequest",
-			userAgent: "aws-cli/2.0.0",
+			name:           "RegularRequest",
+			userAgent:      "aws-cli/2.0.0",
 			shouldOptimize: false,
 		},
 	}
@@ -248,7 +248,7 @@ func TestPUTRequestWithJavaSDKOptimization(t *testing.T) {
 			req := httptest.NewRequest("PUT", "/test-bucket/test-key", bytes.NewReader([]byte("test data")))
 			req.Header.Set("User-Agent", tt.userAgent)
 			req.Header.Set("Content-Length", "9")
-			
+
 			// Add admin auth context (includes authentication and admin privileges)
 			req = createAdminContext(req)
 
@@ -291,27 +291,27 @@ func TestHEADRequestWithJavaSDKOptimization(t *testing.T) {
 	auth := &mockAuth{}
 	cfg := config.S3Config{}
 	chunking := config.ChunkingConfig{}
-	
+
 	handler := NewHandler(storage, auth, cfg, chunking)
 
 	tests := []struct {
-		name      string
-		userAgent string
+		name           string
+		userAgent      string
 		shouldOptimize bool
 	}{
 		{
-			name:      "HadoopS3ARequest",
-			userAgent: "aws-sdk-java/1.11.1026 hadoop-s3a/3.3.4",
+			name:           "HadoopS3ARequest",
+			userAgent:      "aws-sdk-java/1.11.1026 hadoop-s3a/3.3.4",
 			shouldOptimize: true,
 		},
 		{
-			name:      "HiveMetastoreRequest",
-			userAgent: "aws-sdk-java/1.12.0 hive/3.1.2",
+			name:           "HiveMetastoreRequest",
+			userAgent:      "aws-sdk-java/1.12.0 hive/3.1.2",
 			shouldOptimize: true,
 		},
 		{
-			name:      "MinIOClientRequest",
-			userAgent: "MinIO (linux; amd64) minio-go/v7.0.0",
+			name:           "MinIOClientRequest",
+			userAgent:      "MinIO (linux; amd64) minio-go/v7.0.0",
 			shouldOptimize: false,
 		},
 	}
@@ -321,7 +321,7 @@ func TestHEADRequestWithJavaSDKOptimization(t *testing.T) {
 			// Create a HEAD request
 			req := httptest.NewRequest("HEAD", "/test-bucket/test-key", nil)
 			req.Header.Set("User-Agent", tt.userAgent)
-			
+
 			// Add admin auth context (includes authentication and admin privileges)
 			req = createAdminContext(req)
 
@@ -432,14 +432,14 @@ func TestResponseHeaderOptimizations(t *testing.T) {
 	auth := &mockAuth{}
 	cfg := config.S3Config{}
 	chunking := config.ChunkingConfig{}
-	
+
 	handler := NewHandler(storage, auth, cfg, chunking)
 
 	t.Run("PUTWithConnectionClose", func(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/test-bucket/test-key", bytes.NewReader([]byte("test")))
 		req.Header.Set("User-Agent", "aws-sdk-java/2.30.12 app/Trino")
 		req.Header.Set("Content-Length", "4")
-		
+
 		w := httptest.NewRecorder()
 		req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket", "key": "test-key"})
 		req = createAdminContext(req)
@@ -464,7 +464,7 @@ func TestResponseHeaderOptimizations(t *testing.T) {
 	t.Run("HEADWithConnectionClose", func(t *testing.T) {
 		req := httptest.NewRequest("HEAD", "/test-bucket/test-key", nil)
 		req.Header.Set("User-Agent", "aws-sdk-java/1.12.0 hive/3.1.2")
-		
+
 		w := httptest.NewRecorder()
 		req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket", "key": "test-key"})
 		req = createAdminContext(req)
@@ -487,7 +487,7 @@ func TestResponseHeaderOptimizations(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/test-bucket/test-key", bytes.NewReader([]byte("test")))
 		req.Header.Set("User-Agent", "aws-cli/2.0.0")
 		req.Header.Set("Content-Length", "4")
-		
+
 		w := httptest.NewRecorder()
 		req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket", "key": "test-key"})
 		req = createAdminContext(req)
@@ -559,12 +559,12 @@ func TestScanContent(t *testing.T) {
 			ctx := context.Background()
 			body := strings.NewReader("test content")
 			logger := logrus.NewEntry(logrus.New())
-			
+
 			// Create a test response writer
 			w := httptest.NewRecorder()
 
 			result, err := handler.scanContent(ctx, body, "test-key", tt.size, logger, w)
-			
+
 			if err != nil {
 				t.Fatalf("scanContent failed: %v", err)
 			}

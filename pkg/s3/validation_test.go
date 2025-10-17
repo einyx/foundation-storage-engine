@@ -37,7 +37,7 @@ func TestValidateBucketName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateBucketName(tt.bucket)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for bucket '%s', but got none", tt.bucket)
@@ -84,7 +84,7 @@ func TestValidateObjectKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateObjectKey(tt.key)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for key '%s', but got none", tt.key)
@@ -158,7 +158,7 @@ func TestValidateMetadata(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateMetadata(tt.metadata)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for metadata, but got none")
@@ -178,7 +178,7 @@ func TestValidateMetadata(t *testing.T) {
 
 func createLargeMetadata() map[string]string {
 	metadata := make(map[string]string)
-	// Create metadata that exceeds 2KB total size  
+	// Create metadata that exceeds 2KB total size
 	// Using shorter values to avoid hitting individual value length limit first
 	for i := 0; i < 50; i++ {
 		key := fmt.Sprintf("key-%d", i)
@@ -212,7 +212,7 @@ func TestValidatePartNumber(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			partNumber, err := ValidatePartNumber(tt.partNumberStr)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for part number '%s', but got none", tt.partNumberStr)
@@ -256,7 +256,7 @@ func TestValidateUploadID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateUploadID(tt.uploadID)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for upload ID '%s', but got none", tt.uploadID)
@@ -276,11 +276,11 @@ func TestValidateUploadID(t *testing.T) {
 
 func TestValidateMaxKeys(t *testing.T) {
 	tests := []struct {
-		name           string
-		maxKeysStr     string
+		name            string
+		maxKeysStr      string
 		expectedMaxKeys int
-		expectError    bool
-		errorMsg       string
+		expectError     bool
+		errorMsg        string
 	}{
 		// Valid max-keys
 		{name: "empty (default)", maxKeysStr: "", expectedMaxKeys: 1000, expectError: false},
@@ -297,7 +297,7 @@ func TestValidateMaxKeys(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			maxKeys, err := ValidateMaxKeys(tt.maxKeysStr)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for max-keys '%s', but got none", tt.maxKeysStr)
@@ -344,7 +344,7 @@ func TestValidateCopySource(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bucket, key, err := ValidateCopySource(tt.copySource)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for copy source '%s', but got none", tt.copySource)
@@ -371,11 +371,11 @@ func TestValidateCopySource(t *testing.T) {
 
 func TestValidateContentLength(t *testing.T) {
 	tests := []struct {
-		name               string
-		contentLengthStr   string
-		expectedLength     int64
-		expectError        bool
-		errorMsg           string
+		name             string
+		contentLengthStr string
+		expectedLength   int64
+		expectError      bool
+		errorMsg         string
 	}{
 		// Valid content lengths
 		{name: "empty (optional)", contentLengthStr: "", expectedLength: 0, expectError: false},
@@ -392,7 +392,7 @@ func TestValidateContentLength(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			length, err := ValidateContentLength(tt.contentLengthStr)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for content length '%s', but got none", tt.contentLengthStr)
@@ -445,7 +445,7 @@ func TestValidateDeleteObjects(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateDeleteObjects(tt.objects)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for delete objects, but got none")
