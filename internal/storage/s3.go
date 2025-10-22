@@ -109,7 +109,6 @@ type S3Backend struct {
 	largeBufferPool sync.Pool
 	metadataCache   *MetadataCache
 	mu              sync.RWMutex // Protect client creation
-	// Track problematic servers for resilient upload
 	problematicServers          map[string]*serverStatus
 	serverMu                    sync.RWMutex
 	defaultMultipartConcurrency int
@@ -1529,7 +1528,10 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 		}
 	}
 
-	resp, err := client.CreateMultipartUploadWithContext(ctx, input)
+	operationCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	resp, err := client.CreateMultipartUploadWithContext(operationCtx, input)
 	if err != nil {
 		return fmt.Errorf("failed to initiate multipart upload: %w", err)
 	}
@@ -1541,6 +1543,29 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 
 	// Start worker goroutines
 	var wg sync.WaitGroup
+
+	var (
+		uploadErr   error
+		uploadErrMu sync.Mutex
+	)
+
+	setUploadErr := func(err error) {
+		if err == nil {
+			return
+		}
+		uploadErrMu.Lock()
+		if uploadErr == nil {
+			uploadErr = err
+		}
+		uploadErrMu.Unlock()
+	}
+
+	getUploadErr := func() error {
+		uploadErrMu.Lock()
+		defer uploadErrMu.Unlock()
+		return uploadErr
+	}
+
 	for i := 0; i < maxConcurrentUploads; i++ {
 		wg.Add(1)
 		go func() {
@@ -1567,6 +1592,8 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 				}
 
 				if err != nil {
+					setUploadErr(err)
+					cancel()
 					resultChan <- uploadResult{partNumber: part.partNumber, err: err}
 					return
 				}
@@ -1630,7 +1657,7 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 			}).Debug("Attempting to read part data")
 
 			// Use adaptive timeout reading for slow clients instead of blocking ReadAtLeast
-			n, readErr := s.readChunkWithTimeout(ctx, reader, buf[:readSize])
+			n, readErr := s.readChunkWithTimeout(operationCtx, reader, buf[:readSize])
 			readDuration := time.Since(readStart)
 
 			logrus.WithFields(logrus.Fields{
@@ -1642,13 +1669,13 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 
 			if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
 				// Check if this is a context cancellation (client disconnected)
-				if ctx.Err() != nil {
-					logrus.WithError(ctx.Err()).Debug("Client cancelled upload")
-					uploadErr = ctx.Err()
+				if operationCtx.Err() != nil {
+					logrus.WithError(operationCtx.Err()).Debug("Client cancelled upload")
+					setUploadErr(operationCtx.Err())
 					return
 				}
 				logrus.WithError(readErr).Error("Failed to read part data")
-				uploadErr = fmt.Errorf("failed to read part: %w", readErr)
+				setUploadErr(fmt.Errorf("failed to read part: %w", readErr))
 				return
 			}
 
@@ -1684,9 +1711,9 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 			select {
 			case partChan <- partData{partNumber: partNumber, data: data, bufPtr: dataPtr}:
 				partNumber++
-			case <-ctx.Done():
-				logrus.WithError(ctx.Err()).Error("Context cancelled while sending part")
-				uploadErr = ctx.Err()
+			case <-operationCtx.Done():
+				logrus.WithError(operationCtx.Err()).Error("Context cancelled while sending part")
+				setUploadErr(operationCtx.Err())
 				return
 			}
 
@@ -1700,8 +1727,13 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 	// Collect results
 	for result := range resultChan {
 		if result.err != nil {
-			uploadErr = result.err
-			break
+			setUploadErr(result.err)
+			cancel()
+			continue
+		}
+
+		if getUploadErr() != nil {
+			continue
 		}
 		parts[result.partNumber] = &s3.CompletedPart{
 			ETag:       aws.String(result.etag),
@@ -1710,6 +1742,7 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 	}
 
 	// Handle errors
+	uploadErr = getUploadErr()
 	if uploadErr != nil {
 		_, _ = client.AbortMultipartUploadWithContext(ctx, &s3.AbortMultipartUploadInput{
 			Bucket:   aws.String(realBucket),
