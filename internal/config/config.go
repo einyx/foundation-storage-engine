@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/kelseyhightower/envconfig"
@@ -129,13 +130,63 @@ type FileSystemConfig struct {
 
 // AuthConfig specifies authentication configuration
 type AuthConfig struct {
-	Type       string     `mapstructure:"type" envconfig:"AUTH_TYPE" default:"none"` // none, basic, awsv2, awsv4, database
-	Identity   string     `mapstructure:"identity" envconfig:"AUTH_IDENTITY"`
-	Credential string     `mapstructure:"credential" envconfig:"AUTH_CREDENTIAL"`
-	AWSV4      *AWSV4Auth `mapstructure:"aws_v4"`
+	Type       string           `mapstructure:"type" envconfig:"AUTH_TYPE" default:"none"` // none, basic, awsv2, awsv4, database
+	Identity   string           `mapstructure:"identity" envconfig:"AUTH_IDENTITY"`
+	Credential string           `mapstructure:"credential" envconfig:"AUTH_CREDENTIAL"`
+	AWSV4      *AWSV4Auth       `mapstructure:"aws_v4"`
+	Vault      *VaultAuthConfig `mapstructure:"vault"`
 	// AWS-style environment variables (take precedence if set)
 	AWSAccessKeyID     string `mapstructure:"-" envconfig:"AWS_ACCESS_KEY_ID"`
 	AWSSecretAccessKey string `mapstructure:"-" envconfig:"AWS_SECRET_ACCESS_KEY"`
+}
+
+// VaultAuthConfig contains configuration for fetching credentials from HashiCorp Vault
+type VaultAuthConfig struct {
+	Enabled         bool          `mapstructure:"enabled" envconfig:"AUTH_VAULT_ENABLED" default:"false"`
+	Address         string        `mapstructure:"address" envconfig:"AUTH_VAULT_ADDR"`
+	Token           string        `mapstructure:"token" envconfig:"AUTH_VAULT_TOKEN"`
+	TokenFile       string        `mapstructure:"token_file" envconfig:"AUTH_VAULT_TOKEN_FILE"`
+	MountPath       string        `mapstructure:"mount_path" envconfig:"AUTH_VAULT_MOUNT_PATH" default:"secret"`
+	SecretName      string        `mapstructure:"secret_name" envconfig:"AUTH_VAULT_SECRET_NAME" default:"storage-engine"`
+	IdentityField   string        `mapstructure:"identity_field" envconfig:"AUTH_VAULT_IDENTITY_FIELD" default:"auth_identity"`
+	CredentialField string        `mapstructure:"credential_field" envconfig:"AUTH_VAULT_CREDENTIAL_FIELD" default:"auth_credential"`
+	RefreshInterval time.Duration `mapstructure:"refresh_interval" envconfig:"AUTH_VAULT_REFRESH_INTERVAL" default:"5m"`
+	RequestTimeout  time.Duration `mapstructure:"request_timeout" envconfig:"AUTH_VAULT_REQUEST_TIMEOUT" default:"10s"`
+}
+
+// Normalize cleans up and applies defaults to Vault configuration values
+func (v *VaultAuthConfig) Normalize() {
+	if v == nil {
+		return
+	}
+
+	v.MountPath = strings.Trim(v.MountPath, "/")
+	if v.MountPath == "" {
+		v.MountPath = "secret"
+	}
+
+	v.SecretName = strings.Trim(v.SecretName, "/")
+	if v.SecretName == "" {
+		v.SecretName = "storage-engine"
+	}
+
+	v.IdentityField = strings.TrimSpace(v.IdentityField)
+	if v.IdentityField == "" {
+		v.IdentityField = "auth_identity"
+	}
+
+	v.CredentialField = strings.TrimSpace(v.CredentialField)
+	if v.CredentialField == "" {
+		v.CredentialField = "auth_credential"
+	}
+
+	if v.RefreshInterval < 0 {
+		v.RefreshInterval = 0
+	}
+
+	if v.RequestTimeout <= 0 {
+		v.RequestTimeout = 10 * time.Second
+	}
 }
 
 // AWSV4Auth contains AWS V4 specific authentication configuration
@@ -233,9 +284,15 @@ func Load(configFile string) (*Config, error) {
 		}
 	}
 
+	if cfg.Auth.Vault == nil {
+		cfg.Auth.Vault = &VaultAuthConfig{}
+	}
+
 	if err := envconfig.Process("", cfg); err != nil {
 		return nil, fmt.Errorf("failed to process env vars: %w", err)
 	}
+
+	cfg.Auth.Vault.Normalize()
 
 	// AWS environment variables take precedence
 	if cfg.Auth.AWSAccessKeyID != "" {
@@ -335,6 +392,15 @@ func validate(cfg *Config) error {
 		}
 	default:
 		return fmt.Errorf("unsupported storage provider: %s", cfg.Storage.Provider)
+	}
+
+	if cfg.Auth.Vault != nil && cfg.Auth.Vault.Enabled {
+		if cfg.Auth.Vault.Address == "" {
+			return fmt.Errorf("auth.vault.address is required when Vault integration is enabled")
+		}
+		if cfg.Auth.Vault.SecretName == "" {
+			return fmt.Errorf("auth.vault.secret_name is required when Vault integration is enabled")
+		}
 	}
 
 	return nil
