@@ -19,51 +19,51 @@ func TestIcebergMetadataOptimizations(t *testing.T) {
 	handler := NewHandler(storage, auth, cfg, chunking)
 
 	tests := []struct {
-		name                string
-		key                 string
+		name                 string
+		key                  string
 		expectedCacheControl string
-		isIceberg           bool
+		isIceberg            bool
 	}{
 		{
-			name:                "main metadata file",
-			key:                 "warehouse/customer_events/metadata/metadata.json",
+			name:                 "main metadata file",
+			key:                  "warehouse/customer_events/metadata/metadata.json",
 			expectedCacheControl: "private, max-age=5", // Actual implementation
-			isIceberg:           true,
+			isIceberg:            true,
 		},
 		{
-			name:                "versioned metadata file",
-			key:                 "warehouse/orders/metadata/v1.metadata.json",
+			name:                 "versioned metadata file",
+			key:                  "warehouse/orders/metadata/v1.metadata.json",
 			expectedCacheControl: "private, max-age=5", // Actual implementation
-			isIceberg:           true,
+			isIceberg:            true,
 		},
 		{
-			name:                "version hint file",
-			key:                 "warehouse/sales/metadata/version-hint.text",
+			name:                 "version hint file",
+			key:                  "warehouse/sales/metadata/version-hint.text",
 			expectedCacheControl: "private, max-age=5", // Metadata file gets metadata cache
-			isIceberg:           true,
+			isIceberg:            true,
 		},
 		{
-			name:                "snapshot file",
-			key:                 "warehouse/events/metadata/snap-123456789.avro",
+			name:                 "snapshot file",
+			key:                  "warehouse/events/metadata/snap-123456789.avro",
 			expectedCacheControl: "private, max-age=5", // Metadata directory files get metadata cache
-			isIceberg:           true,
+			isIceberg:            true,
 		},
 		{
-			name:                "manifest list file",
-			key:                 "warehouse/logs/metadata/snap-987654321-1-c87bfec7-d36c-4075-ad04-3dcb2ca0f2b5.avro",
+			name:                 "manifest list file",
+			key:                  "warehouse/logs/metadata/snap-987654321-1-c87bfec7-d36c-4075-ad04-3dcb2ca0f2b5.avro",
 			expectedCacheControl: "private, max-age=5", // Metadata directory files get metadata cache
-			isIceberg:           true,
+			isIceberg:            true,
 		},
 		{
-			name:                "manifest file",
-			key:                 "warehouse/analytics/metadata/c87bfec7-d36c-4075-ad04-3dcb2ca0f2b5.avro",
+			name:                 "manifest file",
+			key:                  "warehouse/analytics/metadata/c87bfec7-d36c-4075-ad04-3dcb2ca0f2b5.avro",
 			expectedCacheControl: "private, max-age=5", // Metadata directory files get metadata cache
-			isIceberg:           true,
+			isIceberg:            true,
 		},
 		{
-			name:        "regular json file",
-			key:         "warehouse/config/settings.json",
-			isIceberg:   false,
+			name:      "regular json file",
+			key:       "warehouse/config/settings.json",
+			isIceberg: false,
 		},
 	}
 
@@ -106,28 +106,28 @@ func TestIcebergDataFileOptimizations(t *testing.T) {
 	handler := NewHandler(storage, auth, cfg, chunking)
 
 	tests := []struct {
-		name                string
-		key                 string
+		name                 string
+		key                  string
 		expectedCacheControl string
-		isIcebergData       bool
+		isIcebergData        bool
 	}{
 		{
-			name:                "parquet data file",
-			key:                 "warehouse/events/data/year=2023/month=12/day=01/file-001.parquet",
+			name:                 "parquet data file",
+			key:                  "warehouse/events/data/year=2023/month=12/day=01/file-001.parquet",
 			expectedCacheControl: "private, max-age=3600", // Actual implementation
-			isIcebergData:       true,
+			isIcebergData:        true,
 		},
 		{
-			name:                "orc data file",
-			key:                 "warehouse/logs/data/partition-1/file-002.orc",
+			name:                 "orc data file",
+			key:                  "warehouse/logs/data/partition-1/file-002.orc",
 			expectedCacheControl: "private, max-age=3600", // Actual implementation
-			isIcebergData:       true,
+			isIcebergData:        true,
 		},
 		{
-			name:                "avro data file",
-			key:                 "warehouse/metrics/data/file-003.avro",
+			name:                 "avro data file",
+			key:                  "warehouse/metrics/data/file-003.avro",
 			expectedCacheControl: "private, max-age=3600", // Actual implementation
-			isIcebergData:       true,
+			isIcebergData:        true,
 		},
 		{
 			name:          "metadata avro file",
@@ -177,7 +177,7 @@ func TestIcebergTrinoOptimizations(t *testing.T) {
 	trinoUserAgent := "aws-sdk-java/2.30.12 md/io#sync md/http#Apache ua/2.1 os/Linux lang/java#23.0.2 app/Trino"
 
 	t.Run("TrinoIcebergMetadataUpload", func(t *testing.T) {
-		req := httptest.NewRequest("PUT", "/warehouse/iceberg_table/metadata/metadata.json", 
+		req := httptest.NewRequest("PUT", "/warehouse/iceberg_table/metadata/metadata.json",
 			strings.NewReader(`{"format-version": 2, "table-uuid": "test-uuid"}`))
 		req.Header.Set("User-Agent", trinoUserAgent)
 		req.Header.Set("Content-Length", "52")
@@ -226,7 +226,7 @@ func TestIcebergTrinoOptimizations(t *testing.T) {
 	})
 
 	t.Run("TrinoIcebergChunkedMetadataUpload", func(t *testing.T) {
-		req := httptest.NewRequest("PUT", "/warehouse/iceberg_table/metadata/v2.metadata.json", 
+		req := httptest.NewRequest("PUT", "/warehouse/iceberg_table/metadata/v2.metadata.json",
 			strings.NewReader(`{"format-version": 2, "table-uuid": "test-uuid", "schemas": []}`))
 		req.Header.Set("User-Agent", trinoUserAgent)
 		req.Header.Set("Transfer-Encoding", "chunked")
@@ -253,7 +253,7 @@ func TestIcebergTrinoOptimizations(t *testing.T) {
 
 	t.Run("TrinoIcebergDataStreamingUpload", func(t *testing.T) {
 		// Large data file that should NOT be buffered for Trino
-		req := httptest.NewRequest("PUT", "/warehouse/iceberg_table/data/large-data.parquet", 
+		req := httptest.NewRequest("PUT", "/warehouse/iceberg_table/data/large-data.parquet",
 			strings.NewReader("large parquet data content"))
 		req.Header.Set("User-Agent", trinoUserAgent)
 		req.Header.Set("Transfer-Encoding", "chunked")
@@ -329,12 +329,12 @@ func TestIcebergTableNameExtraction(t *testing.T) {
 
 func TestIcebergFileTypeDetection(t *testing.T) {
 	tests := []struct {
-		name           string
-		key            string
-		isMetadata     bool
-		isManifest     bool
-		isData         bool
-		isAvro         bool
+		name       string
+		key        string
+		isMetadata bool
+		isManifest bool
+		isData     bool
+		isAvro     bool
 	}{
 		{
 			name:       "metadata json",
@@ -441,7 +441,7 @@ func TestIcebergMultipartUploadOptimizations(t *testing.T) {
 	})
 
 	t.Run("IcebergDataMultipartPart", func(t *testing.T) {
-		req := httptest.NewRequest("PUT", "/warehouse/events/data/large-file.parquet?uploadId=test-upload&partNumber=1", 
+		req := httptest.NewRequest("PUT", "/warehouse/events/data/large-file.parquet?uploadId=test-upload-id-123456&partNumber=1",
 			bytes.NewReader([]byte("parquet data chunk")))
 		req.Header.Set("User-Agent", trinoUserAgent)
 		req.Header.Set("Content-Length", "18")
@@ -541,11 +541,11 @@ func TestIcebergVersionedMetadataHandling(t *testing.T) {
 		t.Run(file, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/"+file, nil)
 			req = createAdminContext(req)
-			
+
 			parts := strings.Split(file, "/")
 			bucket := parts[0]
 			key := strings.Join(parts[1:], "/")
-			
+
 			req = mux.SetURLVars(req, map[string]string{
 				"bucket": bucket,
 				"key":    key,
@@ -560,7 +560,7 @@ func TestIcebergVersionedMetadataHandling(t *testing.T) {
 
 			// All versioned metadata should get appropriate caching
 			if w.Header().Get("Cache-Control") != "private, max-age=5" {
-				t.Errorf("Expected metadata cache headers for %s, got: %s", 
+				t.Errorf("Expected metadata cache headers for %s, got: %s",
 					file, w.Header().Get("Cache-Control"))
 			}
 		})
@@ -595,7 +595,7 @@ func TestIcebergNamespaceHandling(t *testing.T) {
 		t.Run(pattern.key, func(t *testing.T) {
 			tableName := extractTableName(pattern.key)
 			if tableName != pattern.expectedTable {
-				t.Errorf("extractTableName(%q) = %q, want %q", 
+				t.Errorf("extractTableName(%q) = %q, want %q",
 					pattern.key, tableName, pattern.expectedTable)
 			}
 		})
@@ -618,7 +618,7 @@ func TestIcebergCacheHeadersConsistency(t *testing.T) {
 		t.Run("GET_"+file, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/"+file, nil)
 			req = createAdminContext(req)
-			
+
 			parts := strings.Split(file, "/")
 			req = mux.SetURLVars(req, map[string]string{
 				"bucket": parts[0],
@@ -644,7 +644,7 @@ func TestIcebergCacheHeadersConsistency(t *testing.T) {
 		t.Run("HEAD_"+file, func(t *testing.T) {
 			req := httptest.NewRequest("HEAD", "/"+file, nil)
 			req = createAdminContext(req)
-			
+
 			parts := strings.Split(file, "/")
 			req = mux.SetURLVars(req, map[string]string{
 				"bucket": parts[0],

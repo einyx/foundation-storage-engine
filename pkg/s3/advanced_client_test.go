@@ -470,6 +470,8 @@ func TestMultipartUploadWithDifferentClients(t *testing.T) {
 		},
 	}
 
+	const testUploadID = "test-upload-id-123456"
+
 	for _, client := range clients {
 		t.Run(client.name+"_initiate", func(t *testing.T) {
 			req := httptest.NewRequest("POST", "/warehouse/large_files/bigdata.parquet?uploads", nil)
@@ -493,7 +495,7 @@ func TestMultipartUploadWithDifferentClients(t *testing.T) {
 		})
 
 		t.Run(client.name+"_part", func(t *testing.T) {
-			req := httptest.NewRequest("PUT", "/warehouse/large_files/bigdata.parquet?uploadId=test-upload&partNumber=1",
+			req := httptest.NewRequest("PUT", "/warehouse/large_files/bigdata.parquet?uploadId="+testUploadID+"&partNumber=1",
 				bytes.NewReader([]byte("part data chunk")))
 			req.Header.Set("User-Agent", client.userAgent)
 			req.Header.Set("Content-Length", "15")
@@ -517,8 +519,15 @@ func TestMultipartUploadWithDifferentClients(t *testing.T) {
 		})
 
 		t.Run(client.name+"_complete", func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/warehouse/large_files/bigdata.parquet?uploadId=test-upload", 
-				strings.NewReader("<CompleteMultipartUpload></CompleteMultipartUpload>"))
+			completeBody := `<CompleteMultipartUpload>
+                <Part>
+                    <PartNumber>1</PartNumber>
+                    <ETag>"part-1-etag"</ETag>
+                </Part>
+            </CompleteMultipartUpload>`
+
+			req := httptest.NewRequest("POST", "/warehouse/large_files/bigdata.parquet?uploadId="+testUploadID,
+				strings.NewReader(completeBody))
 			req.Header.Set("User-Agent", client.userAgent)
 			req.Header.Set("Content-Type", "application/xml")
 			req = createAdminContext(req)

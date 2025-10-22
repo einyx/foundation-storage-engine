@@ -8,11 +8,11 @@ import (
 )
 
 var (
-	ErrPathTraversal    = errors.New("path contains traversal sequences")
-	ErrInvalidPath      = errors.New("path contains invalid characters")
-	ErrAbsolutePath     = errors.New("absolute paths not allowed")
-	ErrEmptyPath        = errors.New("path cannot be empty")
-	ErrPathOutsideBase  = errors.New("path resolves outside base directory")
+	ErrPathTraversal   = errors.New("path contains traversal sequences")
+	ErrInvalidPath     = errors.New("path contains invalid characters")
+	ErrAbsolutePath    = errors.New("absolute paths not allowed")
+	ErrEmptyPath       = errors.New("path cannot be empty")
+	ErrPathOutsideBase = errors.New("path resolves outside base directory")
 )
 
 // ValidatePathSecure performs comprehensive path validation to prevent traversal attacks
@@ -107,6 +107,11 @@ func ValidateObjectKey(key string) error {
 		return err
 	}
 
+	// Disallow backslashes to prevent alternate path traversal forms
+	if strings.ContainsRune(key, '\\') {
+		return ErrInvalidPath
+	}
+
 	// Check for dangerous system paths
 	lowerKey := strings.ToLower(key)
 	dangerousPaths := []string{
@@ -170,7 +175,7 @@ func SanitizePathAllowlist(path string) (string, error) {
 
 // isAllowedPathChar returns true if the character is allowed in paths
 func isAllowedPathChar(r rune) bool {
-	return unicode.IsLetter(r) || 
-		   unicode.IsDigit(r) || 
-		   r == '/' || r == '-' || r == '_' || r == '.' || r == ' '
+	return unicode.IsLetter(r) ||
+		unicode.IsDigit(r) ||
+		r == '/' || r == '-' || r == '_' || r == '.' || r == ' '
 }

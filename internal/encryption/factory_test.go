@@ -1,109 +1,111 @@
 package encryption
 
 import (
+	"context"
+	"encoding/base64"
 	"testing"
 
 	"github.com/einyx/foundation-storage-engine/internal/config"
 )
 
-func TestNewEncryptionManager_Local(t *testing.T) {
-	cfg := config.EncryptionConfig{
-		Enabled:  true,
-		Provider: "local",
-		LocalKey: "test-key-32-bytes-for-aes-256-enc",
+func makeBase64Key(t *testing.T) string {
+	t.Helper()
+	key := []byte("0123456789abcdef0123456789abcdef") // 32 bytes
+	return base64.StdEncoding.EncodeToString(key)
+}
+
+func TestNewFromConfig_LocalProvider(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.EncryptionConfig{
+		Enabled:     true,
+		Algorithm:   "AES-256-GCM",
+		KeyProvider: "local",
+		Local: &config.LocalKeyConfig{
+			MasterKey: makeBase64Key(t),
+		},
 	}
-	
-	manager, err := NewEncryptionManager(cfg)
+
+	manager, err := NewFromConfig(context.Background(), cfg)
 	if err != nil {
-		t.Fatalf("Failed to create local encryption manager: %v", err)
+		t.Fatalf("expected local provider to initialise, got error: %v", err)
 	}
-	
+
+	if manager == nil || !manager.IsEnabled() {
+		t.Fatalf("expected enabled manager, got %#v", manager)
+	}
+}
+
+func TestNewFromConfig_LocalProviderInvalidKey(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.EncryptionConfig{
+		Enabled:     true,
+		Algorithm:   "AES-256-GCM",
+		KeyProvider: "local",
+		Local: &config.LocalKeyConfig{
+			MasterKey: "not-base64",
+		},
+	}
+
+	if _, err := NewFromConfig(context.Background(), cfg); err == nil {
+		t.Fatal("expected error for invalid base64 master key, got nil")
+	}
+}
+
+func TestNewFromConfig_Disabled(t *testing.T) {
+	t.Parallel()
+
+	manager, err := NewFromConfig(context.Background(), &config.EncryptionConfig{Enabled: false})
+	if err != nil {
+		t.Fatalf("expected disabled manager without error, got: %v", err)
+	}
+
 	if manager == nil {
-		t.Fatal("Expected manager to be created")
+		t.Fatal("expected manager instance when disabled")
+	}
+
+	if manager.IsEnabled() {
+		t.Fatal("expected manager to be disabled")
 	}
 }
 
-func TestNewEncryptionManager_LocalInvalidKey(t *testing.T) {
-	cfg := config.EncryptionConfig{
-		Enabled:  true,
-		Provider: "local",
-		LocalKey: "short", // Too short for AES-256
+func TestNewFromConfig_InvalidProvider(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.EncryptionConfig{
+		Enabled:     true,
+		KeyProvider: "unsupported",
 	}
-	
-	_, err := NewEncryptionManager(cfg)
-	if err == nil {
-		t.Error("Expected error for invalid local key")
+
+	if _, err := NewFromConfig(context.Background(), cfg); err == nil {
+		t.Fatal("expected error for unsupported provider")
 	}
 }
 
-func TestNewEncryptionManager_LocalEmptyKey(t *testing.T) {
-	cfg := config.EncryptionConfig{
-		Enabled:  true,
-		Provider: "local",
-		LocalKey: "",
-	}
-	
-	_, err := NewEncryptionManager(cfg)
-	if err == nil {
-		t.Error("Expected error for empty local key")
-	}
-}
+func TestNewFromConfig_NamedLocalProvider(t *testing.T) {
+	t.Parallel()
 
-func TestNewEncryptionManager_KMS(t *testing.T) {
-	cfg := config.EncryptionConfig{
-		Enabled:  true,
-		Provider: "kms",
-		KMSKeyID: "test-kms-key-id",
+	cfg := &config.EncryptionConfig{
+		Enabled:     true,
+		Algorithm:   "AES-256-GCM",
+		KeyProvider: "primary",
+		KeyProviders: map[string]config.ProviderConfig{
+			"primary": {
+				Type: "local",
+				Config: map[string]interface{}{
+					"master_key": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+				},
+			},
+		},
 	}
-	
-	// This should create a KMS manager (though it may fail to connect in tests)
-	_, err := NewEncryptionManager(cfg)
-	// We don't expect this to succeed in test environment, but it should attempt creation
+
+	manager, err := NewFromConfig(context.Background(), cfg)
 	if err != nil {
-		t.Logf("KMS manager creation failed as expected in test environment: %v", err)
+		t.Fatalf("expected manager for named local provider, got error: %v", err)
 	}
-}
 
-func TestNewEncryptionManager_Disabled(t *testing.T) {
-	cfg := config.EncryptionConfig{
-		Enabled: false,
-	}
-	
-	manager, err := NewEncryptionManager(cfg)
-	if err != nil {
-		t.Fatalf("Failed to create disabled encryption manager: %v", err)
-	}
-	
-	if manager != nil {
-		t.Error("Expected nil manager when encryption is disabled")
-	}
-}
-
-func TestNewEncryptionManager_InvalidProvider(t *testing.T) {
-	cfg := config.EncryptionConfig{
-		Enabled:  true,
-		Provider: "invalid-provider",
-	}
-	
-	_, err := NewEncryptionManager(cfg)
-	if err == nil {
-		t.Error("Expected error for invalid provider")
-	}
-}
-
-func TestNewEncryptionManager_DefaultProvider(t *testing.T) {
-	cfg := config.EncryptionConfig{
-		Enabled:  true,
-		Provider: "", // Default should be local
-		LocalKey: "test-key-32-bytes-for-aes-256-enc",
-	}
-	
-	manager, err := NewEncryptionManager(cfg)
-	if err != nil {
-		t.Fatalf("Failed to create default encryption manager: %v", err)
-	}
-	
-	if manager == nil {
-		t.Fatal("Expected manager to be created with default provider")
+	if manager == nil || !manager.IsEnabled() {
+		t.Fatalf("expected enabled manager, got %#v", manager)
 	}
 }

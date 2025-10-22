@@ -106,7 +106,7 @@ func TestGetObjectErrorHandling(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := newErrorMockStorage()
 			storage.SimulateError("GetObject", tt.simulateError)
-			
+
 			auth := &mockAuth{}
 			cfg := config.S3Config{}
 			chunking := config.ChunkingConfig{}
@@ -120,7 +120,7 @@ func TestGetObjectErrorHandling(t *testing.T) {
 			})
 
 			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, req)
+			handler.handleObject(w, req)
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
@@ -165,13 +165,13 @@ func TestPutObjectErrorHandling(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := newErrorMockStorage()
 			storage.SimulateError("PutObject", tt.simulateError)
-			
+
 			auth := &mockAuth{}
 			cfg := config.S3Config{}
 			chunking := config.ChunkingConfig{}
 			handler := NewHandler(storage, auth, cfg, chunking)
 
-			req := httptest.NewRequest("PUT", "/test-bucket/test.txt", 
+			req := httptest.NewRequest("PUT", "/test-bucket/test.txt",
 				strings.NewReader("test data"))
 			req.Header.Set("Content-Length", "9")
 			req = createAdminContext(req)
@@ -181,7 +181,7 @@ func TestPutObjectErrorHandling(t *testing.T) {
 			})
 
 			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, req)
+			handler.handleObject(w, req)
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
@@ -212,7 +212,7 @@ func TestHeadObjectErrorHandling(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := newErrorMockStorage()
 			storage.SimulateError("HeadObject", tt.simulateError)
-			
+
 			auth := &mockAuth{}
 			cfg := config.S3Config{}
 			chunking := config.ChunkingConfig{}
@@ -226,7 +226,7 @@ func TestHeadObjectErrorHandling(t *testing.T) {
 			})
 
 			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, req)
+			handler.handleObject(w, req)
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
@@ -238,7 +238,7 @@ func TestHeadObjectErrorHandling(t *testing.T) {
 func TestDeleteObjectErrorHandling(t *testing.T) {
 	storage := newErrorMockStorage()
 	storage.SimulateError("DeleteObject", errors.New("delete failed"))
-	
+
 	auth := &mockAuth{}
 	cfg := config.S3Config{}
 	chunking := config.ChunkingConfig{}
@@ -262,7 +262,7 @@ func TestDeleteObjectErrorHandling(t *testing.T) {
 func TestListBucketsErrorHandling(t *testing.T) {
 	storage := newErrorMockStorage()
 	storage.SimulateError("ListBuckets", errors.New("backend unavailable"))
-	
+
 	auth := &mockAuth{}
 	cfg := config.S3Config{}
 	chunking := config.ChunkingConfig{}
@@ -314,7 +314,7 @@ func TestInvalidBucketNameHandling(t *testing.T) {
 			})
 
 			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, req)
+			handler.handleObject(w, req)
 
 			if w.Code != http.StatusBadRequest {
 				t.Errorf("Expected status 400 for invalid bucket name %q, got %d", tt.bucketName, w.Code)
@@ -358,7 +358,7 @@ func TestInvalidObjectKeyHandling(t *testing.T) {
 			})
 
 			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, req)
+			handler.handleObject(w, req)
 
 			if w.Code != http.StatusBadRequest {
 				t.Errorf("Expected status 400 for invalid key %q, got %d", tt.key, w.Code)
@@ -374,7 +374,7 @@ func TestMissingContentLengthHandling(t *testing.T) {
 	chunking := config.ChunkingConfig{}
 	handler := NewHandler(storage, auth, cfg, chunking)
 
-	req := httptest.NewRequest("PUT", "/test-bucket/test.txt", 
+	req := httptest.NewRequest("PUT", "/test-bucket/test.txt",
 		strings.NewReader("test data"))
 	// Don't set Content-Length header
 	req.ContentLength = -1
@@ -565,7 +565,7 @@ func TestInvalidMultipartUploadID(t *testing.T) {
 	chunking := config.ChunkingConfig{}
 	handler := NewHandler(storage, auth, cfg, chunking)
 
-	req := httptest.NewRequest("PUT", "/test-bucket/test.txt?uploadId=invalid&partNumber=1", 
+	req := httptest.NewRequest("PUT", "/test-bucket/test.txt?uploadId=invalid&partNumber=1",
 		strings.NewReader("test"))
 	req.Header.Set("Content-Length", "4")
 	req = createAdminContext(req)
@@ -589,7 +589,7 @@ func TestInvalidPartNumber(t *testing.T) {
 	chunking := config.ChunkingConfig{}
 	handler := NewHandler(storage, auth, cfg, chunking)
 
-	req := httptest.NewRequest("PUT", "/test-bucket/test.txt?uploadId=valid-upload-id&partNumber=0", 
+	req := httptest.NewRequest("PUT", "/test-bucket/test.txt?uploadId=valid-upload-id&partNumber=0",
 		strings.NewReader("test"))
 	req.Header.Set("Content-Length", "4")
 	req = createAdminContext(req)
@@ -646,14 +646,14 @@ func (r *clientDisconnectReader) Read(p []byte) (int, error) {
 	if r.pos >= len(r.data) {
 		return 0, errors.New("connection reset by peer")
 	}
-	
+
 	n := copy(p, r.data[r.pos:])
 	r.pos += n
-	
+
 	if r.pos >= len(r.data) {
 		return n, errors.New("connection reset by peer")
 	}
-	
+
 	return n, nil
 }
 
@@ -667,14 +667,14 @@ func TestResponseWriterAfterWriteStarted(t *testing.T) {
 
 	// Write first header
 	w.WriteHeader(http.StatusOK)
-	
+
 	// Try to write different status - should not change
 	w.WriteHeader(http.StatusInternalServerError)
-	
+
 	if w.statusCode != http.StatusOK {
 		t.Errorf("Expected status to remain 200, got %d", w.statusCode)
 	}
-	
+
 	if !w.written {
 		t.Error("Expected written flag to be true")
 	}

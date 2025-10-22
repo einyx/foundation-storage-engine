@@ -3,6 +3,7 @@ package s3
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,8 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 )
+
+const mockUploadID = "test-upload-id-123456"
 
 // Mock storage backend for testing
 type mockStorage struct{}
@@ -126,11 +129,11 @@ func (m *mockStorage) PutObjectACL(ctx context.Context, bucket, key string, acl 
 }
 
 func (m *mockStorage) InitiateMultipartUpload(ctx context.Context, bucket, key string, metadata map[string]string) (string, error) {
-	return "test-upload-id", nil
+	return mockUploadID, nil
 }
 
 func (m *mockStorage) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, reader io.Reader, size int64) (string, error) {
-	return "test-etag", nil
+	return fmt.Sprintf("\"part-%d-etag\"", partNumber), nil
 }
 
 func (m *mockStorage) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []storage.CompletedPart) error {

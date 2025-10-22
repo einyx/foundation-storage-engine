@@ -30,8 +30,8 @@ type Config struct {
 // ServerConfig contains HTTP server configuration settings
 type ServerConfig struct {
 	Listen       string        `mapstructure:"listen" envconfig:"SERVER_LISTEN" default:":8080"`
-	ReadTimeout  time.Duration `mapstructure:"read_timeout" envconfig:"SERVER_READ_TIMEOUT" default:"60s"`
-	WriteTimeout time.Duration `mapstructure:"write_timeout" envconfig:"SERVER_WRITE_TIMEOUT" default:"60s"`
+	ReadTimeout  time.Duration `mapstructure:"read_timeout" envconfig:"SERVER_READ_TIMEOUT" default:"0s"`
+	WriteTimeout time.Duration `mapstructure:"write_timeout" envconfig:"SERVER_WRITE_TIMEOUT" default:"0s"`
 	IdleTimeout  time.Duration `mapstructure:"idle_timeout" envconfig:"SERVER_IDLE_TIMEOUT" default:"120s"`
 	MaxBodySize  int64         `mapstructure:"max_body_size" envconfig:"SERVER_MAX_BODY_SIZE" default:"5368709120"` // 5GB
 }
@@ -97,27 +97,29 @@ type ContainerConfig struct {
 
 // S3StorageConfig contains S3 storage backend specific settings
 type S3StorageConfig struct {
-	Endpoint      string                   `mapstructure:"endpoint" envconfig:"S3_ENDPOINT"`
-	Region        string                   `mapstructure:"region" envconfig:"S3_REGION" default:"us-east-1"`
-	AccessKey     string                   `mapstructure:"access_key" envconfig:"S3_ACCESS_KEY"`
-	SecretKey     string                   `mapstructure:"secret_key" envconfig:"S3_SECRET_KEY"`
-	Profile       string                   `mapstructure:"profile" envconfig:"AWS_PROFILE"`
-	UsePathStyle  bool                     `mapstructure:"use_path_style" envconfig:"S3_USE_PATH_STYLE" default:"true"`
-	DisableSSL    bool                     `mapstructure:"disable_ssl" envconfig:"S3_DISABLE_SSL" default:"false"`
-	BucketMapping map[string]string        `mapstructure:"bucket_mapping"` // Map virtual bucket names to real bucket names
-	BucketConfigs map[string]*BucketConfig `mapstructure:"bucket_configs"` // Per-bucket configuration
+	Endpoint                string                   `mapstructure:"endpoint" envconfig:"S3_ENDPOINT"`
+	Region                  string                   `mapstructure:"region" envconfig:"S3_REGION" default:"us-east-1"`
+	AccessKey               string                   `mapstructure:"access_key" envconfig:"S3_ACCESS_KEY"`
+	SecretKey               string                   `mapstructure:"secret_key" envconfig:"S3_SECRET_KEY"`
+	Profile                 string                   `mapstructure:"profile" envconfig:"AWS_PROFILE"`
+	UsePathStyle            bool                     `mapstructure:"use_path_style" envconfig:"S3_USE_PATH_STYLE" default:"true"`
+	DisableSSL              bool                     `mapstructure:"disable_ssl" envconfig:"S3_DISABLE_SSL" default:"false"`
+	MultipartMaxConcurrency int                      `mapstructure:"multipart_max_concurrency" envconfig:"S3_MULTIPART_MAX_CONCURRENCY"`
+	BucketMapping           map[string]string        `mapstructure:"bucket_mapping"` // Map virtual bucket names to real bucket names
+	BucketConfigs           map[string]*BucketConfig `mapstructure:"bucket_configs"` // Per-bucket configuration
 }
 
 // BucketConfig contains per-bucket configuration settings
 type BucketConfig struct {
-	RealName             string            `mapstructure:"real_name"`              // Real bucket name in S3
-	Prefix               string            `mapstructure:"prefix"`                 // Optional prefix (subdirectory) within the bucket
-	Region               string            `mapstructure:"region"`                 // AWS region for this bucket
-	Endpoint             string            `mapstructure:"endpoint"`               // Optional custom endpoint for this bucket
-	AccessKey            string            `mapstructure:"access_key"`             // Optional per-bucket access key
-	SecretKey            string            `mapstructure:"secret_key"`             // Optional per-bucket secret key
-	KMSKeyID             string            `mapstructure:"kms_key_id"`             // Optional KMS key for this bucket
-	KMSEncryptionContext map[string]string `mapstructure:"kms_encryption_context"` // Optional encryption context
+	RealName                string            `mapstructure:"real_name"`                 // Real bucket name in S3
+	Prefix                  string            `mapstructure:"prefix"`                    // Optional prefix (subdirectory) within the bucket
+	Region                  string            `mapstructure:"region"`                    // AWS region for this bucket
+	Endpoint                string            `mapstructure:"endpoint"`                  // Optional custom endpoint for this bucket
+	AccessKey               string            `mapstructure:"access_key"`                // Optional per-bucket access key
+	SecretKey               string            `mapstructure:"secret_key"`                // Optional per-bucket secret key
+	KMSKeyID                string            `mapstructure:"kms_key_id"`                // Optional KMS key for this bucket
+	KMSEncryptionContext    map[string]string `mapstructure:"kms_encryption_context"`    // Optional encryption context
+	MultipartMaxConcurrency int               `mapstructure:"multipart_max_concurrency"` // Optional per-bucket concurrency override
 }
 
 // FileSystemConfig contains filesystem storage backend settings
@@ -360,19 +362,19 @@ type MonitoringConfig struct {
 
 // SentryConfig contains Sentry error tracking configuration
 type SentryConfig struct {
-	Enabled              bool     `mapstructure:"enabled" envconfig:"SENTRY_ENABLED" default:"false"`
-	DSN                  string   `mapstructure:"dsn" envconfig:"SENTRY_DSN"`
-	Environment          string   `mapstructure:"environment" envconfig:"SENTRY_ENVIRONMENT" default:"production"`
-	SampleRate           float64  `mapstructure:"sample_rate" envconfig:"SENTRY_SAMPLE_RATE" default:"1.0"`
-	TracesSampleRate     float64  `mapstructure:"traces_sample_rate" envconfig:"SENTRY_TRACES_SAMPLE_RATE" default:"0.1"`
-	AttachStacktrace     bool     `mapstructure:"attach_stacktrace" envconfig:"SENTRY_ATTACH_STACKTRACE" default:"true"`
-	EnableTracing        bool     `mapstructure:"enable_tracing" envconfig:"SENTRY_ENABLE_TRACING" default:"true"`
-	Debug                bool     `mapstructure:"debug" envconfig:"SENTRY_DEBUG" default:"false"`
-	MaxBreadcrumbs       int      `mapstructure:"max_breadcrumbs" envconfig:"SENTRY_MAX_BREADCRUMBS" default:"30"`
-	IgnoreErrors         []string `mapstructure:"ignore_errors"`
-	ServerName           string   `mapstructure:"server_name" envconfig:"SENTRY_SERVER_NAME"`
-	Release              string   `mapstructure:"release" envconfig:"SENTRY_RELEASE"`
-	EnableLogs           bool     `mapstructure:"enable_logs" envconfig:"SENTRY_ENABLE_LOGS" default:"true"`
+	Enabled          bool     `mapstructure:"enabled" envconfig:"SENTRY_ENABLED" default:"false"`
+	DSN              string   `mapstructure:"dsn" envconfig:"SENTRY_DSN"`
+	Environment      string   `mapstructure:"environment" envconfig:"SENTRY_ENVIRONMENT" default:"production"`
+	SampleRate       float64  `mapstructure:"sample_rate" envconfig:"SENTRY_SAMPLE_RATE" default:"1.0"`
+	TracesSampleRate float64  `mapstructure:"traces_sample_rate" envconfig:"SENTRY_TRACES_SAMPLE_RATE" default:"0.1"`
+	AttachStacktrace bool     `mapstructure:"attach_stacktrace" envconfig:"SENTRY_ATTACH_STACKTRACE" default:"true"`
+	EnableTracing    bool     `mapstructure:"enable_tracing" envconfig:"SENTRY_ENABLE_TRACING" default:"true"`
+	Debug            bool     `mapstructure:"debug" envconfig:"SENTRY_DEBUG" default:"false"`
+	MaxBreadcrumbs   int      `mapstructure:"max_breadcrumbs" envconfig:"SENTRY_MAX_BREADCRUMBS" default:"30"`
+	IgnoreErrors     []string `mapstructure:"ignore_errors"`
+	ServerName       string   `mapstructure:"server_name" envconfig:"SENTRY_SERVER_NAME"`
+	Release          string   `mapstructure:"release" envconfig:"SENTRY_RELEASE"`
+	EnableLogs       bool     `mapstructure:"enable_logs" envconfig:"SENTRY_ENABLE_LOGS" default:"true"`
 }
 
 // OPAConfig contains Open Policy Agent configuration settings

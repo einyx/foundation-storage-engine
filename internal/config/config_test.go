@@ -11,7 +11,7 @@ func TestLoad_EmptyConfig(t *testing.T) {
 	// Set required storage provider
 	os.Setenv("STORAGE_PROVIDER", "filesystem")
 	defer os.Unsetenv("STORAGE_PROVIDER")
-	
+
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
@@ -90,7 +90,7 @@ func TestLoad_AWSEnvironmentVariables(t *testing.T) {
 
 func TestValidate_MissingStorageProvider(t *testing.T) {
 	cfg := &Config{}
-	
+
 	err := validate(cfg)
 	if err == nil {
 		t.Error("Expected validation error for missing storage provider")
@@ -318,18 +318,18 @@ func TestValidate_UnsupportedProvider(t *testing.T) {
 func TestServerConfig_Defaults(t *testing.T) {
 	os.Setenv("STORAGE_PROVIDER", "filesystem")
 	defer os.Unsetenv("STORAGE_PROVIDER")
-	
+
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	if cfg.Server.ReadTimeout != 60*time.Second {
-		t.Errorf("Expected default read timeout 60s, got %v", cfg.Server.ReadTimeout)
+	if cfg.Server.ReadTimeout != 0 {
+		t.Errorf("Expected default read timeout 0s (disabled), got %v", cfg.Server.ReadTimeout)
 	}
 
-	if cfg.Server.WriteTimeout != 60*time.Second {
-		t.Errorf("Expected default write timeout 60s, got %v", cfg.Server.WriteTimeout)
+	if cfg.Server.WriteTimeout != 0 {
+		t.Errorf("Expected default write timeout 0s (disabled), got %v", cfg.Server.WriteTimeout)
 	}
 
 	if cfg.Server.IdleTimeout != 120*time.Second {
@@ -340,7 +340,7 @@ func TestServerConfig_Defaults(t *testing.T) {
 func TestAuth0Config_Defaults(t *testing.T) {
 	os.Setenv("STORAGE_PROVIDER", "filesystem")
 	defer os.Unsetenv("STORAGE_PROVIDER")
-	
+
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
@@ -366,7 +366,7 @@ func TestAuth0Config_Defaults(t *testing.T) {
 func TestEncryptionConfig_Defaults(t *testing.T) {
 	os.Setenv("STORAGE_PROVIDER", "filesystem")
 	defer os.Unsetenv("STORAGE_PROVIDER")
-	
+
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
@@ -388,7 +388,7 @@ func TestEncryptionConfig_Defaults(t *testing.T) {
 func TestVirusTotalConfig_Defaults(t *testing.T) {
 	os.Setenv("STORAGE_PROVIDER", "filesystem")
 	defer os.Unsetenv("STORAGE_PROVIDER")
-	
+
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
@@ -410,7 +410,7 @@ func TestVirusTotalConfig_Defaults(t *testing.T) {
 func TestSentryConfig_Defaults(t *testing.T) {
 	os.Setenv("STORAGE_PROVIDER", "filesystem")
 	defer os.Unsetenv("STORAGE_PROVIDER")
-	
+
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
@@ -436,7 +436,7 @@ func TestSentryConfig_Defaults(t *testing.T) {
 func TestOPAConfig_Defaults(t *testing.T) {
 	os.Setenv("STORAGE_PROVIDER", "filesystem")
 	defer os.Unsetenv("STORAGE_PROVIDER")
-	
+
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
@@ -458,7 +458,7 @@ func TestOPAConfig_Defaults(t *testing.T) {
 func TestDatabaseConfig_Defaults(t *testing.T) {
 	os.Setenv("STORAGE_PROVIDER", "filesystem")
 	defer os.Unsetenv("STORAGE_PROVIDER")
-	
+
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
@@ -484,7 +484,7 @@ func TestDatabaseConfig_Defaults(t *testing.T) {
 func TestMonitoringConfig_Defaults(t *testing.T) {
 	os.Setenv("STORAGE_PROVIDER", "filesystem")
 	defer os.Unsetenv("STORAGE_PROVIDER")
-	
+
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
@@ -538,7 +538,7 @@ func TestLoad_InvalidConfigFile(t *testing.T) {
 func BenchmarkLoad_EmptyConfig(b *testing.B) {
 	os.Setenv("STORAGE_PROVIDER", "filesystem")
 	defer os.Unsetenv("STORAGE_PROVIDER")
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := Load("")

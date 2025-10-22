@@ -11,6 +11,8 @@ import (
 	"github.com/gorilla/mux"
 )
 
+const testUploadID = "test-upload-id-123456"
+
 func TestInitiateMultipartUpload(t *testing.T) {
 	s3cfg := config.S3Config{}
 	chunking := config.ChunkingConfig{}
@@ -40,8 +42,8 @@ func TestInitiateMultipartUpload(t *testing.T) {
 		t.Errorf("Failed to unmarshal response: %v", err)
 	}
 
-	if result.UploadId != "test-upload-id" {
-		t.Errorf("Expected upload ID 'test-upload-id', got '%s'", result.UploadId)
+	if result.UploadId != testUploadID {
+		t.Errorf("Expected upload ID '%s', got '%s'", testUploadID, result.UploadId)
 	}
 	if result.Bucket != "warehouse" {
 		t.Errorf("Expected bucket 'warehouse', got '%s'", result.Bucket)
@@ -58,7 +60,7 @@ func TestUploadPart(t *testing.T) {
 	handler := NewHandler(&mockStorage{}, &mockAuth{}, s3cfg, chunking)
 
 	body := strings.NewReader("test part data")
-	req := httptest.NewRequest("PUT", "/warehouse/testfile.txt?partNumber=1&uploadId=test-upload-id", body)
+	req := httptest.NewRequest("PUT", "/warehouse/testfile.txt?partNumber=1&uploadId="+testUploadID, body)
 	req = mux.SetURLVars(req, map[string]string{
 		"bucket": "warehouse",
 		"key":    "testfile.txt",
@@ -66,7 +68,7 @@ func TestUploadPart(t *testing.T) {
 	req.Header.Set("Content-Length", "14")
 	rr := httptest.NewRecorder()
 
-	handler.uploadPart(rr, req, "warehouse", "testfile.txt", "test-upload-id", "1")
+	handler.uploadPart(rr, req, "warehouse", "testfile.txt", testUploadID, "1")
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("uploadPart() status = %d, want %d", rr.Code, http.StatusOK)
@@ -92,7 +94,7 @@ func TestCompleteMultipartUpload(t *testing.T) {
 	</CompleteMultipartUpload>`
 
 	body := strings.NewReader(completeReq)
-	req := httptest.NewRequest("POST", "/warehouse/testfile.txt?uploadId=test-upload-id", body)
+	req := httptest.NewRequest("POST", "/warehouse/testfile.txt?uploadId="+testUploadID, body)
 	req = mux.SetURLVars(req, map[string]string{
 		"bucket": "warehouse",
 		"key":    "testfile.txt",
@@ -100,7 +102,7 @@ func TestCompleteMultipartUpload(t *testing.T) {
 	req.Header.Set("Content-Type", "application/xml")
 	rr := httptest.NewRecorder()
 
-	handler.completeMultipartUpload(rr, req, "warehouse", "testfile.txt", "test-upload-id")
+	handler.completeMultipartUpload(rr, req, "warehouse", "testfile.txt", testUploadID)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("completeMultipartUpload() status = %d, want %d", rr.Code, http.StatusOK)
@@ -131,14 +133,14 @@ func TestAbortMultipartUpload(t *testing.T) {
 
 	handler := NewHandler(&mockStorage{}, &mockAuth{}, s3cfg, chunking)
 
-	req := httptest.NewRequest("DELETE", "/warehouse/testfile.txt?uploadId=test-upload-id", nil)
+	req := httptest.NewRequest("DELETE", "/warehouse/testfile.txt?uploadId="+testUploadID, nil)
 	req = mux.SetURLVars(req, map[string]string{
 		"bucket": "warehouse",
 		"key":    "testfile.txt",
 	})
 	rr := httptest.NewRecorder()
 
-	handler.abortMultipartUpload(rr, req, "warehouse", "testfile.txt", "test-upload-id")
+	handler.abortMultipartUpload(rr, req, "warehouse", "testfile.txt", testUploadID)
 
 	if rr.Code != http.StatusNoContent {
 		t.Errorf("abortMultipartUpload() status = %d, want %d", rr.Code, http.StatusNoContent)
@@ -151,14 +153,14 @@ func TestListParts(t *testing.T) {
 
 	handler := NewHandler(&mockStorage{}, &mockAuth{}, s3cfg, chunking)
 
-	req := httptest.NewRequest("GET", "/warehouse/testfile.txt?uploadId=test-upload-id", nil)
+	req := httptest.NewRequest("GET", "/warehouse/testfile.txt?uploadId="+testUploadID, nil)
 	req = mux.SetURLVars(req, map[string]string{
 		"bucket": "warehouse",
 		"key":    "testfile.txt",
 	})
 	rr := httptest.NewRecorder()
 
-	handler.listParts(rr, req, "warehouse", "testfile.txt", "test-upload-id")
+	handler.listParts(rr, req, "warehouse", "testfile.txt", testUploadID)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("listParts() status = %d, want %d", rr.Code, http.StatusOK)
@@ -180,7 +182,7 @@ func TestListParts(t *testing.T) {
 	if result.Key != "testfile.txt" {
 		t.Errorf("Expected key 'testfile.txt', got '%s'", result.Key)
 	}
-	if result.UploadId != "test-upload-id" {
-		t.Errorf("Expected upload ID 'test-upload-id', got '%s'", result.UploadId)
+	if result.UploadId != testUploadID {
+		t.Errorf("Expected upload ID '%s', got '%s'", testUploadID, result.UploadId)
 	}
 }
