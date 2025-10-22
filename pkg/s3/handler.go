@@ -2,17 +2,9 @@
 package s3
 
 import (
-	"bytes"
 	"context"
-	"crypto/md5" //nolint:gosec // MD5 is required for S3 compatibility
-	"encoding/hex"
-	"encoding/xml"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,15 +14,16 @@ import (
 
 	"github.com/einyx/foundation-storage-engine/internal/auth"
 	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/middleware"
 	"github.com/einyx/foundation-storage-engine/internal/storage"
 	"github.com/einyx/foundation-storage-engine/internal/virustotal"
 )
 
 const (
-	smallBufferSize  = 4 * 1024     // 4KB
-	mediumBufferSize = 256 * 1024   // 256KB - increased for better large file handling
-	largeBufferSize  = 1024 * 1024  // 1MB - for very large files
-	smallFileLimit   = 100 * 1024   // 100KB
+	smallBufferSize  = 4 * 1024    // 4KB
+	mediumBufferSize = 256 * 1024  // 256KB - increased for better large file handling
+	largeBufferSize  = 1024 * 1024 // 1MB - for very large files
+	smallFileLimit   = 100 * 1024  // 100KB
 )
 
 var (
@@ -54,6 +47,7 @@ var (
 	}
 )
 
+// Handler represents the S3-compatible HTTP handler
 type Handler struct {
 	storage  storage.Backend
 	auth     auth.Provider
@@ -63,6 +57,7 @@ type Handler struct {
 	scanner  *virustotal.Scanner
 }
 
+// NewHandler creates a new S3 handler instance
 func NewHandler(storage storage.Backend, auth auth.Provider, cfg config.S3Config, chunking config.ChunkingConfig) *Handler {
 	h := &Handler{
 		storage:  storage,
@@ -82,27 +77,30 @@ func (h *Handler) SetScanner(scanner *virustotal.Scanner) {
 	h.scanner = scanner
 }
 
+<<<<<<< Updated upstream
+// ServeHTTP handles all S3 requests
+=======
 // isListOperation checks if a GET request should be treated as a list operation
 // based on query parameters that indicate a bucket listing rather than object retrieval
 func (h *Handler) isListOperation(r *http.Request) bool {
 	query := r.URL.Query()
-	
+
 	// Check for list-type query parameters that indicate this is a list operation
 	listParams := []string{
-		"list-type",     // S3 v2 list API
-		"delimiter",     // Directory-style listing
-		"prefix",        // Prefix filtering
-		"marker",        // S3 v1 list continuation
-		"max-keys",      // Limit number of results
+		"list-type",          // S3 v2 list API
+		"delimiter",          // Directory-style listing
+		"prefix",             // Prefix filtering
+		"marker",             // S3 v1 list continuation
+		"max-keys",           // Limit number of results
 		"continuation-token", // S3 v2 list continuation
 	}
-	
+
 	for _, param := range listParams {
 		if query.Get(param) != "" {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -118,26 +116,43 @@ func (h *Handler) isValidBucket(bucket string) bool {
 	return exists
 }
 
+>>>>>>> Stashed changes
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Log every request to debug hanging
 	start := time.Now()
-	
+
+<<<<<<< Updated upstream
+	// Add S3-compatible headers early to help clients recognize this as S3
+	w.Header().Set("Server", "AmazonS3")
+	w.Header().Set("x-amz-request-id", fmt.Sprintf("%d", start.UnixNano()))
+
+=======
+>>>>>>> Stashed changes
 	// Wrap response writer to capture status
 	wrapped := &responseWriter{
 		ResponseWriter: w,
-		statusCode:    200,
-		written:       false,
+		statusCode:     200,
+		written:        false,
 	}
-	
+
 	logrus.WithFields(logrus.Fields{
-		"method": r.Method,
-		"path":   r.URL.Path,
-		"query":  r.URL.RawQuery,
+<<<<<<< Updated upstream
+		"method":       r.Method,
+		"path":         r.URL.Path,
+		"query":        r.URL.RawQuery,
+		"userAgent":    r.Header.Get("User-Agent"),
+		"has_auth":     r.Header.Get("Authorization") != "",
+		"has_amz_date": r.Header.Get("X-Amz-Date") != "",
+		"all_headers":  r.Header,
+=======
+		"method":    r.Method,
+		"path":      r.URL.Path,
+		"query":     r.URL.RawQuery,
 		"userAgent": r.Header.Get("User-Agent"),
+>>>>>>> Stashed changes
 	}).Info("Incoming S3 request")
-	
+
 	h.router.ServeHTTP(wrapped, r)
-	
+
 	// Log response
 	duration := time.Since(start)
 	logrus.WithFields(logrus.Fields{
@@ -170,6 +185,119 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// setupRoutes configures all S3 API routes
+func (h *Handler) setupRoutes() {
+	// Apply authentication middleware to all routes
+	authMiddleware := middleware.AuthenticationMiddleware(h.auth)
+	bucketAccessMiddleware := middleware.BucketAccessMiddleware()
+	adminMiddleware := middleware.AdminAuthMiddleware()
+
+	// Service operations (requires authentication) - EXACT match for root
+	h.router.Handle("/", authMiddleware(http.HandlerFunc(h.listBuckets))).Methods("GET")
+	h.router.HandleFunc("/", h.handleOptions).Methods("OPTIONS")
+
+	// Bucket operations (requires authentication + bucket access)
+	bucketAuth := func(h http.HandlerFunc) http.Handler {
+		return authMiddleware(bucketAccessMiddleware(h))
+	}
+
+	// Admin bucket operations
+	adminAuth := func(h http.HandlerFunc) http.Handler {
+		return authMiddleware(adminMiddleware(bucketAccessMiddleware(h)))
+	}
+
+	// Object routes - ensure bucket name is not empty (MUST come first for proper matching)
+	h.router.Handle("/{bucket:[^/]+}/{key:.+}", bucketAuth(h.handleObject)).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
+
+	// Bucket admin routes - ensure bucket name is not empty
+	h.router.Handle("/{bucket:[^/]+}", adminAuth(h.handleBucketAdmin)).Methods("PUT", "DELETE")
+	h.router.Handle("/{bucket:[^/]+}/", adminAuth(h.handleBucketAdmin)).Methods("PUT", "DELETE")
+
+	// Regular bucket routes - ensure bucket name is not empty
+	h.router.Handle("/{bucket:[^/]+}", bucketAuth(h.handleBucket)).Methods("GET", "HEAD", "POST")
+	h.router.Handle("/{bucket:[^/]+}/", bucketAuth(h.handleBucket)).Methods("GET", "HEAD", "POST")
+}
+
+// handleOptions handles CORS preflight requests
+func (h *Handler) handleOptions(w http.ResponseWriter, r *http.Request) {
+	// CORS headers
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Amz-*, Accept, X-Requested-With")
+	w.Header().Set("Access-Control-Max-Age", "86400")
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// isListOperation checks if a GET request should be treated as a list operation
+// based on query parameters that indicate a bucket listing rather than object retrieval
+func (h *Handler) isListOperation(r *http.Request) bool {
+	query := r.URL.Query()
+
+	// Check for list-type query parameters that indicate this is a list operation
+	listParams := []string{
+		"list-type",          // S3 v2 list API
+		"delimiter",          // Directory-style listing
+		"prefix",             // Prefix filtering
+		"marker",             // S3 v1 list continuation
+		"max-keys",           // Limit number of results
+		"continuation-token", // S3 v2 list continuation
+	}
+
+	for _, param := range listParams {
+		if query.Has(param) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isValidBucket validates bucket name according to S3 naming rules and checks existence
+func (h *Handler) isValidBucket(bucket string) bool {
+	if len(bucket) < 3 || len(bucket) > 63 {
+		return false
+	}
+	if strings.Contains(bucket, "..") {
+		return false
+	}
+
+	// Check if bucket exists in storage
+	ctx := context.Background()
+	exists, err := h.storage.BucketExists(ctx, bucket)
+	if err != nil {
+		return false
+	}
+	return exists
+}
+
+// sendError sends a structured error response
+func (h *Handler) sendError(w http.ResponseWriter, err error, status int) {
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(status)
+
+	errorResponse := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<Error>
+	<Code>%s</Code>
+	<Message>%s</Message>
+</Error>`, http.StatusText(status), err.Error())
+
+	w.Write([]byte(errorResponse))
+}
+
+// getClientIP extracts client IP from X-Forwarded-For header or request
+func (h *Handler) getClientIP(xForwardedFor string) string {
+	if xForwardedFor != "" {
+		// X-Forwarded-For may contain multiple IPs, take the first one
+		if idx := strings.Index(xForwardedFor, ","); idx != -1 {
+			return strings.TrimSpace(xForwardedFor[:idx])
+		}
+		return strings.TrimSpace(xForwardedFor)
+	}
+
+	return ""
+}
+
 // isResponseStarted checks if response has already been written
 func isResponseStarted(w http.ResponseWriter) bool {
 	if rw, ok := w.(*responseWriter); ok {
@@ -178,22 +306,15 @@ func isResponseStarted(w http.ResponseWriter) bool {
 	return false
 }
 
-func (h *Handler) setupRoutes() {
-	// Service operations
-	h.router.HandleFunc("/", h.listBuckets).Methods("GET").MatcherFunc(noBucketMatcher)
-
-	// Bucket operations
-	h.router.HandleFunc("/{bucket}", h.handleBucket).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
-	h.router.HandleFunc("/{bucket}/", h.handleBucket).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
-
-	// Object operations
-	h.router.HandleFunc("/{bucket}/{key:.*}", h.handleObject).Methods("GET", "PUT", "DELETE", "HEAD", "POST")
-}
-
+// noBucketMatcher is a custom matcher for routes that should not match bucket paths
 func noBucketMatcher(r *http.Request, rm *mux.RouteMatch) bool {
-	return r.URL.Path == "/" || r.URL.Path == ""
+	// Only match if this is exactly "/" (no bucket name)
+	return r.URL.Path == "/"
 }
 
+<<<<<<< Updated upstream
+// isClientDisconnectError checks if an error indicates client disconnection
+=======
 func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	buckets, err := h.storage.ListBuckets(ctx)
@@ -303,12 +424,12 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 		"query":  r.URL.RawQuery,
 		"path":   r.URL.Path,
 	})
-	
+
 	// Debug logging for download issues
 	logger.WithFields(logrus.Fields{
 		"rawPath": r.URL.Path,
-		"bucket": bucket,
-		"key": key,
+		"bucket":  bucket,
+		"key":     key,
 	}).Debug("handleObject called")
 
 	// logger.Debug("Handling object request")
@@ -397,7 +518,7 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 		if _, hasRestore := r.URL.Query()["restore"]; hasRestore {
 			// Get version ID from query parameter
 			versionID := r.URL.Query().Get("versionId")
-			
+
 			// Call restore method
 			err := h.storage.RestoreObject(r.Context(), bucket, key, versionID)
 			if err != nil {
@@ -405,7 +526,7 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 				h.sendError(w, err, http.StatusInternalServerError)
 				return
 			}
-			
+
 			// Return success response
 			w.WriteHeader(http.StatusOK)
 			w.Header().Set("Content-Type", "application/xml")
@@ -432,13 +553,13 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 	// Check if this is a V2 list request
 	listType := r.URL.Query().Get("list-type")
 	isV2 := listType == "2"
-	
+
 	prefix := r.URL.Query().Get("prefix")
 	marker := r.URL.Query().Get("marker")
 	delimiter := r.URL.Query().Get("delimiter")
 	maxKeysStr := r.URL.Query().Get("max-keys")
 	includeDeleted := r.URL.Query().Get("deleted") == "true"
-	
+
 	// For V2 requests, use continuation-token instead of marker
 	if isV2 {
 		continuationToken := r.URL.Query().Get("continuation-token")
@@ -469,11 +590,11 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 	}
 
 	logger := logrus.WithFields(logrus.Fields{
-		"bucket":    bucket,
-		"prefix":    prefix,
-		"delimiter": delimiter,
-		"maxKeys":   maxKeys,
-		"marker":    marker,
+		"bucket":         bucket,
+		"prefix":         prefix,
+		"delimiter":      delimiter,
+		"maxKeys":        maxKeys,
+		"marker":         marker,
 		"includeDeleted": includeDeleted,
 	})
 	// logger.Debug("Listing objects")
@@ -481,7 +602,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 	// Handle soft delete listing
 	var result *storage.ListObjectsResult
 	var err error
-	
+
 	if includeDeleted {
 		// List deleted objects (no delimiter support for deleted objects)
 		result, err = h.storage.ListDeletedObjects(ctx, bucket, prefix, marker, maxKeys)
@@ -494,7 +615,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		h.sendError(w, err, http.StatusInternalServerError)
 		return
 	}
-	
+
 	// Special handling for deleted objects listing
 	if includeDeleted {
 		// Create a custom response format that includes metadata
@@ -503,7 +624,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 			VersionID   string `xml:"VersionID,omitempty"`
 			IsDeleted   string `xml:"IsDeleted,omitempty"`
 		}
-		
+
 		type deletedContents struct {
 			Key          string       `xml:"Key"`
 			LastModified string       `xml:"LastModified"`
@@ -512,18 +633,18 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 			StorageClass string       `xml:"StorageClass"`
 			Metadata     metadataItem `xml:"Metadata"`
 		}
-		
+
 		type deletedListResult struct {
-			XMLName        xml.Name          `xml:"ListBucketResult"`
-			Name           string            `xml:"Name"`
-			Prefix         string            `xml:"Prefix"`
-			Marker         string            `xml:"Marker"`
-			NextMarker     string            `xml:"NextMarker,omitempty"`
-			MaxKeys        int               `xml:"MaxKeys"`
-			IsTruncated    bool              `xml:"IsTruncated"`
-			Contents       []deletedContents `xml:"Contents"`
+			XMLName     xml.Name          `xml:"ListBucketResult"`
+			Name        string            `xml:"Name"`
+			Prefix      string            `xml:"Prefix"`
+			Marker      string            `xml:"Marker"`
+			NextMarker  string            `xml:"NextMarker,omitempty"`
+			MaxKeys     int               `xml:"MaxKeys"`
+			IsTruncated bool              `xml:"IsTruncated"`
+			Contents    []deletedContents `xml:"Contents"`
 		}
-		
+
 		response := deletedListResult{
 			Name:        bucket,
 			Prefix:      prefix,
@@ -532,7 +653,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 			IsTruncated: result.IsTruncated,
 			NextMarker:  result.NextMarker,
 		}
-		
+
 		for _, obj := range result.Contents {
 			metadata := metadataItem{}
 			if obj.Metadata != nil {
@@ -540,7 +661,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 				metadata.VersionID = obj.Metadata["VersionID"]
 				metadata.IsDeleted = obj.Metadata["IsDeleted"]
 			}
-			
+
 			response.Contents = append(response.Contents, deletedContents{
 				Key:          obj.Key,
 				LastModified: obj.LastModified.Format(time.RFC3339),
@@ -550,20 +671,20 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 				Metadata:     metadata,
 			})
 		}
-		
+
 		logrus.WithFields(logrus.Fields{
 			"deletedCount": len(response.Contents),
-			"bucket": bucket,
+			"bucket":       bucket,
 		}).Info("Returning deleted objects XML response")
-		
+
 		// Log first few items for debugging
 		if len(response.Contents) > 0 {
 			logrus.WithFields(logrus.Fields{
-				"firstKey": response.Contents[0].Key,
+				"firstKey":  response.Contents[0].Key,
 				"firstSize": response.Contents[0].Size,
 			}).Debug("First deleted object details")
 		}
-		
+
 		w.Header().Set("Content-Type", "application/xml")
 		enc := xml.NewEncoder(w)
 		enc.Indent("", "  ")
@@ -572,12 +693,12 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		}
 		return
 	}
-	
+
 	// Debug logging for pagination issues
 	if isV2 && result.IsTruncated {
 		logger.WithFields(logrus.Fields{
-			"marker": marker,
-			"nextMarker": result.NextMarker,
+			"marker":      marker,
+			"nextMarker":  result.NextMarker,
 			"resultCount": len(result.Contents),
 			"isTruncated": result.IsTruncated,
 		}).Debug("V2 list pagination state")
@@ -610,15 +731,15 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 			Prefix string `xml:"Prefix"`
 		} `xml:"CommonPrefixes,omitempty"`
 	}
-	
+
 	type listBucketResultV2 struct {
-		XMLName               xml.Name   `xml:"ListBucketResult"`
-		Name                  string     `xml:"Name"`
-		Prefix                string     `xml:"Prefix"`
-		MaxKeys               int        `xml:"MaxKeys"`
-		IsTruncated           bool       `xml:"IsTruncated"`
-		Contents              []contents `xml:"Contents"`
-		CommonPrefixes        []struct {
+		XMLName        xml.Name   `xml:"ListBucketResult"`
+		Name           string     `xml:"Name"`
+		Prefix         string     `xml:"Prefix"`
+		MaxKeys        int        `xml:"MaxKeys"`
+		IsTruncated    bool       `xml:"IsTruncated"`
+		Contents       []contents `xml:"Contents"`
+		CommonPrefixes []struct {
 			Prefix string `xml:"Prefix"`
 		} `xml:"CommonPrefixes,omitempty"`
 		ContinuationToken     string `xml:"ContinuationToken,omitempty"`
@@ -630,10 +751,10 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 	// This prevents XML parsing errors in clients
 	if len(result.Contents) == 0 && result.IsTruncated {
 		logrus.WithFields(logrus.Fields{
-			"bucket":       bucket,
-			"prefix":       prefix,
-			"isTruncated":  result.IsTruncated,
-			"nextMarker":   result.NextMarker,
+			"bucket":      bucket,
+			"prefix":      prefix,
+			"isTruncated": result.IsTruncated,
+			"nextMarker":  result.NextMarker,
 		}).Warn("Correcting IsTruncated=true with empty Contents")
 		result.IsTruncated = false
 		result.NextMarker = ""
@@ -644,19 +765,19 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		// Safety check: Prevent infinite loops by detecting when NextMarker equals current marker
 		// Handle URL encoding differences
 		decodedMarker, _ := url.QueryUnescape(marker)
-		if result.IsTruncated && result.NextMarker != "" && 
+		if result.IsTruncated && result.NextMarker != "" &&
 			(result.NextMarker == marker || result.NextMarker == decodedMarker) {
 			logrus.WithFields(logrus.Fields{
-				"bucket":       bucket,
-				"prefix":       prefix,
-				"marker":       marker,
+				"bucket":        bucket,
+				"prefix":        prefix,
+				"marker":        marker,
 				"decodedMarker": decodedMarker,
-				"nextMarker":   result.NextMarker,
+				"nextMarker":    result.NextMarker,
 			}).Warn("Detected same continuation token, breaking potential infinite loop")
 			result.IsTruncated = false
 			result.NextMarker = ""
 		}
-		
+
 		responseV2 := listBucketResultV2{
 			Name:        bucket,
 			Prefix:      prefix,
@@ -664,7 +785,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 			IsTruncated: result.IsTruncated,
 			KeyCount:    len(result.Contents),
 		}
-		
+
 		// Use continuation tokens for V2
 		if marker != "" {
 			responseV2.ContinuationToken = marker
@@ -697,7 +818,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		}
 		return
 	}
-	
+
 	// V1 format (default)
 	response := listBucketResult{
 		Name:        bucket,
@@ -781,7 +902,7 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	headers.Set("ETag", obj.ETag)
 	headers.Set("Last-Modified", obj.LastModified.Format(http.TimeFormat))
 	headers.Set("Accept-Ranges", "bytes")
-	
+
 	// Add cache headers to reduce repeated requests
 	// Iceberg metadata files change frequently, so use short cache
 	if isIcebergMetadata {
@@ -823,7 +944,7 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	} else {
 		// Log successful retrieval
 		logger.WithFields(logrus.Fields{
-			"size": written,
+			"size":      written,
 			"completed": true,
 		}).Info("Successfully retrieved object")
 	}
@@ -1065,7 +1186,7 @@ func (h *Handler) scanContent(ctx context.Context, body io.Reader, key string, s
 	// For small files, buffer and scan
 	var buf bytes.Buffer
 	teeReader := io.TeeReader(body, &buf)
-	
+
 	// Scan the file
 	result, err := h.scanner.ScanReader(ctx, teeReader, key, size)
 	if err != nil {
@@ -1084,19 +1205,19 @@ func (h *Handler) scanContent(ctx context.Context, body io.Reader, key string, s
 		"harmless":   result.Harmless,
 		"permalink":  result.Permalink,
 	}).Info("VirusTotal scan completed")
-	
+
 	// Check if we should block the upload
 	if h.scanner.ShouldBlockUpload(result) {
 		logger.WithFields(logrus.Fields{
 			"threat_level": result.GetThreatLevel(),
 			"permalink":    result.Permalink,
 		}).Error("Upload blocked due to threat detection")
-		
+
 		// Add scan info to response headers
 		w.Header().Set("X-VirusTotal-Verdict", result.Verdict)
 		w.Header().Set("X-VirusTotal-ThreatLevel", result.GetThreatLevel())
 		w.Header().Set("X-VirusTotal-Permalink", result.Permalink)
-		
+
 		return nil, fmt.Errorf("upload blocked: %s", result.GetThreatLevel())
 	}
 
@@ -1108,33 +1229,33 @@ func (h *Handler) scanContent(ctx context.Context, body io.Reader, key string, s
 
 func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	// handlerStart := time.Now()
-	
+
 	// Generate request ID for tracking
 	requestID := r.Header.Get("X-Amz-Request-Id")
 	if requestID == "" {
 		requestID = fmt.Sprintf("req-%d", time.Now().UnixNano())
 	}
-	
+
 	// Log timing checkpoint
 	logrus.WithFields(logrus.Fields{
-		"stage": "handler_entry",
-		"bucket": bucket,
-		"key": key,
-		"requestID": requestID,
+		"stage":         "handler_entry",
+		"bucket":        bucket,
+		"key":           key,
+		"requestID":     requestID,
 		"contentLength": r.ContentLength,
-		"remoteAddr": r.RemoteAddr,
+		"remoteAddr":    r.RemoteAddr,
 	}).Info("PUT handler started")
-	
+
 	// CRITICAL: Ensure request body is closed
 	defer r.Body.Close()
-	
+
 	// Add panic recovery to prevent backend crashes
 	defer func() {
 		if r := recover(); r != nil {
 			logrus.WithFields(logrus.Fields{
-				"bucket": bucket,
-				"key":    key,
-				"panic":  fmt.Sprintf("%v", r),
+				"bucket":    bucket,
+				"key":       key,
+				"panic":     fmt.Sprintf("%v", r),
 				"requestID": requestID,
 			}).Error("Panic recovered in putObject")
 			// Try to send error response if possible
@@ -1143,13 +1264,13 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			}
 		}
 	}()
-	
+
 	ctx := r.Context()
 	// start := time.Now()
 
 	size := r.ContentLength
-	
-	// AWS CLI with chunked transfer doesn't send Content-Length, 
+
+	// AWS CLI with chunked transfer doesn't send Content-Length,
 	// but sends X-Amz-Decoded-Content-Length instead
 	if size < 0 && r.Header.Get("X-Amz-Decoded-Content-Length") != "" {
 		decodedLength, err := strconv.ParseInt(r.Header.Get("X-Amz-Decoded-Content-Length"), 10, 64)
@@ -1157,37 +1278,37 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			size = decodedLength
 		}
 	}
-	
+
 	// For chunked transfers without explicit size, we'll have to buffer the data
-	isChunkedWithoutSize := size < 0 && (r.Header.Get("Transfer-Encoding") == "chunked" || 
+	isChunkedWithoutSize := size < 0 && (r.Header.Get("Transfer-Encoding") == "chunked" ||
 		r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
-	
+
 	// Detect SDK version and client type
 	userAgent := r.Header.Get("User-Agent")
-	isSDKv1 := strings.Contains(userAgent, "aws-sdk-java/1") || 
+	isSDKv1 := strings.Contains(userAgent, "aws-sdk-java/1") ||
 		strings.Contains(userAgent, "aws-cli/1") ||
 		r.Header.Get("Content-MD5") != ""
-	
+
 	// Detect Java-based clients (including Spark)
 	isJavaClient := strings.Contains(userAgent, "aws-sdk-java") ||
 		strings.Contains(userAgent, "Java/") ||
 		strings.Contains(userAgent, "Apache-Spark") ||
 		strings.Contains(userAgent, "Hadoop")
-	
+
 	logger := logrus.WithFields(logrus.Fields{
-		"bucket": bucket,
-		"key":    key,
-		"size":   size,
-		"contentLengthHeader": r.Header.Get("Content-Length"),
+		"bucket":               bucket,
+		"key":                  key,
+		"size":                 size,
+		"contentLengthHeader":  r.Header.Get("Content-Length"),
 		"decodedContentLength": r.Header.Get("X-Amz-Decoded-Content-Length"),
-		"transferEncoding": r.Header.Get("Transfer-Encoding"),
-		"method": r.Method,
-		"requestID": requestID,
+		"transferEncoding":     r.Header.Get("Transfer-Encoding"),
+		"method":               r.Method,
+		"requestID":            requestID,
 		"isChunkedWithoutSize": isChunkedWithoutSize,
-		"userAgent": userAgent,
-		"isSDKv1": isSDKv1,
-		"isJavaClient": isJavaClient,
-		"contentMD5": r.Header.Get("Content-MD5"),
+		"userAgent":            userAgent,
+		"isSDKv1":              isSDKv1,
+		"isJavaClient":         isJavaClient,
+		"contentMD5":           r.Header.Get("Content-MD5"),
 	})
 
 	if size < 0 && !isChunkedWithoutSize {
@@ -1199,33 +1320,33 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	// Special logging for Iceberg-related files
 	if strings.HasSuffix(key, ".avro") {
 		logger.WithFields(logrus.Fields{
-			"stage": "start",
-			"contentType": r.Header.Get("Content-Type"),
-			"contentEncoding": r.Header.Get("Content-Encoding"),
+			"stage":            "start",
+			"contentType":      r.Header.Get("Content-Type"),
+			"contentEncoding":  r.Header.Get("Content-Encoding"),
 			"transferEncoding": r.TransferEncoding,
 		}).Info("Starting Avro file upload")
 	} else if strings.HasSuffix(key, ".parquet") {
 		logger.WithFields(logrus.Fields{
-			"stage": "start",
-			"contentType": r.Header.Get("Content-Type"),
-			"isIcebergData": strings.Contains(key, "/data/"),
-			"table": extractTableName(key),
-			"isSparkUpload": isJavaClient || strings.Contains(userAgent, "Spark"),
+			"stage":             "start",
+			"contentType":       r.Header.Get("Content-Type"),
+			"isIcebergData":     strings.Contains(key, "/data/"),
+			"table":             extractTableName(key),
+			"isSparkUpload":     isJavaClient || strings.Contains(userAgent, "Spark"),
 			"checksumAlgorithm": r.Header.Get("x-amz-sdk-checksum-algorithm"),
-			"contentMD5": r.Header.Get("Content-MD5"),
+			"contentMD5":        r.Header.Get("Content-MD5"),
 		}).Info("Starting Parquet file upload")
 	} else if strings.Contains(key, "metadata.json") {
 		logger.WithFields(logrus.Fields{
-			"stage": "start",
+			"stage":             "start",
 			"isIcebergMetadata": true,
-			"table": extractTableName(key),
-			"isVersionFile": strings.Count(key, "metadata.json") > 1 || strings.Contains(key, "v"),
+			"table":             extractTableName(key),
+			"isVersionFile":     strings.Count(key, "metadata.json") > 1 || strings.Contains(key, "v"),
 		}).Info("Starting Iceberg metadata upload")
 	} else if strings.Contains(key, "manifest") || strings.Contains(key, "snap-") {
 		logger.WithFields(logrus.Fields{
-			"stage": "start",
+			"stage":             "start",
 			"isIcebergManifest": true,
-			"table": extractTableName(key),
+			"table":             extractTableName(key),
 		}).Info("Starting Iceberg manifest upload")
 	}
 
@@ -1321,22 +1442,22 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 					"decodedSize":  decodedSize,
 				}).Debug("Using x-amz-decoded-content-length for actual content size")
 				size = decodedSize
-				
+
 				// Update logger with corrected size
 				logger = logrus.WithFields(logrus.Fields{
-					"bucket": bucket,
-					"key":    key,
-					"size":   size,
-					"contentLengthHeader": r.Header.Get("Content-Length"),
+					"bucket":               bucket,
+					"key":                  key,
+					"size":                 size,
+					"contentLengthHeader":  r.Header.Get("Content-Length"),
 					"decodedContentLength": r.Header.Get("X-Amz-Decoded-Content-Length"),
-					"transferEncoding": r.Header.Get("Transfer-Encoding"),
-					"method": r.Method,
-					"requestID": requestID,
+					"transferEncoding":     r.Header.Get("Transfer-Encoding"),
+					"method":               r.Method,
+					"requestID":            requestID,
 					"isChunkedWithoutSize": isChunkedWithoutSize,
-					"userAgent": userAgent,
-					"isSDKv1": isSDKv1,
-					"isJavaClient": isJavaClient,
-					"contentMD5": r.Header.Get("Content-MD5"),
+					"userAgent":            userAgent,
+					"isSDKv1":              isSDKv1,
+					"isJavaClient":         isJavaClient,
+					"contentMD5":           r.Header.Get("Content-MD5"),
 				})
 			}
 		}
@@ -1347,13 +1468,13 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		etag = "\"d41d8cd98f00b204e9800998ecf8427e\""
 	} else if isChunkedWithoutSize {
 		// For Trino, we should NOT buffer - it causes timeouts
-		// Always buffer Iceberg metadata files regardless of client  
+		// Always buffer Iceberg metadata files regardless of client
 		// Metadata files are small but critical - they must be written atomically
 		isIcebergMetadata := strings.Contains(key, "metadata") && strings.HasSuffix(key, ".json")
-		
+
 		if strings.Contains(userAgent, "Trino") && !isIcebergMetadata {
 			logger.WithFields(logrus.Fields{
-				"key": key,
+				"key":       key,
 				"userAgent": userAgent,
 			}).Warn("Trino chunked upload without size - streaming directly to avoid timeout")
 			// Leave body as-is (SmartChunkDecoder) and size as -1
@@ -1367,11 +1488,11 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 				logger.Info("Buffering chunked upload without explicit size")
 			}
 			bufferStart := time.Now()
-			
+
 			var buf bytes.Buffer
 			written, err := io.Copy(&buf, body)
 			bufferDuration := time.Since(bufferStart)
-			
+
 			if err != nil {
 				logger.WithError(err).WithField("duration", bufferDuration).Error("Failed to buffer chunked request body")
 				h.sendError(w, err, http.StatusBadRequest)
@@ -1379,12 +1500,12 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			}
 			size = written
 			logger.WithFields(logrus.Fields{
-				"bufferedSize": size,
-				"duration": bufferDuration,
-				"bytesPerSec": float64(size) / bufferDuration.Seconds(),
+				"bufferedSize":      size,
+				"duration":          bufferDuration,
+				"bytesPerSec":       float64(size) / bufferDuration.Seconds(),
 				"isIcebergMetadata": isIcebergMetadata,
 			}).Info("Buffered chunked upload successfully")
-			
+
 			data := buf.Bytes()
 			// Don't calculate our own ETag for chunked uploads - it won't match client expectations
 			// The client calculated MD5 on the original chunked data, not the decoded data
@@ -1394,7 +1515,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		}
 	} else if size > 0 && size <= smallFileLimit {
 		actualSize := size
-		
+
 		bufPtr := smallBufferPool.Get().(*[]byte)
 		buf := *bufPtr
 		if int64(len(buf)) < actualSize {
@@ -1411,7 +1532,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			logger.WithError(err).WithFields(logrus.Fields{
 				"expectedSize": actualSize,
 				"originalSize": size,
-				"key": key,
+				"key":          key,
 			}).Error("Failed to read request body")
 			h.sendError(w, err, http.StatusBadRequest)
 			return
@@ -1420,28 +1541,28 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		hash := md5.Sum(buf) //nolint:gosec // MD5 is required for S3 ETag compatibility
 		etag = fmt.Sprintf("\"%s\"", hex.EncodeToString(hash[:]))
 		body = bytes.NewReader(buf)
-		
-		// Update size to match actual content size  
+
+		// Update size to match actual content size
 		oldSize := size
 		size = actualSize
-		
+
 		// Update logger with corrected size for accurate response logging
 		if actualSize != oldSize {
 			logger = logrus.WithFields(logrus.Fields{
-				"bucket": bucket,
-				"key": key,
-				"size": actualSize,
-				"originalSize": oldSize,
-				"contentLengthHeader": r.Header.Get("Content-Length"),
+				"bucket":               bucket,
+				"key":                  key,
+				"size":                 actualSize,
+				"originalSize":         oldSize,
+				"contentLengthHeader":  r.Header.Get("Content-Length"),
 				"decodedContentLength": r.Header.Get("X-Amz-Decoded-Content-Length"),
-				"transferEncoding": r.Header.Get("Transfer-Encoding"),
-				"method": r.Method,
-				"requestID": requestID,
+				"transferEncoding":     r.Header.Get("Transfer-Encoding"),
+				"method":               r.Method,
+				"requestID":            requestID,
 				"isChunkedWithoutSize": isChunkedWithoutSize,
-				"userAgent": userAgent,
-				"isSDKv1": isSDKv1,
-				"isJavaClient": isJavaClient,
-				"contentMD5": r.Header.Get("Content-MD5"),
+				"userAgent":            userAgent,
+				"isSDKv1":              isSDKv1,
+				"isJavaClient":         isJavaClient,
+				"contentMD5":           r.Header.Get("Content-MD5"),
 			})
 		}
 	}
@@ -1476,13 +1597,13 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		h.sendError(w, err, http.StatusForbidden)
 		return
 	}
-	
+
 	// Use the scanned content for storage
 	body = scanContentResult.Body
 	var scanResult *virustotal.ScanResult
 	if scanContentResult.Result != nil {
 		scanResult = scanContentResult.Result
-		
+
 		// Add scan info to metadata
 		if metadata == nil {
 			metadata = make(map[string]string)
@@ -1495,43 +1616,43 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	// Add debugging for critical file types
 	if strings.HasSuffix(key, ".avro") || strings.HasSuffix(key, ".json") {
 		logger.WithFields(logrus.Fields{
-			"key": key,
-			"size": size,
-			"hasDecoder": body != r.Body,
+			"key":           key,
+			"size":          size,
+			"hasDecoder":    body != r.Body,
 			"contentSha256": r.Header.Get("x-amz-content-sha256"),
-			"fileType": filepath.Ext(key),
+			"fileType":      filepath.Ext(key),
 		}).Info("Processing data file upload")
-		
+
 		// For chunked files, ensure we track the actual decoded size
 		if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
 			// Size should already be set to decoded content length
 			logger.WithFields(logrus.Fields{
-				"decodedSize": size,
+				"decodedSize":           size,
 				"originalContentLength": r.ContentLength,
 			}).Info("Using decoded size for chunked file")
 		}
 	}
-	
+
 	// Add timeout monitoring for Iceberg operations
 	putStart := time.Now()
 	if strings.Contains(key, "_expectations") || strings.Contains(key, "_validations") {
 		logger.Info("Starting PUT for Iceberg expectations/validations table")
 	}
-	
+
 	// Log before storage operation
 	logger.WithField("stage", "before_storage").Debug("About to call storage.PutObject")
-	
+
 	err = h.storage.PutObject(ctx, bucket, key, body, size, metadata)
-	
+
 	putDuration := time.Since(putStart)
 	if putDuration > 5*time.Second {
 		logger.WithFields(logrus.Fields{
 			"duration": putDuration,
-			"key": key,
-			"size": size,
+			"key":      key,
+			"size":     size,
 		}).Warn("Slow PUT operation detected - storage backend took too long")
 	}
-	
+
 	if err != nil {
 		// Check if it's a signature error
 		if verifier != nil && strings.Contains(err.Error(), "signature") {
@@ -1539,15 +1660,15 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			h.sendError(w, err, http.StatusForbidden)
 			return
 		}
-		
+
 		// Special error handling for Avro files
 		if strings.HasSuffix(key, ".avro") {
 			logger.WithError(err).WithFields(logrus.Fields{
-				"stage": "storage_error",
+				"stage":       "storage_error",
 				"decodedSize": size,
 			}).Error("Failed to store Avro file")
 		}
-		
+
 		logger.WithError(err).Error("Failed to put object")
 		h.sendError(w, err, http.StatusInternalServerError)
 		return
@@ -1556,23 +1677,23 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	// Log chunk processing statistics if applicable
 	if smartDecoder, ok := body.(*storage.SmartChunkDecoder); ok {
 		logger.WithFields(logrus.Fields{
-			"bucket": bucket,
-			"key":    key,
-			"size":   size,
-			"isAvro": strings.HasSuffix(key, ".avro"),
+			"bucket":      bucket,
+			"key":         key,
+			"size":        size,
+			"isAvro":      strings.HasSuffix(key, ".avro"),
 			"decoderType": "SmartChunkDecoder",
 			"rawFallback": smartDecoder.IsRawFallback(),
 		}).Info("Successfully processed chunked upload")
 	} else if _, ok := body.(*storage.AWSChunkDecoder); ok {
 		logger.WithFields(logrus.Fields{
-			"bucket": bucket,
-			"key":    key,
-			"size":   size,
-			"isAvro": strings.HasSuffix(key, ".avro"),
+			"bucket":      bucket,
+			"key":         key,
+			"size":        size,
+			"isAvro":      strings.HasSuffix(key, ".avro"),
 			"decoderType": "AWSChunkDecoder",
 		}).Info("Successfully processed AWS V4 chunked upload")
 	}
-	
+
 	// For chunked uploads, ALWAYS generate a multipart-style ETag to prevent client validation errors
 	// This is critical because we modify the content by stripping chunk headers
 	if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" ||
@@ -1583,70 +1704,70 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		etag = fmt.Sprintf("\"%x-1\"", time.Now().UnixNano())
 		logger.WithFields(logrus.Fields{
 			"generatedETag": etag,
-			"reason": "chunked upload content modified",
+			"reason":        "chunked upload content modified",
 		}).Debug("Generated multipart-style ETag for chunked upload")
 	} else if etag == "" {
 		// For non-chunked uploads without ETag, generate a simple one
 		etag = fmt.Sprintf("\"%x\"", time.Now().UnixNano())
 	}
-	
+
 	// Log successful completion
 	logger.WithFields(logrus.Fields{
-		"etag": etag,
+		"etag":      etag,
 		"completed": true,
-		"stage": "before_response",
+		"stage":     "before_response",
 		"userAgent": userAgent,
-		"isAzure": strings.Contains(strings.ToLower(userAgent), "azure"),
+		"isAzure":   strings.Contains(strings.ToLower(userAgent), "azure"),
 	}).Info("Upload completed successfully, about to send response")
-	
+
 	// Special handling for Trino and Hive clients (which use Java AWS SDK)
-	if strings.Contains(strings.ToLower(userAgent), "trino") || 
-	   (strings.Contains(strings.ToLower(userAgent), "java") && strings.Contains(userAgent, "app/Trino")) ||
-	   strings.Contains(strings.ToLower(userAgent), "hive") ||
-	   strings.Contains(strings.ToLower(userAgent), "hadoop") ||
-	   strings.Contains(strings.ToLower(userAgent), "s3a") {
-		
+	if strings.Contains(strings.ToLower(userAgent), "trino") ||
+		(strings.Contains(strings.ToLower(userAgent), "java") && strings.Contains(userAgent, "app/Trino")) ||
+		strings.Contains(strings.ToLower(userAgent), "hive") ||
+		strings.Contains(strings.ToLower(userAgent), "hadoop") ||
+		strings.Contains(strings.ToLower(userAgent), "s3a") {
+
 		// Remove all checksum headers that might cause validation issues
 		w.Header().Del("x-amz-checksum-crc32")
-		w.Header().Del("x-amz-checksum-crc32c") 
+		w.Header().Del("x-amz-checksum-crc32c")
 		w.Header().Del("x-amz-checksum-sha1")
 		w.Header().Del("x-amz-checksum-sha256")
 		w.Header().Del("x-amz-sdk-checksum-algorithm")
 		w.Header().Del("Content-MD5")
-		
+
 		// Set minimal AWS S3 PUT response headers (exactly like real S3)
 		w.Header().Set("ETag", etag)
 		w.Header().Set("x-amz-request-id", requestID)
 		w.Header().Set("x-amz-id-2", fmt.Sprintf("S3/%s", requestID))
 		w.Header().Set("Server", "AmazonS3")
 		w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
-		
+
 		// CRITICAL: Set Content-Length to 0 for empty body
 		w.Header().Set("Content-Length", "0")
-		
+
 		// Force connection close to prevent client hanging
 		w.Header().Set("Connection", "close")
-		
+
 		// Send 200 OK
 		w.WriteHeader(http.StatusOK)
-		
+
 		// Force flush immediately
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
-		
+
 		logger.WithFields(logrus.Fields{
-			"bucket": bucket,
-			"key": key,
-			"etag": etag,
+			"bucket":    bucket,
+			"key":       key,
+			"etag":      etag,
 			"requestID": requestID,
-			"client": "java_sdk",
+			"client":    "java_sdk",
 			"userAgent": userAgent,
 		}).Info("Sent minimal S3 PUT response for Java SDK client")
-		
+
 		return
 	}
-	
+
 	// Special handling for Azure clients
 	if strings.Contains(strings.ToLower(userAgent), "azure") {
 		// Azure SDK clients need specific response handling
@@ -1655,26 +1776,26 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		w.Header().Set("x-amz-request-id", requestID)
 		w.Header().Set("x-amz-id-2", fmt.Sprintf("Azure/%s", requestID))
 		w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
-		
+
 		// Write status and flush immediately
 		w.WriteHeader(http.StatusOK)
-		
+
 		// Force immediate flush for Azure clients
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
-		
+
 		logger.WithFields(logrus.Fields{
-			"bucket": bucket,
-			"key": key,
-			"etag": etag,
+			"bucket":    bucket,
+			"key":       key,
+			"etag":      etag,
 			"requestID": requestID,
-			"client": "azure",
+			"client":    "azure",
 		}).Info("Sent Azure-optimized response")
-		
+
 		return
 	}
-	
+
 	// For chunked uploads, we need special handling to prevent SDK checksum validation
 	if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
 		// The AWS SDK v2 validates checksums on PUT responses
@@ -1691,7 +1812,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		// 2. Send minimal response headers
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Content-Length", "0")
-		
+
 		// Add VirusTotal scan info to response headers if available
 		if scanResult != nil {
 			w.Header().Set("X-VirusTotal-Verdict", scanResult.Verdict)
@@ -1702,16 +1823,16 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 		// 3. Send 200 OK with no body
 		w.WriteHeader(http.StatusOK)
-		
+
 		// Force flush the response
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
 
 		logger.WithFields(logrus.Fields{
-			"bucket": bucket,
-			"key":    key,
-			"etag":   etag,
+			"bucket":  bucket,
+			"key":     key,
+			"etag":    etag,
 			"flushed": true,
 		}).Debug("Sent minimal response for chunked upload to prevent checksum validation")
 
@@ -1735,7 +1856,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		// Send minimal response
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Content-Length", "0")
-		
+
 		// Add VirusTotal scan info to response headers if available
 		if scanResult != nil {
 			w.Header().Set("X-VirusTotal-Verdict", scanResult.Verdict)
@@ -1743,19 +1864,19 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			w.Header().Set("X-VirusTotal-ScanDate", scanResult.ScanDate.Format(time.RFC3339))
 			w.Header().Set("X-VirusTotal-ThreatLevel", scanResult.GetThreatLevel())
 		}
-		
+
 		w.WriteHeader(http.StatusOK)
-		
+
 		// Force immediate flush for Java clients (including Trino)
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
 
 		logger.WithFields(logrus.Fields{
-			"bucket": bucket,
-			"key":    key,
-			"etag":   etag,
-			"sdk":    "v1/java",
+			"bucket":       bucket,
+			"key":          key,
+			"etag":         etag,
+			"sdk":          "v1/java",
 			"isJavaClient": isJavaClient,
 		}).Debug("Sent minimal response for SDK v1/Java upload with checksum validation")
 
@@ -1765,7 +1886,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	// Normal upload response (no checksums to validate)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Content-Length", "0") // Explicitly set Content-Length for all responses
-	
+
 	// Add VirusTotal scan info to response headers if available
 	if scanResult != nil {
 		w.Header().Set("X-VirusTotal-Verdict", scanResult.Verdict)
@@ -1773,7 +1894,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		w.Header().Set("X-VirusTotal-ScanDate", scanResult.ScanDate.Format(time.RFC3339))
 		w.Header().Set("X-VirusTotal-ThreatLevel", scanResult.GetThreatLevel())
 	}
-	
+
 	// SDK v1 might expect specific headers
 	if isSDKv1 {
 		w.Header().Set("x-amz-id-2", fmt.Sprintf("LriYPLdmOdAiIfgSm/%s", requestID))
@@ -1782,35 +1903,35 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
 		logger.Debug("Adding SDK v1 compatible response headers")
 	}
-	
+
 	// Write ETag header before status (removing duplicate)
 	w.Header().Set("x-amz-version-id", "") // Some clients expect this
-	
+
 	// For Trino/Iceberg, ensure proper response headers
 	if strings.Contains(userAgent, "Trino") || strings.Contains(key, "metadata.json") {
 		w.Header().Set("Connection", "close") // Force connection close
 		logger.Debug("Setting Connection: close for Trino client")
 	}
-	
+
 	// CRITICAL: Write status code
 	w.WriteHeader(http.StatusOK)
-	
+
 	// CRITICAL: No body for PUT responses per S3 spec
 	// Don't write empty byte slice as it can cause issues
-	
+
 	// Force flush the response to ensure client receives it immediately
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 		logger.Debug("Flushed response immediately")
 	}
-	
+
 	// Final log to confirm handler completed
 	logger.WithFields(logrus.Fields{
-		"stage": "handler_complete",
-		"etag": etag,
+		"stage":     "handler_complete",
+		"etag":      etag,
 		"requestID": requestID,
-		"bucket": bucket,
-		"key": key,
+		"bucket":    bucket,
+		"key":       key,
 	}).Info("PUT handler completed - response sent and flushed")
 
 	// if logrus.GetLevel() >= logrus.DebugLevel {
@@ -1867,17 +1988,17 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	logger.WithFields(logrus.Fields{
-		"size": info.Size,
-		"etag": info.ETag,
+		"size":         info.Size,
+		"etag":         info.ETag,
 		"lastModified": info.LastModified,
-		"contentType": info.ContentType,
-		"duration": duration,
+		"contentType":  info.ContentType,
+		"duration":     duration,
 	}).Info("HEAD request succeeded - returning object info")
 
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
 	w.Header().Set("ETag", info.ETag)
 	w.Header().Set("Last-Modified", info.LastModified.Format(http.TimeFormat))
-	
+
 	// Add cache headers to reduce repeated requests
 	// Iceberg metadata files change frequently, so use short cache
 	if isIcebergMetadata {
@@ -1907,28 +2028,28 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// Special handling for Java SDK clients (Trino, Hive, Hadoop)
 	userAgent := r.Header.Get("User-Agent")
-	if strings.Contains(strings.ToLower(userAgent), "trino") || 
-	   (strings.Contains(strings.ToLower(userAgent), "java") && strings.Contains(userAgent, "app/Trino")) ||
-	   strings.Contains(strings.ToLower(userAgent), "hive") ||
-	   strings.Contains(strings.ToLower(userAgent), "hadoop") ||
-	   strings.Contains(strings.ToLower(userAgent), "s3a") {
-		
+	if strings.Contains(strings.ToLower(userAgent), "trino") ||
+		(strings.Contains(strings.ToLower(userAgent), "java") && strings.Contains(userAgent, "app/Trino")) ||
+		strings.Contains(strings.ToLower(userAgent), "hive") ||
+		strings.Contains(strings.ToLower(userAgent), "hadoop") ||
+		strings.Contains(strings.ToLower(userAgent), "s3a") {
+
 		// Force connection close to prevent client hanging
 		w.Header().Set("Connection", "close")
-		
+
 		// Set AWS S3 headers for compatibility
 		w.Header().Set("Server", "AmazonS3")
 		w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
-		
+
 		logger.WithFields(logrus.Fields{
 			"userAgent": userAgent,
-			"bucket": bucket,
-			"key": key,
+			"bucket":    bucket,
+			"key":       key,
 		}).Info("Applied Java SDK optimizations for HEAD request")
 	}
 
 	w.WriteHeader(http.StatusOK)
-	
+
 	// Force immediate flush for HEAD responses to prevent client hangs
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
@@ -1937,13 +2058,13 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request, bucket string) {
 	ctx := r.Context()
-	
+
 	// Check if user is admin
 	isAdmin, _ := ctx.Value("is_admin").(bool)
 	if !isAdmin {
 		logrus.WithFields(logrus.Fields{
-			"user_sub": ctx.Value("user_sub"),
-			"bucket":   bucket,
+			"user_sub":  ctx.Value("user_sub"),
+			"bucket":    bucket,
 			"operation": "CreateBucket",
 		}).Warn("Non-admin user attempted to create bucket")
 		h.sendError(w, fmt.Errorf("access denied: admin privileges required"), http.StatusForbidden)
@@ -1961,13 +2082,13 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request, bucket st
 
 func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, bucket string) {
 	ctx := r.Context()
-	
+
 	// Check if user is admin
 	isAdmin, _ := ctx.Value("is_admin").(bool)
 	if !isAdmin {
 		logrus.WithFields(logrus.Fields{
-			"user_sub": ctx.Value("user_sub"),
-			"bucket":   bucket,
+			"user_sub":  ctx.Value("user_sub"),
+			"bucket":    bucket,
 			"operation": "DeleteBucket",
 		}).Warn("Non-admin user attempted to delete bucket")
 		h.sendError(w, fmt.Errorf("access denied: admin privileges required"), http.StatusForbidden)
@@ -2076,9 +2197,9 @@ func (h *Handler) initiateMultipartUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"bucket":   bucket,
-		"key":      key,
-		"uploadID": uploadID,
+		"bucket":    bucket,
+		"key":       key,
+		"uploadID":  uploadID,
 		"userAgent": r.Header.Get("User-Agent"),
 	}).Info("Multipart upload initiated - TRACKING FOR LOCK ISSUES")
 
@@ -2129,8 +2250,8 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	size := r.ContentLength
-	
-	// AWS CLI with chunked transfer doesn't send Content-Length, 
+
+	// AWS CLI with chunked transfer doesn't send Content-Length,
 	// but sends X-Amz-Decoded-Content-Length instead
 	if size < 0 && r.Header.Get("X-Amz-Decoded-Content-Length") != "" {
 		decodedLength, err := strconv.ParseInt(r.Header.Get("X-Amz-Decoded-Content-Length"), 10, 64)
@@ -2138,7 +2259,7 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key
 			size = decodedLength
 		}
 	}
-	
+
 	if size < 0 {
 		h.sendError(w, fmt.Errorf("missing Content-Length"), http.StatusBadRequest)
 		return
@@ -2159,21 +2280,20 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key
 	var body io.Reader = r.Body
 	userAgent := r.Header.Get("User-Agent")
 	isAWSCLI := strings.Contains(userAgent, "aws-cli") || strings.Contains(userAgent, "Botocore")
-	
+
 	if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" ||
 		r.Header.Get("Content-Encoding") == "aws-chunked" {
-		
-		// For AWS CLI clients, bypass SmartChunkDecoder to avoid hanging issues
+
+		// Decode AWS streaming chunks to avoid truncation/timeouts
 		if isAWSCLI {
-			logger.WithField("userAgent", userAgent).Info("AWS CLI detected - using direct body reader to avoid chunked decoder issues")
-			// For AWS CLI, use the body directly and trust the Content-Length
-			// AWS CLI handles chunked encoding correctly at the HTTP level
+			logger.WithField("userAgent", userAgent).Info("AWS CLI detected - using AWS chunk decoder")
+			body = storage.NewAWSChunkDecoderV2(r.Body)
 		} else {
 			// Use SmartChunkDecoder for other clients that might have chunked encoding issues
 			body = storage.NewSmartChunkDecoder(r.Body)
 			logger.Info("Using smart chunk decoder for part upload")
 		}
-		
+
 		// For chunked uploads, the size is the decoded content length
 		if decodedSize := r.Header.Get("x-amz-decoded-content-length"); decodedSize != "" {
 			if ds, err := strconv.ParseInt(decodedSize, 10, 64); err == nil {
@@ -2183,42 +2303,42 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	uploadStart := time.Now()
-	
+
 	// For very large parts, add progress logging
 	if size > 50*1024*1024 { // > 50MB
 		logger.WithFields(logrus.Fields{
-			"size": size,
+			"size":   size,
 			"sizeMB": size / 1024 / 1024,
 		}).Warn("Large part upload - adding extended timeout and progress tracking")
-		
+
 		// Use extended timeout for large parts
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Minute)
+		ctx, cancel = context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
 	}
-	
+
 	etag, err := h.storage.UploadPart(ctx, bucket, key, uploadID, partNumber, body, size)
 	uploadDuration := time.Since(uploadStart)
 
 	if err != nil {
 		logger.WithError(err).WithField("uploadDuration", uploadDuration).Error("Part upload failed")
-		
+
 		// Check if it's a timeout
 		if ctx.Err() == context.DeadlineExceeded || strings.Contains(err.Error(), "timeout") {
 			logger.Error("Part upload timed out - S3 backend is too slow")
 		}
-		
+
 		h.sendError(w, err, http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
-	
+
 	logger.WithFields(logrus.Fields{
-		"etag":          etag,
+		"etag":           etag,
 		"uploadDuration": uploadDuration,
-		"totalDuration": time.Since(start),
+		"totalDuration":  time.Since(start),
 	}).Info("Part upload completed successfully")
 }
 
@@ -2269,7 +2389,7 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 		h.sendError(w, err, http.StatusInternalServerError)
 		return
 	}
-	
+
 	// For Trino, verify the object exists before returning success
 	// This ensures S3 backend has fully processed the multipart upload
 	if strings.Contains(userAgent, "Trino") {
@@ -2277,7 +2397,7 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 			"bucket": bucket,
 			"key":    key,
 		}).Debug("Verifying object exists for Trino before returning success")
-		
+
 		// Small retry loop to handle eventual consistency
 		var verifyErr error
 		for i := 0; i < 3; i++ {
@@ -2289,7 +2409,7 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 				time.Sleep(100 * time.Millisecond)
 			}
 		}
-		
+
 		if verifyErr != nil {
 			logrus.WithError(verifyErr).WithFields(logrus.Fields{
 				"bucket": bucket,
@@ -2297,13 +2417,13 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 			}).Warn("Object not immediately available after multipart complete")
 		}
 	}
-	
+
 	logrus.WithFields(logrus.Fields{
 		"bucket":   bucket,
 		"key":      key,
 		"uploadID": uploadID,
 	}).Info("Multipart upload completed successfully - LOCK SHOULD BE RELEASED")
-	
+
 	// Add AWS-compatible headers
 	requestID := r.Header.Get("X-Request-ID")
 	if requestID == "" {
@@ -2323,18 +2443,18 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/xml")
-	
+
 	// Write status code BEFORE encoding
 	w.WriteHeader(http.StatusOK)
-	
+
 	// CRITICAL: Flush headers immediately for Trino
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
-	
+
 	// Add XML declaration
 	w.Write([]byte("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"))
-	
+
 	// Generate proper multipart ETag
 	// For multipart uploads, AWS S3 generates an ETag in the format: {md5_of_md5s}-{number_of_parts}
 	hasher := md5.New()
@@ -2348,7 +2468,7 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	}
 	multipartMD5 := hasher.Sum(nil)
 	multipartETag := fmt.Sprintf("\"%s-%d\"", hex.EncodeToString(multipartMD5), len(parts))
-	
+
 	enc := xml.NewEncoder(w)
 	enc.Indent("", "  ")
 	if err := enc.Encode(completeMultipartUploadResult{
@@ -2359,7 +2479,7 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	}); err != nil {
 		logrus.WithError(err).Error("Failed to encode response")
 	}
-	
+
 	// CRITICAL: Flush the response body to ensure Trino receives it
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
@@ -2540,13 +2660,22 @@ func (h *Handler) putObjectACL(w http.ResponseWriter, r *http.Request, bucket, k
 }
 
 // isClientDisconnectError checks if error is due to client disconnect
+>>>>>>> Stashed changes
 func isClientDisconnectError(err error) bool {
 	if err == nil {
 		return false
 	}
+<<<<<<< Updated upstream
+
+	errStr := err.Error()
+	return strings.Contains(errStr, "connection reset by peer") ||
+		strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "client disconnected") ||
+		strings.Contains(errStr, "connection refused")
+=======
 	errStr := err.Error()
 	return strings.Contains(errStr, "broken pipe") ||
 		strings.Contains(errStr, "connection reset") ||
 		strings.Contains(errStr, "write: connection refused")
+>>>>>>> Stashed changes
 }
-

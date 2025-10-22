@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/einyx/foundation-storage-engine/internal/config"
+	"github.com/einyx/foundation-storage-engine/internal/security"
 )
 
 type FileSystemBackend struct {
@@ -20,82 +21,20 @@ type FileSystemBackend struct {
 	bufferPool sync.Pool
 }
 
-// validateBucketName ensures a bucket name doesn't contain directory traversal sequences
 func validateBucketName(bucket string) error {
-	if bucket == "" {
-		return errors.New("bucket name cannot be empty")
-	}
-	if strings.Contains(bucket, "..") {
-		return errors.New("bucket name cannot contain '..'")
-	}
-	if strings.Contains(bucket, "/") || strings.Contains(bucket, "\\") {
-		return errors.New("bucket name cannot contain path separators")
-	}
-	if bucket == "." {
-		return errors.New("bucket name cannot be '.'")
-	}
-	return nil
+	return security.ValidateBucketName(bucket)
 }
 
-// validateObjectKey ensures an object key doesn't contain directory traversal sequences
 func validateObjectKey(key string) error {
-	if key == "" {
-		return errors.New("object key cannot be empty")
-	}
-	// Check for parent directory references
-	if strings.Contains(key, "..") {
-		return errors.New("object key cannot contain '..'")
-	}
-	// Check for absolute paths
-	if strings.HasPrefix(key, "/") {
-		return errors.New("object key cannot start with '/'")
-	}
-	// Check for Windows-style separators  
-	if strings.Contains(key, "\\") {
-		return errors.New("object key cannot contain backslashes")
-	}
-	return nil
+	return security.ValidateObjectKey(key)
 }
 
-// secureBucketPath safely constructs a bucket path
 func (fs *FileSystemBackend) secureBucketPath(bucket string) (string, error) {
-	if err := validateBucketName(bucket); err != nil {
-		return "", err
-	}
-	
-	fullPath := filepath.Join(fs.baseDir, bucket)
-	
-	// Ensure the resulting path is still within the base directory
-	cleanPath := filepath.Clean(fullPath)
-	cleanBase := filepath.Clean(fs.baseDir)
-	
-	if !strings.HasPrefix(cleanPath, cleanBase+string(filepath.Separator)) && cleanPath != cleanBase {
-		return "", errors.New("path traversal detected")
-	}
-	
-	return cleanPath, nil
+	return security.SecurePath(fs.baseDir, bucket)
 }
 
-// secureObjectPath safely constructs an object path
 func (fs *FileSystemBackend) secureObjectPath(bucket, key string) (string, error) {
-	if err := validateBucketName(bucket); err != nil {
-		return "", fmt.Errorf("invalid bucket name: %w", err)
-	}
-	if err := validateObjectKey(key); err != nil {
-		return "", fmt.Errorf("invalid object key: %w", err)
-	}
-	
-	fullPath := filepath.Join(fs.baseDir, bucket, key)
-	
-	// Ensure the resulting path is still within the base directory
-	cleanPath := filepath.Clean(fullPath)
-	cleanBase := filepath.Clean(fs.baseDir)
-	
-	if !strings.HasPrefix(cleanPath, cleanBase+string(filepath.Separator)) && cleanPath != cleanBase {
-		return "", errors.New("path traversal detected")
-	}
-	
-	return cleanPath, nil
+	return security.SecurePath(fs.baseDir, filepath.Join(bucket, key))
 }
 
 // secureUploadPath safely constructs an upload directory path

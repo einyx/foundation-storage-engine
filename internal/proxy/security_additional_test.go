@@ -19,13 +19,17 @@ func (m *mockSession) Values() map[interface{}]interface{} {
 }
 
 func TestValidateSecureSession_Security(t *testing.T) {
-	server := &Server{
-		config: &config.Config{
-			Auth0: config.Auth0Config{
-				ClientSecret: "test-secret-key-for-hmac",
-			},
+	cfg := &config.Config{
+		Auth0: config.Auth0Config{
+			ClientSecret: "test-secret-key-for-hmac",
 		},
 	}
+	server := &Server{
+		config: cfg,
+	}
+	
+	// Initialize the authentication manager for testing
+	server.authManager = NewAuthenticationManager(cfg, nil, nil)
 
 	validExpiration := time.Now().Add(1 * time.Hour)
 	expiredTime := time.Now().Add(-1 * time.Hour)
@@ -43,7 +47,7 @@ func TestValidateSecureSession_Security(t *testing.T) {
 					"authenticated": true,
 					"user_sub":      "test-user-123",
 					"expires_at":    validExpiration,
-					"integrity_hash": server.computeSessionIntegrityHash("test-user-123", validExpiration),
+					"integrity_hash": server.authManager.computeSessionIntegrityHash("test-user-123", validExpiration),
 				},
 			},
 			expected: true,
@@ -56,7 +60,7 @@ func TestValidateSecureSession_Security(t *testing.T) {
 					"authenticated": true,
 					"user_sub":      "test-user-123",
 					"expires_at":    expiredTime,
-					"integrity_hash": server.computeSessionIntegrityHash("test-user-123", expiredTime),
+					"integrity_hash": server.authManager.computeSessionIntegrityHash("test-user-123", expiredTime),
 				},
 			},
 			expected: false,
@@ -105,7 +109,7 @@ func TestValidateSecureSession_Security(t *testing.T) {
 					"authenticated":  false,
 					"user_sub":       "test-user-123",
 					"expires_at":     validExpiration,
-					"integrity_hash": server.computeSessionIntegrityHash("test-user-123", validExpiration),
+					"integrity_hash": server.authManager.computeSessionIntegrityHash("test-user-123", validExpiration),
 				},
 			},
 			expected: false,
@@ -115,7 +119,7 @@ func TestValidateSecureSession_Security(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := server.validateSecureSession(tt.session)
+			result := server.authManager.validateSecureSession(tt.session)
 			if result != tt.expected {
 				t.Errorf("validateSecureSession() = %v, expected %v: %s", result, tt.expected, tt.desc)
 			}
@@ -132,7 +136,13 @@ func TestValidateAPIKeySignature_Security(t *testing.T) {
 		UserID:    "test-user-123",
 	}
 
-	server := &Server{}
+	cfg := &config.Config{}
+	server := &Server{
+		config: cfg,
+	}
+	
+	// Initialize the authentication manager for testing
+	server.authManager = NewAuthenticationManager(cfg, nil, nil)
 
 	tests := []struct {
 		name     string
@@ -189,7 +199,7 @@ func TestValidateAPIKeySignature_Security(t *testing.T) {
 				tt.setupReq(req)
 			}
 
-			result := server.validateAPIKeySignature(req, apiKey)
+			result := server.authManager.validateAPIKeySignature(req, apiKey)
 			if result != tt.expected {
 				t.Errorf("validateAPIKeySignature() = %v, expected %v: %s", result, tt.expected, tt.desc)
 			}

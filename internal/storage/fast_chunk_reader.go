@@ -44,7 +44,7 @@ func (r *FastChunkReader) Read(p []byte) (int, error) {
 			return 0, err
 		}
 		
-		// Quick check for obvious non-chunk data
+		// Detect data format to determine if chunked encoding is used
 		if len(peek) > 0 {
 			// Check for JSON or binary data
 			if bytes.Contains(peek, []byte("{")) || bytes.Contains(peek, []byte("\"")) {

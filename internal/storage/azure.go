@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5" //nolint:gosec // MD5 is required for Azure ETag compatibility
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -38,29 +39,29 @@ type contentLengthValidator struct {
 func (v *contentLengthValidator) Read(p []byte) (int, error) {
 	n, err := v.reader.Read(p)
 	v.actualSize += int64(n)
-	
+
 	// Check if we're reading more than expected
 	if v.actualSize > v.expectedSize {
 		logrus.WithFields(logrus.Fields{
-			"key":          v.key,
-			"expected":     v.expectedSize,
-			"actual":       v.actualSize,
-			"excess":       v.actualSize - v.expectedSize,
+			"key":      v.key,
+			"expected": v.expectedSize,
+			"actual":   v.actualSize,
+			"excess":   v.actualSize - v.expectedSize,
 		}).Error("Content-length exceeded: reading more data than expected")
 		return n, fmt.Errorf("content-length exceeded: expected %d, got %d+", v.expectedSize, v.actualSize)
 	}
-	
+
 	// If we hit EOF, validate final size
 	if err == io.EOF && v.actualSize != v.expectedSize {
 		logrus.WithFields(logrus.Fields{
-			"key":          v.key,
-			"expected":     v.expectedSize,
-			"actual":       v.actualSize,
-			"shortfall":    v.expectedSize - v.actualSize,
+			"key":       v.key,
+			"expected":  v.expectedSize,
+			"actual":    v.actualSize,
+			"shortfall": v.expectedSize - v.actualSize,
 		}).Error("Content-length mismatch: premature end of stream")
 		return n, fmt.Errorf("content-length mismatch: expected %d, got %d", v.expectedSize, v.actualSize)
 	}
-	
+
 	return n, err
 }
 
@@ -70,30 +71,30 @@ func (v *contentLengthValidator) Close() error {
 
 const (
 	// Buffer sizes
-	defaultBufferSize = 1 * 1024 * 1024 // 1MB
-	smallFileThreshold = 256 * 1024     // 256KB for MD5 calculation
-	
+	defaultBufferSize  = 1 * 1024 * 1024 // 1MB
+	smallFileThreshold = 256 * 1024      // 256KB for MD5 calculation
+
 	// Azure limits and configuration
-	azureBlockIDFormat = "%010d"
-	maxPagesToSearch = 10
+	azureBlockIDFormat   = "%010d"
+	maxPagesToSearch     = 10
 	maxConcurrentUploads = 10
 	minResultsToTruncate = 10 // Minimum results to continue pagination with blob path marker
-	
+
 	// Timeouts and delays
-	defaultClientTimeout = 1800 * time.Second  // 30 minutes for large file operations
-	defaultRetryDelay = 500 * time.Millisecond
-	maxRetryDelay = 5 * time.Second
-	maxRetries = 1
-	
+	defaultClientTimeout = 1800 * time.Second // 30 minutes for large file operations
+	defaultRetryDelay    = 500 * time.Millisecond
+	maxRetryDelay        = 5 * time.Second
+	maxRetries           = 1
+
 	// Special markers and identifiers
 	directoryMarkerSuffix = "/.dir"
-	emptyFileMD5 = "d41d8cd98f00b204e9800998ecf8427e" // MD5 of empty string
-	rootContainer = "$root"
-	
+	emptyFileMD5          = "d41d8cd98f00b204e9800998ecf8427e" // MD5 of empty string
+	rootContainer         = "$root"
+
 	// Metadata keys
 	metadataKeyDirectoryMarker = "s3proxyDirectoryMarker"
-	metadataKeyOriginalKey = "s3proxyOriginalKey"
-	metadataKeyMD5 = "s3proxyMD5"
+	metadataKeyOriginalKey     = "s3proxyOriginalKey"
+	metadataKeyMD5             = "s3proxyMD5"
 )
 
 // wrapAzureError adds context to Azure storage errors
@@ -368,28 +369,28 @@ func (a *AzureBackend) ListObjects(ctx context.Context, bucket, prefix, marker s
 func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (*ListObjectsResult, error) {
 	start := time.Now()
 	logrus.WithFields(logrus.Fields{
-		"bucket": bucket,
-		"prefix": prefix,
-		"marker": marker,
+		"bucket":    bucket,
+		"prefix":    prefix,
+		"marker":    marker,
 		"delimiter": delimiter,
-		"maxKeys": maxKeys,
+		"maxKeys":   maxKeys,
 	}).Info("Azure ListObjectsWithDelimiter started")
-	
+
 	result := &ListObjectsResult{
 		CommonPrefixes: []string{},
 		Contents:       []ObjectInfo{},
 	}
 
 	containerClient := a.client.ServiceClient().NewContainerClient(bucket)
-	
+
 	opts := &container.ListBlobsHierarchyOptions{
 		Prefix: &prefix,
-		MaxResults: func() *int32 { 
+		MaxResults: func() *int32 {
 			mk := int32(maxKeys)
-			return &mk 
+			return &mk
 		}(),
 	}
-	
+
 	// Fix for Azure marker issue: Some S3 clients (like Iceberg/Trino) use the last object key
 	// as the continuation token instead of the NextContinuationToken. This doesn't work with Azure.
 	// If the marker looks like a blob path, we need to handle it specially.
@@ -402,7 +403,7 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 				"bucket": bucket,
 				"prefix": prefix,
 			}).Debug("Detected blob path used as marker, will filter results")
-			
+
 			// Use a smarter prefix to reduce the search space
 			// Extract the directory part of the marker to use as a prefix hint
 			if lastSlash := strings.LastIndex(marker, "/"); lastSlash > 0 && prefix == "" {
@@ -412,7 +413,7 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 					opts.Prefix = &markerDir
 				}
 			}
-			
+
 			// Don't set the Azure marker - we'll filter results manually
 			// by skipping all blobs until we pass the marker key
 		} else {
@@ -428,11 +429,11 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 	foundItemsPastMarker := false
 	// Limit pages when searching for marker to prevent excessive API calls
 	pagesSearched := 0
-	
+
 	if delimiter != "" {
 		// Use hierarchical listing
 		pager := containerClient.NewListBlobsHierarchyPager(delimiter, opts)
-		
+
 		// Continue paging if we need more items OR if we're still searching for items past the marker (with page limit)
 		for pager.More() && (len(result.Contents) < maxKeys || (skipUntilAfterMarker && !foundItemsPastMarker && pagesSearched < maxPagesToSearch)) {
 			page, err := pager.NextPage(ctx)
@@ -449,7 +450,7 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 				}
 
 				key := *blob.Name
-				
+
 				// Skip blobs until we pass the marker if using blob path as marker
 				if skipUntilAfterMarker {
 					if key <= markerPath {
@@ -508,10 +509,10 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 						result.IsTruncated = false
 						result.NextMarker = ""
 						logrus.WithFields(logrus.Fields{
-							"bucket": bucket,
-							"prefix": prefix,
-							"marker": marker,
-							"results": len(result.Contents),
+							"bucket":        bucket,
+							"prefix":        prefix,
+							"marker":        marker,
+							"results":       len(result.Contents),
 							"pagesSearched": pagesSearched,
 						}).Info("Ending pagination: blob path marker with few results")
 					} else if len(result.Contents) > 0 {
@@ -522,9 +523,9 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 							result.IsTruncated = false
 							result.NextMarker = ""
 							logrus.WithFields(logrus.Fields{
-								"bucket": bucket,
-								"prefix": prefix,
-								"marker": marker,
+								"bucket":  bucket,
+								"prefix":  prefix,
+								"marker":  marker,
 								"lastKey": lastKey,
 							}).Warn("Preventing infinite loop: no progress from marker")
 						} else {
@@ -534,8 +535,8 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 						}
 					} else {
 						// No results found
-					result.IsTruncated = false
-					result.NextMarker = ""
+						result.IsTruncated = false
+						result.NextMarker = ""
 					}
 				} else if len(result.Contents) > 0 {
 					// Normal case: Azure has more pages and we have results
@@ -552,19 +553,19 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 		// Flat listing
 		flatOpts := &container.ListBlobsFlatOptions{
 			Prefix: &prefix,
-			MaxResults: func() *int32 { 
+			MaxResults: func() *int32 {
 				mk := int32(maxKeys)
-				return &mk 
+				return &mk
 			}(),
 		}
-		
+
 		// Only set marker if it's a valid Azure marker (not a blob path)
 		if marker != "" && !strings.Contains(marker, "/") {
 			flatOpts.Marker = &marker
 		}
-		
+
 		pager := containerClient.NewListBlobsFlatPager(flatOpts)
-		
+
 		// Continue paging if we need more items OR if we're still searching for items past the marker (with page limit)
 		for pager.More() && (len(result.Contents) < maxKeys || (skipUntilAfterMarker && !foundItemsPastMarker && pagesSearched < maxPagesToSearch)) {
 			page, err := pager.NextPage(ctx)
@@ -580,7 +581,7 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 				}
 
 				key := *blob.Name
-				
+
 				// Skip blobs until we pass the marker if using blob path as marker
 				if skipUntilAfterMarker {
 					if key <= markerPath {
@@ -627,10 +628,10 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 						result.IsTruncated = false
 						result.NextMarker = ""
 						logrus.WithFields(logrus.Fields{
-							"bucket": bucket,
-							"prefix": prefix,
-							"marker": marker,
-							"results": len(result.Contents),
+							"bucket":        bucket,
+							"prefix":        prefix,
+							"marker":        marker,
+							"results":       len(result.Contents),
 							"pagesSearched": pagesSearched,
 						}).Info("Ending pagination: blob path marker with few results")
 					} else if len(result.Contents) > 0 {
@@ -641,9 +642,9 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 							result.IsTruncated = false
 							result.NextMarker = ""
 							logrus.WithFields(logrus.Fields{
-								"bucket": bucket,
-								"prefix": prefix,
-								"marker": marker,
+								"bucket":  bucket,
+								"prefix":  prefix,
+								"marker":  marker,
 								"lastKey": lastKey,
 							}).Warn("Preventing infinite loop: no progress from marker")
 						} else {
@@ -653,8 +654,8 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 						}
 					} else {
 						// No results found
-					result.IsTruncated = false
-					result.NextMarker = ""
+						result.IsTruncated = false
+						result.NextMarker = ""
 					}
 				} else if len(result.Contents) > 0 {
 					// Normal case: Azure has more pages and we have results
@@ -671,10 +672,10 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 
 	duration := time.Since(start)
 	logrus.WithFields(logrus.Fields{
-		"bucket": bucket,
-		"prefix": prefix,
+		"bucket":      bucket,
+		"prefix":      prefix,
 		"resultCount": len(result.Contents),
-		"duration": duration,
+		"duration":    duration,
 		"isTruncated": result.IsTruncated,
 	}).Info("Azure ListObjectsWithDelimiter completed")
 
@@ -684,19 +685,19 @@ func (a *AzureBackend) ListObjectsWithDelimiter(ctx context.Context, bucket, pre
 // ListDeletedObjects lists soft-deleted blobs in Azure Blob Storage
 func (a *AzureBackend) ListDeletedObjects(ctx context.Context, bucket, prefix, marker string, maxKeys int) (*ListObjectsResult, error) {
 	logrus.WithFields(logrus.Fields{
-		"bucket": bucket,
-		"prefix": prefix,
-		"marker": marker,
+		"bucket":  bucket,
+		"prefix":  prefix,
+		"marker":  marker,
 		"maxKeys": maxKeys,
 	}).Debug("ListDeletedObjects called")
-	
+
 	result := &ListObjectsResult{
 		CommonPrefixes: []string{},
 		Contents:       []ObjectInfo{},
 	}
 
 	containerClient := a.client.ServiceClient().NewContainerClient(bucket)
-	
+
 	// Create options with Include for deleted blobs
 	// Include all possible states to debug
 	includeStates := container.ListBlobsInclude{
@@ -706,26 +707,26 @@ func (a *AzureBackend) ListDeletedObjects(ctx context.Context, bucket, prefix, m
 		Tags:      true,
 		Versions:  true, // Re-enable versions to see all blob states
 	}
-	
+
 	opts := &container.ListBlobsFlatOptions{
 		Prefix: &prefix,
-		MaxResults: func() *int32 { 
+		MaxResults: func() *int32 {
 			mk := int32(maxKeys)
-			return &mk 
+			return &mk
 		}(),
 		Include: includeStates,
 	}
-	
+
 	if marker != "" {
 		opts.Marker = &marker
 	}
 
 	// Use flat listing for deleted blobs
 	pager := containerClient.NewListBlobsFlatPager(opts)
-	
+
 	totalBlobsProcessed := 0
 	deletedBlobsFound := 0
-	
+
 	for pager.More() && len(result.Contents) < maxKeys {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -733,12 +734,12 @@ func (a *AzureBackend) ListDeletedObjects(ctx context.Context, bucket, prefix, m
 		}
 
 		logrus.WithFields(logrus.Fields{
-			"pageSize": len(page.Segment.BlobItems),
-			"bucket": bucket,
+			"pageSize":       len(page.Segment.BlobItems),
+			"bucket":         bucket,
 			"totalProcessed": totalBlobsProcessed,
-			"deletedFound": deletedBlobsFound,
+			"deletedFound":   deletedBlobsFound,
 		}).Info("Processing page of blobs for soft delete listing")
-		
+
 		// Process blobs - only include deleted ones
 		for _, blob := range page.Segment.BlobItems {
 			if len(result.Contents) >= maxKeys {
@@ -752,12 +753,12 @@ func (a *AzureBackend) ListDeletedObjects(ctx context.Context, bucket, prefix, m
 			// Log first few blobs to debug
 			if totalBlobsProcessed < 5 && blob.Name != nil {
 				fields := logrus.Fields{
-					"name": *blob.Name,
-					"hasDeleted": blob.Deleted != nil,
+					"name":                *blob.Name,
+					"hasDeleted":          blob.Deleted != nil,
 					"hasIsCurrentVersion": blob.IsCurrentVersion != nil,
-					"hasVersionID": blob.VersionID != nil,
+					"hasVersionID":        blob.VersionID != nil,
 				}
-				
+
 				if blob.Deleted != nil {
 					fields["deleted"] = *blob.Deleted
 				}
@@ -767,29 +768,29 @@ func (a *AzureBackend) ListDeletedObjects(ctx context.Context, bucket, prefix, m
 				if blob.VersionID != nil {
 					fields["versionID"] = *blob.VersionID
 				}
-				
+
 				logrus.WithFields(fields).Info("Sample blob properties for debugging")
 			}
-			
+
 			totalBlobsProcessed++
-			
+
 			// Check if blob is deleted
 			// Azure SDK issue: blob.Deleted is not populated when versioning is enabled
 			// We need to check multiple conditions
 			isDeleted := false
-			
+
 			// Method 1: Check the Deleted flag (might not work with versioning)
 			if blob.Deleted != nil && *blob.Deleted {
 				isDeleted = true
 				logrus.WithField("method", "DeletedFlag").Debug("Found deleted blob via Deleted flag")
 			}
-			
+
 			// Method 2: Check if DeletedTime is set
 			if !isDeleted && blob.Properties != nil && blob.Properties.DeletedTime != nil {
 				isDeleted = true
 				logrus.WithField("method", "DeletedTime").Debug("Found deleted blob via DeletedTime")
 			}
-			
+
 			// Method 3: When versioning is enabled, check if this is not the current version
 			// Previous versions are soft-deleted blobs when versioning + soft delete are enabled
 			if !isDeleted && blob.VersionID != nil {
@@ -797,28 +798,28 @@ func (a *AzureBackend) ListDeletedObjects(ctx context.Context, bucket, prefix, m
 				if blob.IsCurrentVersion != nil && !*blob.IsCurrentVersion {
 					isDeleted = true
 					logrus.WithFields(logrus.Fields{
-						"name": *blob.Name,
+						"name":      *blob.Name,
 						"versionID": *blob.VersionID,
-						"method": "PreviousVersion-ExplicitFalse",
+						"method":    "PreviousVersion-ExplicitFalse",
 					}).Info("Found deleted blob via previous version detection")
 				} else if blob.IsCurrentVersion == nil {
 					// When IsCurrentVersion is not set (nil), it's also a previous version!
 					// Azure doesn't set this property for non-current versions
 					isDeleted = true
 					logrus.WithFields(logrus.Fields{
-						"name": *blob.Name,
+						"name":      *blob.Name,
 						"versionID": *blob.VersionID,
-						"method": "PreviousVersion-NilFlag",
+						"method":    "PreviousVersion-NilFlag",
 					}).Info("Found deleted blob via previous version detection (nil IsCurrentVersion)")
 				}
 			}
-			
+
 			// Method 4: Check for any deletion properties for debugging
 			if blob.Properties != nil {
 				deletionInfo := logrus.Fields{
 					"name": *blob.Name,
 				}
-				
+
 				hasAnyIndicator := false
 				if blob.Properties.DeletedTime != nil {
 					deletionInfo["deletedTime"] = *blob.Properties.DeletedTime
@@ -837,13 +838,13 @@ func (a *AzureBackend) ListDeletedObjects(ctx context.Context, bucket, prefix, m
 				if blob.VersionID != nil {
 					deletionInfo["versionID"] = *blob.VersionID
 				}
-				
+
 				// Log for debugging
 				if hasAnyIndicator || (blob.IsCurrentVersion != nil && !*blob.IsCurrentVersion) {
 					logrus.WithFields(deletionInfo).Debug("Blob version info")
 				}
 			}
-			
+
 			// Only include deleted blobs
 			if isDeleted {
 				deletedBlobsFound++
@@ -901,11 +902,11 @@ func (a *AzureBackend) ListDeletedObjects(ctx context.Context, bucket, prefix, m
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"bucket": bucket,
+		"bucket":       bucket,
 		"deletedCount": len(result.Contents),
-		"isTruncated": result.IsTruncated,
+		"isTruncated":  result.IsTruncated,
 	}).Info("ListDeletedObjects completed")
-	
+
 	return result, nil
 }
 
@@ -917,7 +918,7 @@ func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 	}
 
 	blobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlobClient(normalizedKey)
-	
+
 	// Get properties first
 	props, err := blobClient.GetProperties(ctx, nil)
 	if err != nil {
@@ -925,7 +926,7 @@ func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 	}
 
 	expectedSize := *props.ContentLength
-	
+
 	// Download the blob with content-length validation
 	downloadResponse, err := blobClient.DownloadStream(ctx, &blob.DownloadStreamOptions{
 		// Force Azure to validate content-length
@@ -991,12 +992,12 @@ func (a *AzureBackend) PutObject(ctx context.Context, bucket, key string, reader
 		if err != nil {
 			return fmt.Errorf("failed to read data: %w", err)
 		}
-		
+
 		// Calculate MD5
 		hash := md5.Sum(data)
 		md5Hash := hex.EncodeToString(hash[:])
 		metadata[metadataKeyMD5] = md5Hash
-		
+
 		reader = bytes.NewReader(data)
 	}
 
@@ -1036,7 +1037,7 @@ func (a *AzureBackend) DeleteObject(ctx context.Context, bucket, key string) err
 	}).Info("Azure DeleteObject called")
 
 	blobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlobClient(normalizedKey)
-	
+
 	// First try to delete with default options
 	_, err := blobClient.Delete(ctx, nil)
 	if err != nil {
@@ -1046,7 +1047,7 @@ func (a *AzureBackend) DeleteObject(ctx context.Context, bucket, key string) err
 			if respErr.StatusCode == http.StatusNotFound {
 				return nil
 			}
-			
+
 			// If we get a 409 Conflict, it might be because of snapshots
 			// Try deleting with snapshots included
 			if respErr.StatusCode == http.StatusConflict {
@@ -1055,7 +1056,7 @@ func (a *AzureBackend) DeleteObject(ctx context.Context, bucket, key string) err
 					"key":    normalizedKey,
 					"error":  err.Error(),
 				}).Warn("Delete failed with conflict, trying to delete including snapshots")
-				
+
 				// Try again with delete snapshots option
 				deleteOptions := &blob.DeleteOptions{
 					DeleteSnapshots: func() *blob.DeleteSnapshotsOptionType {
@@ -1084,22 +1085,22 @@ func (a *AzureBackend) DeleteObject(ctx context.Context, bucket, key string) err
 // RestoreObject restores a soft-deleted blob
 func (a *AzureBackend) RestoreObject(ctx context.Context, bucket, key, versionID string) error {
 	blobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlockBlobClient(key)
-	
+
 	// Create undelete options
 	opts := &blob.UndeleteOptions{}
-	
+
 	// Undelete the blob
 	_, err := blobClient.Undelete(ctx, opts)
 	if err != nil {
 		return wrapAzureError("restore blob", bucket, key, err)
 	}
-	
+
 	logrus.WithFields(logrus.Fields{
 		"bucket":    bucket,
 		"key":       key,
 		"versionID": versionID,
 	}).Info("Restored soft-deleted blob")
-	
+
 	return nil
 }
 
@@ -1121,15 +1122,15 @@ func (a *AzureBackend) HeadObject(ctx context.Context, bucket, key string) (*Obj
 	if strings.Contains(key, "/") || strings.HasSuffix(key, "/") {
 		// Use list operation with MaxResults=1 for faster directory existence check
 		containerClient := a.client.ServiceClient().NewContainerClient(bucket)
-		
+
 		listOpts := &container.ListBlobsFlatOptions{
 			Prefix: &key,
-			MaxResults: func() *int32 { 
+			MaxResults: func() *int32 {
 				one := int32(1)
-				return &one 
+				return &one
 			}(),
 		}
-		
+
 		pager := containerClient.NewListBlobsFlatPager(listOpts)
 		if pager.More() {
 			page, err := pager.NextPage(ctx)
@@ -1139,10 +1140,10 @@ func (a *AzureBackend) HeadObject(ctx context.Context, bucket, key string) (*Obj
 				if *blob.Name == key || *blob.Name == normalizedKey {
 					duration := time.Since(start)
 					logrus.WithFields(logrus.Fields{
-						"bucket": bucket,
-						"key":    key,
+						"bucket":   bucket,
+						"key":      key,
 						"duration": duration,
-						"method": "list_optimization",
+						"method":   "list_optimization",
 					}).Debug("Azure HeadObject completed via list optimization")
 
 					// Get metadata
@@ -1171,26 +1172,26 @@ func (a *AzureBackend) HeadObject(ctx context.Context, bucket, key string) (*Obj
 
 	// Fall back to direct blob property lookup
 	blobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlobClient(normalizedKey)
-	
+
 	props, err := blobClient.GetProperties(ctx, nil)
 	if err != nil {
 		duration := time.Since(start)
 		logrus.WithFields(logrus.Fields{
-			"bucket": bucket,
-			"key":    key,
+			"bucket":        bucket,
+			"key":           key,
 			"normalizedKey": normalizedKey,
-			"duration": duration,
-			"error": err.Error(),
+			"duration":      duration,
+			"error":         err.Error(),
 		}).Debug("Azure HeadObject failed")
 		return nil, wrapAzureError("get blob properties", bucket, normalizedKey, err)
 	}
 
 	duration := time.Since(start)
 	logrus.WithFields(logrus.Fields{
-		"bucket": bucket,
-		"key":    key,
+		"bucket":   bucket,
+		"key":      key,
 		"duration": duration,
-		"method": "direct_properties",
+		"method":   "direct_properties",
 	}).Debug("Azure HeadObject completed via direct properties")
 
 	// Get metadata
@@ -1242,18 +1243,19 @@ func (a *AzureBackend) PutObjectACL(ctx context.Context, bucket, key string, acl
 }
 
 func (a *AzureBackend) InitiateMultipartUpload(ctx context.Context, bucket, key string, metadata map[string]string) (string, error) {
-	// Generate a unique upload ID
-	uploadID := fmt.Sprintf("%d-%s", time.Now().UnixNano(), key)
-	
+	// Generate a URL-safe upload ID: time-based prefix + truncated sha256 hash of key
+	keyHash := sha256.Sum256([]byte(key))
+	uploadID := fmt.Sprintf("%d-%s", time.Now().UnixNano(), hex.EncodeToString(keyHash[:8]))
+
 	// Store metadata for later use
 	a.uploadMetadata.Store(uploadID, metadata)
-	
+
 	logrus.WithFields(logrus.Fields{
 		"bucket":   bucket,
 		"key":      key,
 		"uploadID": uploadID,
 	}).Info("Initiated multipart upload for Azure")
-	
+
 	return uploadID, nil
 }
 
@@ -1278,10 +1280,10 @@ func (a *AzureBackend) UploadPart(ctx context.Context, bucket, key, uploadID str
 
 	// Azure requires block IDs to be base64-encoded and of equal length
 	blockID := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(azureBlockIDFormat, partNumber)))
-	
+
 	logrus.WithFields(logrus.Fields{
 		"partNumber": partNumber,
-		"blockID": blockID,
+		"blockID":    blockID,
 		"blockIDLen": len(blockID),
 	}).Debug("Generated block ID for Azure")
 
@@ -1332,26 +1334,26 @@ func (a *AzureBackend) CompleteMultipartUpload(ctx context.Context, bucket, key,
 	for i, part := range parts {
 		// Extract block ID from ETag (remove quotes if present)
 		blockID := strings.Trim(part.ETag, "\"")
-		
+
 		// If the ETag doesn't look like a base64-encoded block ID, generate it from part number
 		// This handles backward compatibility or cases where ETag wasn't properly set
 		if len(blockID) < 10 || !isBase64(blockID) {
 			blockID = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(azureBlockIDFormat, part.PartNumber)))
 			logrus.WithFields(logrus.Fields{
-				"partNumber": part.PartNumber,
-				"originalETag": part.ETag,
+				"partNumber":       part.PartNumber,
+				"originalETag":     part.ETag,
 				"generatedBlockID": blockID,
 			}).Warn("ETag doesn't contain valid block ID, generating from part number")
 		}
-		
+
 		blockList[i] = blockID
-		
+
 		// Log progress every 50 parts for large uploads
-		if len(parts) > 100 && (i+1) % 50 == 0 {
+		if len(parts) > 100 && (i+1)%50 == 0 {
 			logrus.WithFields(logrus.Fields{
-				"processed": i+1,
-				"total": len(parts),
-				"percent": float64(i+1)/float64(len(parts))*100,
+				"processed": i + 1,
+				"total":     len(parts),
+				"percent":   float64(i+1) / float64(len(parts)) * 100,
 			}).Info("Processing block list for commit")
 		}
 	}
@@ -1369,12 +1371,12 @@ func (a *AzureBackend) CompleteMultipartUpload(ctx context.Context, bucket, key,
 	commitTimeout := 10*time.Minute + time.Duration(len(parts))*30*time.Second
 	commitCtx, cancel := context.WithTimeout(ctx, commitTimeout)
 	defer cancel()
-	
+
 	logrus.WithFields(logrus.Fields{
-		"parts": len(parts),
+		"parts":   len(parts),
 		"timeout": commitTimeout,
 	}).Info("Starting Azure block list commit with extended timeout")
-	
+
 	opts := &blockblob.CommitBlockListOptions{
 		Metadata: convertMetadataToPointers(metadata),
 		HTTPHeaders: &blob.HTTPHeaders{
@@ -1402,7 +1404,7 @@ func (a *AzureBackend) CompleteMultipartUpload(ctx context.Context, bucket, key,
 func (a *AzureBackend) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
 	// Clean up stored metadata
 	a.uploadMetadata.Delete(uploadID)
-	
+
 	// Azure doesn't have explicit abort for uncommitted blocks
 	// Uncommitted blocks are automatically garbage collected
 	return nil
@@ -1410,7 +1412,7 @@ func (a *AzureBackend) AbortMultipartUpload(ctx context.Context, bucket, key, up
 
 func (a *AzureBackend) ListParts(ctx context.Context, bucket, key, uploadID string, maxParts int, partNumberMarker int) (*ListPartsResult, error) {
 	blockBlobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlockBlobClient(key)
-	
+
 	// Get the block list
 	blockList, err := blockBlobClient.GetBlockList(ctx, blockblob.BlockListTypeUncommitted, nil)
 	if err != nil {
@@ -1433,10 +1435,10 @@ func (a *AzureBackend) ListParts(ctx context.Context, bucket, key, uploadID stri
 		if err != nil {
 			continue
 		}
-		
+
 		var partNumber int
 		fmt.Sscanf(string(decoded), "%d", &partNumber)
-		
+
 		if partNumber <= partNumberMarker {
 			continue
 		}

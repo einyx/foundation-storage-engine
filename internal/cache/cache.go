@@ -226,10 +226,6 @@ func NewCachingBackend(backend storage.Backend, cache *ObjectCache) *CachingBack
 func (cb *CachingBackend) GetObject(ctx context.Context, bucket, key string) (*storage.Object, error) {
 	// Try cache first
 	if obj, ok := cb.cache.GetObject(ctx, bucket, key); ok {
-		// logrus.WithFields(logrus.Fields{
-		// 	"bucket": bucket,
-		// 	"key":    key,
-		// }).Debug("Cache hit")
 		return obj, nil
 	}
 

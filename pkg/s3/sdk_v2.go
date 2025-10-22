@@ -2,12 +2,12 @@ package s3
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 )
 
-// handleSDKv2Request checks if this is an SDK v2 request and performs any necessary transformations
-// The 'w' parameter is included to maintain consistency with other handler methods, even though it's currently unused
+// handleSDKv2Request processes SDK v2 specific headers and transformations
 func (h *Handler) handleSDKv2Request(_ http.ResponseWriter, r *http.Request) bool {
 	// Check for SDK v2 specific headers
 	sdkRequest := r.Header.Get("x-amz-sdk-request")
@@ -48,6 +48,17 @@ func (h *Handler) handleSDKv2Request(_ http.ResponseWriter, r *http.Request) boo
 		logrus.WithField("x-id", r.URL.Query().Get("x-id")).Debug("SDK v2 x-id parameter present")
 	}
 
+	// Check User-Agent for Java SDK patterns (commonly used by data processing tools)
+	userAgent := strings.ToLower(r.Header.Get("User-Agent"))
+	isJavaSDK := strings.Contains(userAgent, "aws-sdk-java") ||
+		strings.Contains(userAgent, "trino") ||
+		strings.Contains(userAgent, "hive") ||
+		strings.Contains(userAgent, "hadoop")
+
+	if isJavaSDK {
+		logrus.WithField("user_agent", userAgent).Debug("Java SDK request detected")
+	}
+
 	// Return true if this is definitely an SDK v2 request
-	return sdkRequest != "" || checksumAlgorithm != ""
+	return sdkRequest != "" || checksumAlgorithm != "" || isJavaSDK
 }

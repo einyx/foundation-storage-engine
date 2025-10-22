@@ -3,15 +3,18 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -106,9 +109,9 @@ type S3Backend struct {
 	largeBufferPool sync.Pool
 	metadataCache   *MetadataCache
 	mu              sync.RWMutex // Protect client creation
-	// Track problematic servers for resilient upload
-	problematicServers map[string]*serverStatus
-	serverMu           sync.RWMutex
+	problematicServers          map[string]*serverStatus
+	serverMu                    sync.RWMutex
+	defaultMultipartConcurrency int
 }
 
 type serverStatus struct {
@@ -158,20 +161,12 @@ func (m *MetadataCache) Delete(key string) {
 func (s *S3Backend) mapBucket(virtualBucket string) string {
 	if s.bucketConfigs != nil {
 		if cfg, ok := s.bucketConfigs[virtualBucket]; ok && cfg.RealName != "" {
-			// logrus.WithFields(logrus.Fields{
-			// 	"virtual": virtualBucket,
-			// 	"real":    cfg.RealName,
-			// }).Debug("Mapping bucket name from bucket config")
 			return cfg.RealName
 		}
 	}
 
 	if s.bucketMapping != nil {
 		if realBucket, ok := s.bucketMapping[virtualBucket]; ok {
-			// logrus.WithFields(logrus.Fields{
-			// 	"virtual": virtualBucket,
-			// 	"real":    realBucket,
-			// }).Debug("Mapping bucket name from simple mapping")
 			return realBucket
 		}
 	}
@@ -180,11 +175,6 @@ func (s *S3Backend) mapBucket(virtualBucket string) string {
 }
 
 func (s *S3Backend) getPrefixForBucket(virtualBucket string) string {
-	// logrus.WithFields(logrus.Fields{
-	// 	"virtualBucket": virtualBucket,
-	// 	"hasConfigs":    s.bucketConfigs != nil,
-	// 	"configCount":   len(s.bucketConfigs),
-	// }).Debug("getPrefixForBucket called")
 
 	if s.bucketConfigs != nil {
 		if cfg, ok := s.bucketConfigs[virtualBucket]; ok {
@@ -210,7 +200,6 @@ func (s *S3Backend) getPrefixForBucket(virtualBucket string) string {
 		}
 	}
 
-	// logrus.WithField("virtualBucket", virtualBucket).Debug("No prefix found for bucket")
 	return ""
 }
 
@@ -246,27 +235,16 @@ func (s *S3Backend) GetBucketConfig(bucket string) *config.BucketConfig {
 func (s *S3Backend) getClientForBucket(bucket string) (*s3.S3, error) {
 	if s.bucketConfigs != nil {
 		if cfg, ok := s.bucketConfigs[bucket]; ok {
-			// logrus.WithFields(logrus.Fields{
-			// 	"virtualBucket": bucket,
-			// 	"realBucket":    cfg.RealName,
-			// 	"region":        cfg.Region,
-			// }).Debug("Using bucket-specific configuration")
 			return s.getOrCreateClient(cfg)
 		}
 
 		for _, cfg := range s.bucketConfigs {
 			if cfg.RealName == bucket {
-				// logrus.WithFields(logrus.Fields{
-				// 	"realBucket":    bucket,
-				// 	"virtualBucket": virtualBucket,
-				// 	"region":        cfg.Region,
-				// }).Debug("Using configuration from virtual bucket mapping")
 				return s.getOrCreateClient(cfg)
 			}
 		}
 	}
 
-	// logrus.WithField("bucket", bucket).Debug("Using default client for bucket")
 	// Use default client
 	return s.defaultClient, nil
 }
@@ -490,6 +468,11 @@ func NewS3Backend(cfg *config.S3StorageConfig) (*S3Backend, error) {
 		"usePathStyle": cfg.UsePathStyle,
 	}).Info("S3 backend created")
 
+	defaultConcurrency := cfg.MultipartMaxConcurrency
+	if defaultConcurrency <= 0 {
+		defaultConcurrency = 10
+	}
+
 	return &S3Backend{
 		defaultClient: s3Client,
 		clients:       make(map[string]*s3.S3),
@@ -513,7 +496,8 @@ func NewS3Backend(cfg *config.S3StorageConfig) (*S3Backend, error) {
 			cache: make(map[string]*cachedMetadata),
 			ttl:   30 * time.Second,
 		},
-		problematicServers: make(map[string]*serverStatus),
+		problematicServers:          make(map[string]*serverStatus),
+		defaultMultipartConcurrency: defaultConcurrency,
 	}, nil
 }
 
@@ -951,7 +935,6 @@ func (s *S3Backend) PutObject(ctx context.Context, bucket, key string, reader io
 		return fmt.Errorf("failed to get client for bucket: %w", err)
 	}
 
-	// Debug: Log what we're about to do
 	logrus.WithFields(logrus.Fields{
 		"bucket":   realBucket,
 		"key":      realKey,
@@ -1111,11 +1094,6 @@ func (s *S3Backend) PutObjectACL(ctx context.Context, bucket, key string, acl *A
 }
 
 func (s *S3Backend) InitiateMultipartUpload(ctx context.Context, bucket, key string, metadata map[string]string) (string, error) {
-	// logrus.WithFields(logrus.Fields{
-	// 	"bucket":   bucket,
-	// 	"key":      key,
-	// 	"metadata": metadata,
-	// }).Debug("Initiating multipart upload")
 
 	realBucket := s.mapBucket(bucket)
 	realKey := s.addPrefixToKey(bucket, key)
@@ -1165,54 +1143,45 @@ func (s *S3Backend) UploadPart(ctx context.Context, bucket, key, uploadID string
 	}).Debug("Starting part upload to S3")
 
 	// AWS SDK requires io.ReadSeeker for uploads
-	// For streaming uploads, we need to implement a buffered approach
+	// Buffer the incoming data so we can retry if needed
 	var body io.ReadSeeker
+	actualSize := size
 
 	if rs, ok := reader.(io.ReadSeeker); ok {
 		body = rs
 	} else {
-		// For non-seekable readers, we need to provide a seekable interface
-		limitedReader := io.LimitReader(reader, size)
+		var buf bytes.Buffer
+		limitedReader := reader
+		if size > 0 {
+			limitedReader = io.LimitReader(reader, size)
+		}
 
-		// For small parts (<= 10MB), buffer in memory for best performance
-		if size <= 10*1024*1024 {
-			// Use context-aware reading with adaptive timeout for slow clients
-			data, err := s.readWithAdaptiveTimeout(ctx, limitedReader, size)
-			if err != nil {
+		readCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+		defer cancel()
+
+		readDone := make(chan error, 1)
+		go func() {
+			_, err := buf.ReadFrom(limitedReader)
+			readDone <- err
+		}()
+
+		select {
+		case err := <-readDone:
+			if err != nil && !errors.Is(err, io.EOF) {
 				return "", fmt.Errorf("failed to read part data: %w", err)
 			}
-			body = bytes.NewReader(data)
-		} else {
-			// For larger parts, use buffered seeker that can handle retries
-			logrus.WithFields(logrus.Fields{
-				"size":       size,
-				"sizeMB":     size / 1024 / 1024,
-				"partNumber": partNumber,
-			}).Info("Large part detected - using buffered seeker")
-
-			// For very large parts from slow clients, we need special handling
-			logrus.WithFields(logrus.Fields{
-				"size":       size,
-				"sizeMB":     size / 1024 / 1024,
-				"partNumber": partNumber,
-			}).Warn("Large part upload detected - using minimal buffering approach")
-
-			// Don't use BufferedSeeker for huge parts - it still tries to buffer too much
-			// Instead, fail fast if AWS SDK needs to retry
-			// This is better than timing out after 60 seconds
-			data, err := io.ReadAll(limitedReader)
-			if err != nil {
-				return "", fmt.Errorf("failed to read large part data: %w", err)
-			}
-			body = bytes.NewReader(data)
+		case <-readCtx.Done():
+			return "", fmt.Errorf("failed to read part data: %w", readCtx.Err())
 		}
+
+		actualSize = int64(buf.Len())
+		body = bytes.NewReader(buf.Bytes())
 	}
 
 	// Upload with proper timeout handling
 	uploadCtx := ctx
-	if size > 1024*1024 { // For parts > 1MB, ensure reasonable timeout
+	if actualSize > 1024*1024 { // For parts > 1MB, ensure reasonable timeout
 		var cancel context.CancelFunc
-		// Use longer timeout for large parts, especially in problematic regions
 		timeout := 10 * time.Minute
 		if strings.Contains(realBucket, "me-central-1") {
 			timeout = 15 * time.Minute
@@ -1222,34 +1191,94 @@ func (s *S3Backend) UploadPart(ctx context.Context, bucket, key, uploadID string
 	}
 
 	startTime := time.Now()
-	resp, err := client.UploadPartWithContext(uploadCtx, &s3.UploadPartInput{
-		Bucket:        aws.String(realBucket),
-		Key:           aws.String(realKey),
-		UploadId:      aws.String(uploadID),
-		PartNumber:    aws.Int64(int64(partNumber)),
-		Body:          body,
-		ContentLength: aws.Int64(size),
-	})
+	var lastErr error
+	maxAttempts := 3
+	baseBackoff := time.Second
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			if seeker, ok := body.(io.Seeker); ok {
+				if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+					return "", fmt.Errorf("failed to rewind part reader: %w", err)
+				}
+			}
+		}
+
+		resp, err := client.UploadPartWithContext(uploadCtx, &s3.UploadPartInput{
+			Bucket:        aws.String(realBucket),
+			Key:           aws.String(realKey),
+			UploadId:      aws.String(uploadID),
+			PartNumber:    aws.Int64(int64(partNumber)),
+			Body:          body,
+			ContentLength: aws.Int64(actualSize),
+		})
+		if err == nil {
+			uploadDuration := time.Since(startTime)
+			logrus.WithFields(logrus.Fields{
+				"duration":   uploadDuration,
+				"partNumber": partNumber,
+				"size":       actualSize,
+				"etag":       aws.StringValue(resp.ETag),
+			}).Debug("Successfully uploaded part to S3")
+			return aws.StringValue(resp.ETag), nil
+		}
+
+		lastErr = err
+
+		if !s.isRetryableUploadError(err) || attempt == maxAttempts {
+			break
+		}
+
+		backoff := time.Duration(attempt) * baseBackoff
+		logrus.WithFields(logrus.Fields{
+			"bucket":     bucket,
+			"key":        key,
+			"partNumber": partNumber,
+			"attempt":    attempt,
+			"backoff":    backoff,
+		}).Warn("Upload part failed, retrying")
+		time.Sleep(backoff)
+	}
 
 	uploadDuration := time.Since(startTime)
 
-	if err != nil {
-		logrus.WithError(err).WithFields(logrus.Fields{
-			"duration":   uploadDuration,
-			"partNumber": partNumber,
-			"size":       size,
-		}).Error("Failed to upload part to S3")
-		return "", fmt.Errorf("failed to upload part: %w", err)
-	}
-
-	logrus.WithFields(logrus.Fields{
+	logrus.WithError(lastErr).WithFields(logrus.Fields{
 		"duration":   uploadDuration,
 		"partNumber": partNumber,
-		"size":       size,
-		"etag":       aws.StringValue(resp.ETag),
-	}).Debug("Successfully uploaded part to S3")
+		"size":       actualSize,
+	}).Error("Failed to upload part to S3")
 
-	return aws.StringValue(resp.ETag), nil
+	return "", fmt.Errorf("failed to upload part: %w", lastErr)
+}
+
+func (s *S3Backend) isRetryableUploadError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout() || netErr.Temporary()
+	}
+
+	if awsErr, ok := err.(awserr.RequestFailure); ok {
+		switch awsErr.StatusCode() {
+		case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			return true
+		}
+	}
+
+	if strings.Contains(err.Error(), "connection reset") ||
+		strings.Contains(err.Error(), "connection termination") ||
+		strings.Contains(err.Error(), "EOF") {
+		return true
+	}
+
+	return false
 }
 
 func (s *S3Backend) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []CompletedPart) error {
@@ -1438,8 +1467,7 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 		return s.putObjectMultipartStreaming(ctx, virtualBucket, realBucket, key, reader, metadata)
 	}
 
-	// Use fewer concurrent uploads to avoid resource contention in small pods
-	const maxConcurrentUploads = 3 // Reduced for resource-constrained environments
+	maxConcurrentUploads := s.getMultipartConcurrency(virtualBucket)
 
 	// Use dynamic part sizing - smaller parts for better reliability with slow clients
 	actualPartSize := partSize
@@ -1552,7 +1580,7 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 					ContentLength: aws.Int64(int64(len(part.data))),
 				}
 
-				resp, err := client.UploadPartWithContext(operationCtx, partInput)
+				resp, err := client.UploadPartWithContext(ctx, partInput)
 
 				// Return buffer to pool after upload
 				if part.bufPtr != nil {
@@ -1581,6 +1609,7 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 
 	// Result collector goroutine
 	parts := make(map[int64]*s3.CompletedPart)
+	var uploadErr error
 
 	go func() {
 		wg.Wait()
@@ -1810,6 +1839,22 @@ func (s *S3Backend) shouldUseResilientUpload(bucket string) bool {
 	}
 
 	return false
+}
+
+func (s *S3Backend) getMultipartConcurrency(bucket string) int {
+	if cfg := s.GetBucketConfig(bucket); cfg != nil && cfg.MultipartMaxConcurrency > 0 {
+		return cfg.MultipartMaxConcurrency
+	}
+	if s.defaultMultipartConcurrency > 0 {
+		return s.defaultMultipartConcurrency
+	}
+
+	// Fallback to a value that scales with available CPUs
+	concurrency := runtime.NumCPU() * 4
+	if concurrency < 1 {
+		return 1
+	}
+	return concurrency
 }
 
 // readWithAdaptiveTimeout reads data with adaptive timeout handling for slow clients

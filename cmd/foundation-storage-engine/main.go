@@ -183,20 +183,44 @@ func run(cmd *cobra.Command, _ []string) error {
 
 
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 
 	go func() {
-		<-sig
-		logrus.Info("Shutting down server...")
+		sig := <-sig
+		logrus.WithField("signal", sig.String()).Info("Received shutdown signal, starting graceful shutdown...")
+		
+		// Mark server as shutting down immediately (health checks will return 503)
+		proxyServer.SetShuttingDown()
+		
+		// Start graceful shutdown process
 		shutdownCtx, shutdownCancel := context.WithTimeout(ctx, shutdownTimeout)
 		defer shutdownCancel()
+		
+		// Phase 1: Stop accepting new connections
+		logrus.Info("Phase 1: Stopping HTTP server (no new connections)...")
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			logrus.WithError(err).Error("Failed to shutdown server gracefully")
+			logrus.WithError(err).Error("Failed to shutdown HTTP server gracefully")
+			// Force close if graceful shutdown fails
+			logrus.Warn("Forcing HTTP server close...")
+			srv.Close()
+		} else {
+			logrus.Info("HTTP server stopped gracefully")
 		}
-		// Close proxy server resources (including database connections)
+		
+		// Phase 2: Close application resources
+		logrus.Info("Phase 2: Closing application resources...")
 		if err := proxyServer.Close(); err != nil {
 			logrus.WithError(err).Error("Failed to close proxy server resources")
 		}
+		
+		// Phase 3: Flush logs and metrics
+		logrus.Info("Phase 3: Flushing logs and metrics...")
+		if appConfig.Sentry.Enabled {
+			logrus.Info("Flushing Sentry events...")
+			sentry.Flush(sentryFlushTimeout)
+		}
+		
+		logrus.Info("Graceful shutdown completed successfully")
 		cancel()
 	}()
 
