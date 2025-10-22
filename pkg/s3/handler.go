@@ -77,56 +77,14 @@ func (h *Handler) SetScanner(scanner *virustotal.Scanner) {
 	h.scanner = scanner
 }
 
-<<<<<<< Updated upstream
 // ServeHTTP handles all S3 requests
-=======
-// isListOperation checks if a GET request should be treated as a list operation
-// based on query parameters that indicate a bucket listing rather than object retrieval
-func (h *Handler) isListOperation(r *http.Request) bool {
-	query := r.URL.Query()
-
-	// Check for list-type query parameters that indicate this is a list operation
-	listParams := []string{
-		"list-type",          // S3 v2 list API
-		"delimiter",          // Directory-style listing
-		"prefix",             // Prefix filtering
-		"marker",             // S3 v1 list continuation
-		"max-keys",           // Limit number of results
-		"continuation-token", // S3 v2 list continuation
-	}
-
-	for _, param := range listParams {
-		if query.Get(param) != "" {
-			return true
-		}
-	}
-
-	return false
-}
-
-// isValidBucket checks if a bucket exists in our virtual bucket configuration
-func (h *Handler) isValidBucket(bucket string) bool {
-	// Try to check if bucket exists via storage backend
-	ctx := context.Background()
-	exists, err := h.storage.BucketExists(ctx, bucket)
-	if err != nil {
-		// logrus.WithError(err).WithField("bucket", bucket).Debug("Error checking bucket existence")
-		return false
-	}
-	return exists
-}
-
->>>>>>> Stashed changes
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-<<<<<<< Updated upstream
 	// Add S3-compatible headers early to help clients recognize this as S3
 	w.Header().Set("Server", "AmazonS3")
 	w.Header().Set("x-amz-request-id", fmt.Sprintf("%d", start.UnixNano()))
 
-=======
->>>>>>> Stashed changes
 	// Wrap response writer to capture status
 	wrapped := &responseWriter{
 		ResponseWriter: w,
@@ -135,7 +93,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logrus.WithFields(logrus.Fields{
-<<<<<<< Updated upstream
 		"method":       r.Method,
 		"path":         r.URL.Path,
 		"query":        r.URL.RawQuery,
@@ -143,12 +100,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"has_auth":     r.Header.Get("Authorization") != "",
 		"has_amz_date": r.Header.Get("X-Amz-Date") != "",
 		"all_headers":  r.Header,
-=======
-		"method":    r.Method,
-		"path":      r.URL.Path,
-		"query":     r.URL.RawQuery,
-		"userAgent": r.Header.Get("User-Agent"),
->>>>>>> Stashed changes
 	}).Info("Incoming S3 request")
 
 	h.router.ServeHTTP(wrapped, r)
@@ -271,20 +222,6 @@ func (h *Handler) isValidBucket(bucket string) bool {
 	return exists
 }
 
-// sendError sends a structured error response
-func (h *Handler) sendError(w http.ResponseWriter, err error, status int) {
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(status)
-
-	errorResponse := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-	<Code>%s</Code>
-	<Message>%s</Message>
-</Error>`, http.StatusText(status), err.Error())
-
-	w.Write([]byte(errorResponse))
-}
-
 // getClientIP extracts client IP from X-Forwarded-For header or request
 func (h *Handler) getClientIP(xForwardedFor string) string {
 	if xForwardedFor != "" {
@@ -312,104 +249,7 @@ func noBucketMatcher(r *http.Request, rm *mux.RouteMatch) bool {
 	return r.URL.Path == "/"
 }
 
-<<<<<<< Updated upstream
 // isClientDisconnectError checks if an error indicates client disconnection
-=======
-func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	buckets, err := h.storage.ListBuckets(ctx)
-	if err != nil {
-		h.sendError(w, err, http.StatusInternalServerError)
-		return
-	}
-
-	type bucket struct {
-		Name         string `xml:"Name"`
-		CreationDate string `xml:"CreationDate"`
-	}
-
-	type listAllMyBucketsResult struct {
-		XMLName xml.Name `xml:"ListAllMyBucketsResult"`
-		Owner   struct {
-			ID          string `xml:"ID"`
-			DisplayName string `xml:"DisplayName"`
-		} `xml:"Owner"`
-		Buckets struct {
-			Bucket []bucket `xml:"Bucket"`
-		} `xml:"Buckets"`
-	}
-
-	result := listAllMyBucketsResult{}
-	result.Owner.ID = "foundation-storage-engine"
-	result.Owner.DisplayName = "foundation-storage-engine"
-
-	for _, b := range buckets {
-		result.Buckets.Bucket = append(result.Buckets.Bucket, bucket{
-			Name:         b.Name,
-			CreationDate: b.CreationDate.Format(time.RFC3339),
-		})
-	}
-
-	w.Header().Set("Content-Type", "application/xml")
-	enc := xml.NewEncoder(w)
-	enc.Indent("", "  ")
-	if err := enc.Encode(result); err != nil {
-		logrus.WithError(err).Error("Failed to encode response")
-	}
-}
-
-func (h *Handler) handleBucket(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
-
-	// Debug mc client requests
-	userAgent := r.Header.Get("User-Agent")
-	if strings.Contains(strings.ToLower(userAgent), "minio") || strings.Contains(strings.ToLower(userAgent), "mc") {
-		logrus.WithFields(logrus.Fields{
-			"method":    r.Method,
-			"bucket":    bucket,
-			"path":      r.URL.Path,
-			"rawPath":   r.URL.RawPath,
-			"userAgent": userAgent,
-		}).Info("MC client bucket request")
-
-		if !h.isValidBucket(bucket) {
-			logrus.WithField("bucket", bucket).Info("MC trying to access non-existent bucket")
-			h.sendError(w, fmt.Errorf("bucket not found"), http.StatusNotFound)
-			return
-		}
-	}
-
-	logger := logrus.WithFields(logrus.Fields{
-		"method": r.Method,
-		"bucket": bucket,
-		"remote": r.RemoteAddr,
-	})
-
-	switch r.Method {
-	case "GET":
-		// logger.Debug("Listing objects for bucket")
-		h.listObjects(w, r, bucket)
-	case "PUT":
-		logger.Info("Creating bucket")
-		h.createBucket(w, r, bucket)
-	case "POST":
-		// Check if this is a bulk delete request
-		if _, hasDelete := r.URL.Query()["delete"]; hasDelete {
-			h.handleBulkDelete(w, r, bucket)
-			return
-		}
-		// Handle other POST operations
-		h.sendError(w, fmt.Errorf("operation not supported"), http.StatusNotImplemented)
-	case "DELETE":
-		logger.Info("Deleting bucket")
-		h.deleteBucket(w, r, bucket)
-	case "HEAD":
-		// logger.Debug("Checking bucket existence")
-		h.headBucket(w, r, bucket)
-	}
-}
-
 func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -2056,71 +1896,6 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 }
 
-func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request, bucket string) {
-	ctx := r.Context()
-
-	// Check if user is admin
-	isAdmin, _ := ctx.Value("is_admin").(bool)
-	if !isAdmin {
-		logrus.WithFields(logrus.Fields{
-			"user_sub":  ctx.Value("user_sub"),
-			"bucket":    bucket,
-			"operation": "CreateBucket",
-		}).Warn("Non-admin user attempted to create bucket")
-		h.sendError(w, fmt.Errorf("access denied: admin privileges required"), http.StatusForbidden)
-		return
-	}
-
-	err := h.storage.CreateBucket(ctx, bucket)
-	if err != nil {
-		h.sendError(w, err, http.StatusConflict)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, bucket string) {
-	ctx := r.Context()
-
-	// Check if user is admin
-	isAdmin, _ := ctx.Value("is_admin").(bool)
-	if !isAdmin {
-		logrus.WithFields(logrus.Fields{
-			"user_sub":  ctx.Value("user_sub"),
-			"bucket":    bucket,
-			"operation": "DeleteBucket",
-		}).Warn("Non-admin user attempted to delete bucket")
-		h.sendError(w, fmt.Errorf("access denied: admin privileges required"), http.StatusForbidden)
-		return
-	}
-
-	err := h.storage.DeleteBucket(ctx, bucket)
-	if err != nil {
-		h.sendError(w, err, http.StatusConflict)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) headBucket(w http.ResponseWriter, r *http.Request, bucket string) {
-	ctx := r.Context()
-
-	exists, err := h.storage.BucketExists(ctx, bucket)
-	if err != nil {
-		h.sendError(w, err, http.StatusInternalServerError)
-		return
-	}
-
-	if !exists {
-		h.sendError(w, fmt.Errorf("bucket not found"), http.StatusNotFound)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
 func (h *Handler) sendError(w http.ResponseWriter, err error, status int) {
 
 	type errorResponse struct {
@@ -2659,23 +2434,15 @@ func (h *Handler) putObjectACL(w http.ResponseWriter, r *http.Request, bucket, k
 	w.WriteHeader(http.StatusOK)
 }
 
-// isClientDisconnectError checks if error is due to client disconnect
->>>>>>> Stashed changes
 func isClientDisconnectError(err error) bool {
 	if err == nil {
 		return false
 	}
-<<<<<<< Updated upstream
-
-	errStr := err.Error()
-	return strings.Contains(errStr, "connection reset by peer") ||
-		strings.Contains(errStr, "broken pipe") ||
-		strings.Contains(errStr, "client disconnected") ||
-		strings.Contains(errStr, "connection refused")
-=======
 	errStr := err.Error()
 	return strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "connection reset by peer") ||
 		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "client disconnected") ||
+		strings.Contains(errStr, "connection refused") ||
 		strings.Contains(errStr, "write: connection refused")
->>>>>>> Stashed changes
 }
