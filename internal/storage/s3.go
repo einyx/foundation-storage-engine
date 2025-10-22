@@ -99,16 +99,16 @@ func (c *chunkedDecodingReader) Close() error {
 }
 
 type S3Backend struct {
-	defaultClient   *s3.S3                          // Default S3 client
-	clients         map[string]*s3.S3               // Per-region S3 clients
-	sessions        map[string]*session.Session     // Per-region sessions
-	config          *config.S3StorageConfig         // Keep reference to config
-	bucketMapping   map[string]string               // Simple virtual to real bucket mapping
-	bucketConfigs   map[string]*config.BucketConfig // Per-bucket configuration
-	bufferPool      sync.Pool
-	largeBufferPool sync.Pool
-	metadataCache   *MetadataCache
-	mu              sync.RWMutex // Protect client creation
+	defaultClient               *s3.S3                          // Default S3 client
+	clients                     map[string]*s3.S3               // Per-region S3 clients
+	sessions                    map[string]*session.Session     // Per-region sessions
+	config                      *config.S3StorageConfig         // Keep reference to config
+	bucketMapping               map[string]string               // Simple virtual to real bucket mapping
+	bucketConfigs               map[string]*config.BucketConfig // Per-bucket configuration
+	bufferPool                  sync.Pool
+	largeBufferPool             sync.Pool
+	metadataCache               *MetadataCache
+	mu                          sync.RWMutex // Protect client creation
 	problematicServers          map[string]*serverStatus
 	serverMu                    sync.RWMutex
 	defaultMultipartConcurrency int
@@ -1609,7 +1609,6 @@ func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realB
 
 	// Result collector goroutine
 	parts := make(map[int64]*s3.CompletedPart)
-	var uploadErr error
 
 	go func() {
 		wg.Wait()

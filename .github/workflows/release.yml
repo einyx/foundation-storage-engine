@@ -2,13 +2,12 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: write
   packages: write
-  issues: write
-  pull-requests: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -16,36 +15,73 @@ concurrency:
 
 jobs:
   release:
-    runs-on: self-hosted
-    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Go
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.24.3'
 
-      - name: Test
+      - name: Run unit tests
         run: go test ./...
 
-      - name: Generate version
+      - name: Determine next version
         id: version
+        shell: bash
         run: |
-          timestamp=$(date +%Y%m%d%H%M%S)
-          short_sha=$(git rev-parse --short HEAD)
-          version="v0.0.${timestamp}-${short_sha}"
-          echo "tag=${version}" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          git fetch --tags --force
 
-      - name: Create tag
+          current_tag=$(git tag --points-at HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' | head -n1 || true)
+          if [[ -n "${current_tag}" ]]; then
+            echo "tag=${current_tag}" >> "$GITHUB_OUTPUT"
+            echo "create=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          latest_tag=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1 || true)
+          if [[ -z "${latest_tag}" ]]; then
+            next_tag="v0.0.0"
+          else
+            version="${latest_tag#v}"
+            IFS='.' read -r major minor patch <<< "${version}"
+            next_tag="v${major}.${minor}.$((patch + 1))"
+          fi
+
+          echo "tag=${next_tag}" >> "$GITHUB_OUTPUT"
+          echo "create=true" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Git author
+        if: steps.version.outputs.create == 'true'
         run: |
-          git tag ${{ steps.version.outputs.tag }}
-          git push origin ${{ steps.version.outputs.tag }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create annotated tag
+        if: steps.version.outputs.create == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: git tag -a "$TAG" -m "Release $TAG"
+
+      - name: Push tag
+        if: steps.version.outputs.create == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: git push origin "$TAG"
+
+      - name: Generate changelog
+        if: steps.version.outputs.create == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: ./scripts/generate-changelog.sh "$TAG"
 
       - name: Run GoReleaser
+        if: steps.version.outputs.create == 'true'
         uses: goreleaser/goreleaser-action@v5
         with:
           distribution: goreleaser
@@ -53,8 +89,10 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ steps.version.outputs.tag }}
 
       - name: Trigger Debian Mirror Update
+        if: steps.version.outputs.create == 'true'
         uses: peter-evans/repository-dispatch@v3
         with:
           event-type: update-debian-mirror
