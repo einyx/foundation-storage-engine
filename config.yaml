@@ -1,0 +1,44 @@
+# Foundation Storage Engine Configuration
+storage:
+  provider: filesystem
+  filesystem:
+    base_dir: "/data"
+    bucket_mapping:
+      warehouse: warehouse
+      samples: samples
+      connectors: connectors
+      spark: spark
+      ray: ray
+      schemas: schemas
+      vault: vault
+
+# SECURITY WARNING: This is a development configuration file
+auth:
+  type: awsv4
+  # DEVELOPMENT ONLY - replace with secure credentials in production
+  # Use environment variables: AUTH_IDENTITY and AUTH_CREDENTIAL
+  identity: ${AUTH_IDENTITY}
+  credential: ${AUTH_CREDENTIAL}
+
+# OPA Configuration (disabled by default, enable via environment variables)
+opa:
+  enabled: false
+  url: "http://localhost:8181"
+  timeout: "5s"
+
+server:
+  listen: ":8080"
+
+logging:
+  level: info
+  format: json
+
+rate_limit:
+  enabled: false
+
+tls:
+  enabled: false
+
+ui:
+  enabled: true
+  base_path: "/ui"
