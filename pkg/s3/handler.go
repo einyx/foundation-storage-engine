@@ -3,6 +3,7 @@ package s3
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
 	"net/http"
 	"strings"
@@ -222,20 +223,6 @@ func (h *Handler) isValidBucket(bucket string) bool {
 	return exists
 }
 
-// sendError sends a structured error response
-func (h *Handler) sendError(w http.ResponseWriter, err error, status int) {
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(status)
-
-	errorResponse := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-	<Code>%s</Code>
-	<Message>%s</Message>
-</Error>`, http.StatusText(status), err.Error())
-
-	w.Write([]byte(errorResponse))
-}
-
 // getClientIP extracts client IP from X-Forwarded-For header or request
 func (h *Handler) getClientIP(xForwardedFor string) string {
 	if xForwardedFor != "" {
@@ -263,15 +250,51 @@ func noBucketMatcher(r *http.Request, rm *mux.RouteMatch) bool {
 	return r.URL.Path == "/"
 }
 
-// isClientDisconnectError checks if an error indicates client disconnection
+// sendError sends a structured error response in S3-compatible XML format.
+func (h *Handler) sendError(w http.ResponseWriter, err error, status int) {
+	type errorResponse struct {
+		XMLName xml.Name `xml:"Error"`
+		Code    string   `xml:"Code"`
+		Message string   `xml:"Message"`
+	}
+
+	code := "InternalError"
+	switch status {
+	case http.StatusNotFound:
+		code = "NoSuchKey"
+	case http.StatusConflict:
+		code = "BucketAlreadyExists"
+	case http.StatusBadRequest:
+		code = "BadRequest"
+	case http.StatusForbidden:
+		code = "AccessDenied"
+	case http.StatusUnauthorized:
+		code = "SignatureDoesNotMatch"
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(status)
+
+	enc := xml.NewEncoder(w)
+	enc.Indent("", "  ")
+	if encErr := enc.Encode(errorResponse{
+		Code:    code,
+		Message: err.Error(),
+	}); encErr != nil {
+		logrus.WithError(encErr).Error("Failed to encode error response")
+	}
+}
+
+// isClientDisconnectError checks if error is due to client disconnect.
 func isClientDisconnectError(err error) bool {
 	if err == nil {
 		return false
 	}
-
 	errStr := err.Error()
-	return strings.Contains(errStr, "connection reset by peer") ||
-		strings.Contains(errStr, "broken pipe") ||
+	return strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "connection reset by peer") ||
+		strings.Contains(errStr, "connection reset") ||
 		strings.Contains(errStr, "client disconnected") ||
-		strings.Contains(errStr, "connection refused")
+		strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "write: connection refused")
 }

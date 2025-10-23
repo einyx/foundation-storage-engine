@@ -71,6 +71,13 @@ func NewProvider(cfg config.AuthConfig) (Provider, error) {
 			credential: cfg.Credential,
 		}, nil
 	case "awsv4":
+		if cfg.Vault != nil && cfg.Vault.Enabled {
+			provider, err := NewVaultAWSV4Provider(cfg)
+			if err != nil {
+				return nil, err
+			}
+			return provider, nil
+		}
 		// Allow empty credentials - they can be set later via API
 		// Debug logging to see what credentials we got
 		fmt.Printf("DEBUG: Creating AWSV4Provider with identity='%s', credential='[REDACTED]'\n", maskCredential(cfg.Identity))
@@ -218,15 +225,15 @@ func (p *AWSV4Provider) Authenticate(r *http.Request) error {
 	if p.identity == "" || p.credential == "" {
 		return fmt.Errorf("no fallback credentials configured - use API keys")
 	}
-	
+
 	// Allow browser access to fallback credentials (less secure but more convenient)
 	// Note: In production, consider using proper Auth0 or API key authentication instead
 
 	// DEBUG: Log ALL headers to find the issue
 	logrus.WithFields(logrus.Fields{
 		"all_headers": r.Header,
-		"method": r.Method,
-		"url": r.URL.String(),
+		"method":      r.Method,
+		"url":         r.URL.String(),
 	}).Info("AWSV4Provider: ALL HEADERS DEBUG")
 
 	authHeader := r.Header.Get("Authorization")
@@ -286,9 +293,9 @@ func (p *AWSV4Provider) Authenticate(r *http.Request) error {
 	if canonicalURI == "" {
 		canonicalURI = "/"
 	}
-	
+
 	canonicalQueryString := r.URL.Query().Encode()
-	
+
 	// Build canonical headers
 	canonicalHeaders := ""
 	signedHeadersList := strings.Split(signedHeaders, ";")
@@ -299,13 +306,13 @@ func (p *AWSV4Provider) Authenticate(r *http.Request) error {
 			if originalHost := r.Header.Get("X-Forwarded-Host"); originalHost != "" {
 				value = originalHost
 				logrus.WithFields(logrus.Fields{
-					"original_host": r.Host,
+					"original_host":  r.Host,
 					"forwarded_host": originalHost,
 				}).Debug("Using X-Forwarded-Host for signature validation")
 			} else if originalHost := r.Header.Get("X-Original-Host"); originalHost != "" {
 				value = originalHost
 				logrus.WithFields(logrus.Fields{
-					"original_host": r.Host,
+					"original_host":   r.Host,
 					"x_original_host": originalHost,
 				}).Debug("Using X-Original-Host for signature validation")
 			} else {
@@ -345,7 +352,7 @@ func (p *AWSV4Provider) Authenticate(r *http.Request) error {
 
 	// Calculate signing key
 	signingKey := getSigningKey(p.credential, dateStr, region, service)
-	
+
 	// Calculate signature
 	h := hmac.New(sha256.New, signingKey)
 	h.Write([]byte(stringToSign))
@@ -362,21 +369,21 @@ func (p *AWSV4Provider) Authenticate(r *http.Request) error {
 		if len(providedTrunc) > 16 {
 			providedTrunc = providedTrunc[:16] + "..."
 		}
-		
+
 		logrus.WithFields(logrus.Fields{
-			"access_key": accessKey,
+			"access_key":         accessKey,
 			"expected_signature": expectedTrunc,
 			"provided_signature": providedTrunc,
-			"method": r.Method,
-			"path": r.URL.Path,
+			"method":             r.Method,
+			"path":               r.URL.Path,
 		}).Error("AWS Signature V4 validation failed")
 		return fmt.Errorf("signature mismatch")
 	}
 
 	logrus.WithFields(logrus.Fields{
 		"access_key": accessKey,
-		"method": r.Method,
-		"path": r.URL.Path,
+		"method":     r.Method,
+		"path":       r.URL.Path,
 	}).Debug("AWS Signature V4 authentication successful")
 
 	return nil
@@ -387,7 +394,7 @@ func (p *AWSV4Provider) GetSecretKey(accessKey string) (string, error) {
 	if p.identity == "" || p.credential == "" {
 		return "", fmt.Errorf("no fallback credentials configured - use API keys")
 	}
-	
+
 	if accessKey == p.identity {
 		return p.credential, nil
 	}

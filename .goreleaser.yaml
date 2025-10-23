@@ -44,6 +44,7 @@ archives:
       - README.md
       - LICENSE*
       - .env.example
+      - CHANGELOG.md
 
 checksum:
   name_template: 'checksums.txt'
