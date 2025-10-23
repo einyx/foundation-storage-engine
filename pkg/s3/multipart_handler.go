@@ -117,8 +117,8 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key
 	if size < 0 {
 		data, readErr := io.ReadAll(partReader)
 		if readErr != nil {
-			logger.WithError(readErr).Error("Failed to buffer part data with unknown size")
-			h.sendError(w, fmt.Errorf("failed to read part data: %w", readErr), http.StatusBadRequest)
+			logger.WithError(readErr).Error("Put - Multi Failed to buffer part data with unknown size")
+			h.sendError(w, fmt.Errorf("Put Multi - failed to read part data: %w", readErr), http.StatusBadRequest)
 			return
 		}
 		size = int64(len(data))

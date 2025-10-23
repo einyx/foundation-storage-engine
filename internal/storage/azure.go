@@ -1293,7 +1293,7 @@ func (a *AzureBackend) UploadPart(ctx context.Context, bucket, key, uploadID str
 	// Buffer the data for Azure SDK (required for ReadSeeker interface)
 	data, err := io.ReadAll(io.LimitReader(reader, size))
 	if err != nil {
-		return "", fmt.Errorf("failed to read part data: %w", err)
+		return "", fmt.Errorf("Put Bufferdata - failed to read part data: %w", err)
 	}
 
 	if int64(len(data)) != size {
