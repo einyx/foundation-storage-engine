@@ -45,7 +45,9 @@ func NewVaultAWSV4Provider(cfg config.AuthConfig) (Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	client.SetToken(token)
+	if token != "" {
+		client.SetToken(token)
+	}
 
 	provider := &vaultAWSV4Provider{
 		cfg:             *cfg.Vault,
@@ -57,11 +59,13 @@ func NewVaultAWSV4Provider(cfg config.AuthConfig) (Provider, error) {
 		credential:      cfg.Credential,
 	}
 
-	if err := provider.refreshCredentials(); err != nil {
-		if provider.identity == "" || provider.credential == "" {
-			return nil, err
+	if token != "" {
+		if err := provider.refreshCredentials(); err != nil {
+			if provider.identity == "" || provider.credential == "" {
+				return nil, err
+			}
+			provider.logger.WithError(err).Warn("failed to load credentials from Vault, falling back to static credentials")
 		}
-		provider.logger.WithError(err).Warn("failed to load credentials from Vault, falling back to static credentials")
 	}
 
 	if provider.refreshInterval > 0 {
@@ -79,11 +83,14 @@ func resolveVaultToken(cfg *config.VaultAuthConfig) (string, error) {
 	if cfg.TokenFile != "" {
 		data, err := os.ReadFile(cfg.TokenFile)
 		if err != nil {
+			if os.IsNotExist(err) {
+				return "", nil
+			}
 			return "", fmt.Errorf("failed to read Vault token file: %w", err)
 		}
 		token := strings.TrimSpace(string(data))
 		if token == "" {
-			return "", fmt.Errorf("Vault token file is empty")
+			return "", fmt.Errorf("vault token file is empty")
 		}
 		return token, nil
 	}
@@ -92,7 +99,7 @@ func resolveVaultToken(cfg *config.VaultAuthConfig) (string, error) {
 		return token, nil
 	}
 
-	return "", fmt.Errorf("vault token not provided")
+	return "", nil
 }
 
 func (p *vaultAWSV4Provider) refreshLoop() {
@@ -100,6 +107,9 @@ func (p *vaultAWSV4Provider) refreshLoop() {
 	defer ticker.Stop()
 
 	for range ticker.C {
+		if p.client.Token() == "" {
+			continue
+		}
 		if err := p.refreshCredentials(); err != nil {
 			p.logger.WithError(err).Warn("failed to refresh credentials from Vault")
 		}
