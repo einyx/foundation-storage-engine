@@ -22,6 +22,11 @@ const mockUploadID = "test-upload-id-123456"
 // Mock storage backend for testing
 type mockStorage struct{}
 
+type zeroRangeStorage struct {
+	*mockStorage
+	rangeCalled bool
+}
+
 func (m *mockStorage) ListBuckets(ctx context.Context) ([]storage.BucketInfo, error) {
 	return []storage.BucketInfo{
 		{Name: "warehouse", CreationDate: time.Now()},
@@ -77,7 +82,26 @@ func (m *mockStorage) GetObject(ctx context.Context, bucket, key string) (*stora
 		Body:         io.NopCloser(strings.NewReader("test data")),
 		ContentType:  "text/plain",
 		Size:         9,
-		ETag:         "test-etag",
+		ETag:         "d41d8cd98f00b204e9800998ecf8427e",
+		LastModified: time.Now(),
+		Metadata:     make(map[string]string),
+	}, nil
+}
+
+func (m *mockStorage) GetObjectRange(ctx context.Context, bucket, key string, start, end int64) (*storage.Object, error) {
+	testData := "test data"
+	if start >= int64(len(testData)) {
+		return nil, fmt.Errorf("range start %d exceeds data size %d", start, len(testData))
+	}
+	if end >= int64(len(testData)) {
+		end = int64(len(testData)) - 1
+	}
+	rangeData := testData[start : end+1]
+	return &storage.Object{
+		Body:         io.NopCloser(strings.NewReader(rangeData)),
+		ContentType:  "text/plain",
+		Size:         int64(len(rangeData)),
+		ETag:         "d41d8cd98f00b204e9800998ecf8427e",
 		LastModified: time.Now(),
 		Metadata:     make(map[string]string),
 	}, nil
@@ -98,11 +122,26 @@ func (m *mockStorage) RestoreObject(ctx context.Context, bucket, key, versionID 
 func (m *mockStorage) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectInfo, error) {
 	return &storage.ObjectInfo{
 		Size:         100,
-		ETag:         "test-etag",
+		ETag:         "d41d8cd98f00b204e9800998ecf8427e",
 		LastModified: time.Now(),
 		ContentType:  "text/plain",
 		Metadata:     make(map[string]string),
 	}, nil
+}
+
+func (z *zeroRangeStorage) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectInfo, error) {
+	return &storage.ObjectInfo{
+		Size:         0,
+		ETag:         "empty-etag",
+		LastModified: time.Now(),
+		ContentType:  "text/plain",
+		Metadata:     make(map[string]string),
+	}, nil
+}
+
+func (z *zeroRangeStorage) GetObjectRange(ctx context.Context, bucket, key string, start, end int64) (*storage.Object, error) {
+	z.rangeCalled = true
+	return nil, fmt.Errorf("GetObjectRange should not be called for zero-length objects")
 }
 
 func (m *mockStorage) GetObjectACL(ctx context.Context, bucket, key string) (*storage.ACL, error) {
@@ -133,7 +172,7 @@ func (m *mockStorage) InitiateMultipartUpload(ctx context.Context, bucket, key s
 }
 
 func (m *mockStorage) UploadPart(ctx context.Context, bucket, key, uploadID string, partNumber int, reader io.Reader, size int64) (string, error) {
-	return fmt.Sprintf("\"part-%d-etag\"", partNumber), nil
+	return fmt.Sprintf("\"d41d8cd98f00b204e9800998ecf8427e-%d\"", partNumber), nil
 }
 
 func (m *mockStorage) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []storage.CompletedPart) error {
@@ -506,6 +545,42 @@ func TestResponseHeaderOptimizations(t *testing.T) {
 			t.Errorf("Expected status 200, got %d", w.Code)
 		}
 	})
+}
+
+func TestHandleObject_GetRangeZeroLength(t *testing.T) {
+	storage := &zeroRangeStorage{mockStorage: &mockStorage{}}
+	handler := NewHandler(storage, &mockAuth{}, config.S3Config{}, config.ChunkingConfig{})
+
+	req := httptest.NewRequest("GET", "/test-bucket/empty.txt", nil)
+	req.Header.Set("Range", "bytes=-10")
+	req = createAdminContext(req)
+	req = mux.SetURLVars(req, map[string]string{
+		"bucket": "test-bucket",
+		"key":    "empty.txt",
+	})
+
+	w := httptest.NewRecorder()
+	handler.handleObject(w, req)
+
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("expected status %d, got %d", http.StatusPartialContent, w.Code)
+	}
+
+	if got := w.Header().Get("Content-Length"); got != "0" {
+		t.Fatalf("expected Content-Length 0, got %q", got)
+	}
+
+	if bodyLen := w.Body.Len(); bodyLen != 0 {
+		t.Fatalf("expected empty body, got %d bytes", bodyLen)
+	}
+
+	if storage.rangeCalled {
+		t.Fatal("expected GetObjectRange not to be called")
+	}
+
+	if got := w.Header().Get("Content-Range"); got == "" {
+		t.Fatal("expected Content-Range header to be set")
+	}
 }
 
 func TestS3Package(t *testing.T) {

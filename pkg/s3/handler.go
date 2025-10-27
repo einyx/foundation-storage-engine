@@ -296,5 +296,9 @@ func isClientDisconnectError(err error) bool {
 		strings.Contains(errStr, "connection reset") ||
 		strings.Contains(errStr, "client disconnected") ||
 		strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "write: connection refused")
+		strings.Contains(errStr, "write: connection refused") ||
+		strings.Contains(errStr, "premature end") ||
+		strings.Contains(errStr, "Content-Length delimited message body") ||
+		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "connection closed")
 }

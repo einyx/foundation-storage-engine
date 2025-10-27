@@ -200,11 +200,10 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		etag := strings.TrimSpace(p.ETag)
-		etag = strings.Trim(etag, `"`)
-		if etag == "" {
-			logger.WithField("part", p.PartNumber).Error("Missing ETag in completion request")
-			h.sendError(w, fmt.Errorf("missing ETag for part %d", p.PartNumber), http.StatusBadRequest)
+		etag, err := sanitizeETag(p.ETag)
+		if err != nil {
+			logger.WithError(err).WithField("part", p.PartNumber).Error("Invalid ETag in completion request")
+			h.sendError(w, fmt.Errorf("invalid ETag for part %d: %w", p.PartNumber, err), http.StatusBadRequest)
 			return
 		}
 
@@ -239,8 +238,10 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 		logger.WithError(headErr).Warn("HeadObject after multipart completion failed; calculating fallback ETag")
 		hasher := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility
 		for _, part := range completedParts {
-			if partMD5, decodeErr := hex.DecodeString(part.ETag); decodeErr == nil {
+			if partMD5, decodeErr := decodeETagForHashing(part.ETag); decodeErr == nil {
 				hasher.Write(partMD5)
+			} else {
+				logger.WithError(decodeErr).WithField("etag", part.ETag).Warn("Failed to decode ETag for hashing, skipping part")
 			}
 		}
 		finalETag = fmt.Sprintf(`"%s-%d"`, hex.EncodeToString(hasher.Sum(nil)), len(completedParts))

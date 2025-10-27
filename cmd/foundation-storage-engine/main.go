@@ -173,6 +173,10 @@ func run(cmd *cobra.Command, _ []string) error {
 					_ = tcpConn.SetNoDelay(true)
 					_ = tcpConn.SetKeepAlive(true)
 					_ = tcpConn.SetKeepAlivePeriod(tcpKeepAlivePeriod)
+					
+					// Optimize socket buffers for large file transfers
+					_ = tcpConn.SetReadBuffer(2 * 1024 * 1024)  // 2MB read buffer
+					_ = tcpConn.SetWriteBuffer(2 * 1024 * 1024) // 2MB write buffer
 				}
 			}
 		},

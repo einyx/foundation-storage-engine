@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"crypto/md5" //nolint:gosec // MD5 is required for S3 ETag compatibility
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,14 @@ import (
 type FileSystemBackend struct {
 	baseDir    string
 	bufferPool sync.Pool
+}
+
+// generateFileSystemETag creates a valid S3-compatible ETag from file info
+func generateFileSystemETag(info os.FileInfo) string {
+	// Use file path, size, and modification time to generate a unique ETag
+	data := fmt.Sprintf("file_%s_%d_%d", info.Name(), info.Size(), info.ModTime().UnixNano())
+	hash := md5.Sum([]byte(data)) //nolint:gosec // MD5 is required for S3 ETag compatibility
+	return hex.EncodeToString(hash[:])
 }
 
 func validateBucketName(bucket string) error {
@@ -235,7 +245,7 @@ func (fs *FileSystemBackend) ListObjectsWithDelimiter(ctx context.Context, bucke
 			result.Contents = append(result.Contents, ObjectInfo{
 				Key:          key,
 				Size:         info.Size(),
-				ETag:         fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()),
+				ETag:         fmt.Sprintf("\"%s\"", generateFileSystemETag(info)),
 				LastModified: info.ModTime(),
 				ContentType:  contentType,
 				Metadata:     metadata,
@@ -287,7 +297,7 @@ func (fs *FileSystemBackend) GetObject(ctx context.Context, bucket, key string) 
 		Body:         file,
 		ContentType:  contentType,
 		Size:         info.Size(),
-		ETag:         fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()),
+		ETag:         fmt.Sprintf("\"%s\"", generateFileSystemETag(info)),
 		LastModified: info.ModTime(),
 		Metadata:     metadata,
 	}, nil
@@ -342,7 +352,7 @@ func (fs *FileSystemBackend) GetObjectRange(ctx context.Context, bucket, key str
 		Body:         &fileRangeCloser{file: file, reader: limitedReader},
 		ContentType:  contentType,
 		Size:         rangeSize,
-		ETag:         fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()),
+		ETag:         fmt.Sprintf("\"%s\"", generateFileSystemETag(info)),
 		LastModified: info.ModTime(),
 		Metadata:     metadata,
 	}, nil
@@ -570,7 +580,7 @@ func (fs *FileSystemBackend) HeadObject(ctx context.Context, bucket, key string)
 	return &ObjectInfo{
 		Key:          key,
 		Size:         size,
-		ETag:         fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()),
+		ETag:         fmt.Sprintf("\"%s\"", generateFileSystemETag(info)),
 		LastModified: info.ModTime(),
 		ContentType:  contentType,
 		Metadata:     metadata,
@@ -633,12 +643,18 @@ func (fs *FileSystemBackend) UploadPart(ctx context.Context, bucket, key, upload
 	defer fs.bufferPool.Put(bufPtr)
 	buf := *bufPtr
 
-	_, err = io.CopyBuffer(file, reader, buf)
+	// Use MD5 hash calculation during copy for ETag generation
+	hasher := md5.New() //nolint:gosec // MD5 is required for S3 ETag compatibility
+	multiWriter := io.MultiWriter(file, hasher)
+	
+	_, err = io.CopyBuffer(multiWriter, reader, buf)
 	if err != nil {
 		return "", fmt.Errorf("failed to write part data: %w", err)
 	}
 
-	return fmt.Sprintf("\"%d\"", partNumber), nil
+	// Generate S3-compatible MD5 ETag
+	etag := hex.EncodeToString(hasher.Sum(nil))
+	return fmt.Sprintf("\"%s\"", etag), nil
 }
 
 func (fs *FileSystemBackend) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []CompletedPart) error {

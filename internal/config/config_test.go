@@ -324,12 +324,12 @@ func TestServerConfig_Defaults(t *testing.T) {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
 
-	if cfg.Server.ReadTimeout != 0 {
-		t.Errorf("Expected default read timeout 0s (disabled), got %v", cfg.Server.ReadTimeout)
+	if cfg.Server.ReadTimeout != 30*time.Second {
+		t.Errorf("Expected default read timeout 30s, got %v", cfg.Server.ReadTimeout)
 	}
 
-	if cfg.Server.WriteTimeout != 0 {
-		t.Errorf("Expected default write timeout 0s (disabled), got %v", cfg.Server.WriteTimeout)
+	if cfg.Server.WriteTimeout != 5*time.Minute {
+		t.Errorf("Expected default write timeout 5m0s, got %v", cfg.Server.WriteTimeout)
 	}
 
 	if cfg.Server.IdleTimeout != 120*time.Second {

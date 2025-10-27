@@ -1178,25 +1178,28 @@ func (s *S3Backend) UploadPart(ctx context.Context, bucket, key, uploadID string
 			limitedReader = io.LimitReader(reader, size)
 		}
 
-		readCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
-		defer cancel()
+		logrus.WithFields(logrus.Fields{
+			"bucket":     bucket,
+			"key":        key,
+			"partNumber": partNumber,
+			"size":       size,
+		}).Debug("Starting buffered read for part upload")
 
-		readDone := make(chan error, 1)
-		go func() {
-			_, err := buf.ReadFrom(limitedReader)
-			readDone <- err
-		}()
-
-		select {
-		case err := <-readDone:
-			if err != nil && !errors.Is(err, io.EOF) {
-				return "", fmt.Errorf("failed to read part data: %w", err)
-			}
-		case <-readCtx.Done():
-			return "", fmt.Errorf("failed to read part data: %w", readCtx.Err())
+		// Read data into memory buffer without timeout - let the network handle its own timeouts
+		written, err := buf.ReadFrom(limitedReader)
+		if err != nil {
+			return "", fmt.Errorf("failed to read part data: %w", err)
 		}
+		
+		logrus.WithFields(logrus.Fields{
+			"bucket":       bucket,
+			"key":          key,
+			"partNumber":   partNumber,
+			"bytesRead":    written,
+			"expectedSize": size,
+		}).Debug("Buffered read completed successfully")
 
-		actualSize = int64(buf.Len())
+		actualSize = written
 		body = bytes.NewReader(buf.Bytes())
 	}
 

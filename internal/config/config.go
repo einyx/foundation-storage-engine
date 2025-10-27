@@ -31,8 +31,8 @@ type Config struct {
 // ServerConfig contains HTTP server configuration settings
 type ServerConfig struct {
 	Listen       string        `mapstructure:"listen" envconfig:"SERVER_LISTEN" default:":8080"`
-	ReadTimeout  time.Duration `mapstructure:"read_timeout" envconfig:"SERVER_READ_TIMEOUT" default:"0s"`
-	WriteTimeout time.Duration `mapstructure:"write_timeout" envconfig:"SERVER_WRITE_TIMEOUT" default:"0s"`
+	ReadTimeout  time.Duration `mapstructure:"read_timeout" envconfig:"SERVER_READ_TIMEOUT" default:"30s"`
+	WriteTimeout time.Duration `mapstructure:"write_timeout" envconfig:"SERVER_WRITE_TIMEOUT" default:"300s"`
 	IdleTimeout  time.Duration `mapstructure:"idle_timeout" envconfig:"SERVER_IDLE_TIMEOUT" default:"120s"`
 	MaxBodySize  int64         `mapstructure:"max_body_size" envconfig:"SERVER_MAX_BODY_SIZE" default:"5368709120"` // 5GB
 }

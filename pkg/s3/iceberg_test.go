@@ -460,7 +460,7 @@ func TestIcebergMultipartUploadOptimizations(t *testing.T) {
 
 		// Should return part ETag
 		etag := w.Header().Get("ETag")
-		if !strings.Contains(etag, "part-1-etag") {
+		if !strings.Contains(etag, "d41d8cd98f00b204e9800998ecf8427e-1") {
 			t.Errorf("Expected part ETag, got %s", etag)
 		}
 	})

@@ -40,6 +40,13 @@ func (m *errorMockStorage) GetObject(ctx context.Context, bucket, key string) (*
 	return m.mockStorage.GetObject(ctx, bucket, key)
 }
 
+func (m *errorMockStorage) GetObjectRange(ctx context.Context, bucket, key string, start, end int64) (*storage.Object, error) {
+	if err, exists := m.simulateErrors["GetObjectRange"]; exists {
+		return nil, err
+	}
+	return m.mockStorage.GetObjectRange(ctx, bucket, key, start, end)
+}
+
 func (m *errorMockStorage) PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64, metadata map[string]string) error {
 	if err, exists := m.simulateErrors["PutObject"]; exists {
 		return err
@@ -483,6 +490,10 @@ type panicMockStorage struct{}
 
 func (m *panicMockStorage) GetObject(ctx context.Context, bucket, key string) (*storage.Object, error) {
 	panic("simulated panic in GetObject")
+}
+
+func (m *panicMockStorage) GetObjectRange(ctx context.Context, bucket, key string, start, end int64) (*storage.Object, error) {
+	panic("simulated panic in GetObjectRange")
 }
 
 func (m *panicMockStorage) PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64, metadata map[string]string) error {

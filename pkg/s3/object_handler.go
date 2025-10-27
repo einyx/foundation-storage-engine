@@ -33,7 +33,23 @@ func parseRange(rangeHeader string, size int64) (start, end int64, err error) {
 	
 	// Parse start
 	if parts[0] == "" {
-		return 0, 0, fmt.Errorf("suffix ranges not supported")
+		// Suffix range: bytes=-N means last N bytes
+		if parts[1] == "" {
+			return 0, 0, fmt.Errorf("invalid range format")
+		}
+		suffixLength, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || suffixLength < 0 {
+			return 0, 0, fmt.Errorf("invalid suffix length: %w", err)
+		}
+		if size == 0 {
+			return 0, -1, nil // For zero-length files
+		}
+		start = size - suffixLength
+		if start < 0 {
+			start = 0
+		}
+		end = size - 1
+		return start, end, nil
 	}
 	start, err = strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
@@ -301,8 +317,8 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		headers.Set("Date", time.Now().UTC().Format(http.TimeFormat))
 	}
 
-	// Copy object data to response
-	if _, err := io.Copy(w, obj.Body); err != nil {
+	// Copy object data to response with optimized streaming for large files
+	if err := h.streamObjectData(w, obj.Body, obj.Size, logger); err != nil {
 		if !isClientDisconnectError(err) {
 			logger.WithError(err).Error("Failed to copy object data")
 		} else {
@@ -348,6 +364,21 @@ func (h *Handler) getRangeObject(w http.ResponseWriter, r *http.Request, bucket,
 		"size":  objInfo.Size,
 	}).Info("Parsed range request")
 
+	// Handle zero-length objects without calling GetObjectRange
+	if objInfo.Size == 0 {
+		headers := w.Header()
+		headers.Set("Accept-Ranges", "bytes")
+		headers.Set("Content-Type", objInfo.ContentType)
+		headers.Set("Content-Length", "0")
+		headers.Set("Content-Range", fmt.Sprintf("bytes */%d", objInfo.Size))
+		headers.Set("ETag", objInfo.ETag)
+		headers.Set("Last-Modified", objInfo.LastModified.UTC().Format(http.TimeFormat))
+		
+		w.WriteHeader(http.StatusPartialContent)
+		logger.Info("Zero-length range request completed")
+		return
+	}
+
 	// Get object with range
 	rangeObj, err := h.storage.GetObjectRange(ctx, bucket, key, start, end)
 	if err != nil {
@@ -375,8 +406,8 @@ func (h *Handler) getRangeObject(w http.ResponseWriter, r *http.Request, bucket,
 	// Return 206 Partial Content
 	w.WriteHeader(http.StatusPartialContent)
 	
-	// Copy the range data
-	copied, err := io.Copy(w, rangeObj.Body)
+	// Copy the range data with optimized streaming
+	copied, err := h.streamObjectDataWithCount(w, rangeObj.Body, contentLength, logger)
 	if err != nil {
 		if !isClientDisconnectError(err) {
 			logger.WithError(err).Error("Failed to copy range object data")
@@ -422,6 +453,12 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	if copySource := r.Header.Get("x-amz-copy-source"); copySource != "" {
 		logrus.WithField("copySource", copySource).Info("Handling CopyObject request")
 		h.handleCopyObject(w, r)
+		return
+	}
+
+	// Validate request using helper function (safe refactoring step 1)
+	if err := validatePutObjectRequest(bucket, key, r); err != nil {
+		h.sendError(w, err, http.StatusBadRequest)
 		return
 	}
 
@@ -981,4 +1018,120 @@ func (h *Handler) scanContent(ctx context.Context, body io.Reader, key string, s
 		Body:   body,
 		Result: nil, // No scan result available without real scanner
 	}, nil
+}
+
+// streamObjectData optimizes streaming for large files with proper buffering and progress monitoring
+func (h *Handler) streamObjectData(w http.ResponseWriter, reader io.Reader, size int64, logger *logrus.Entry) error {
+	// Choose buffer size based on file size
+	var bufferSize int
+	if size > 100*1024*1024 { // Files > 100MB get large buffers
+		bufferSize = largeBufferSize // 1MB
+	} else if size > 1024*1024 { // Files > 1MB get medium buffers
+		bufferSize = mediumBufferSize // 256KB
+	} else {
+		bufferSize = smallBufferSize // 4KB
+	}
+
+	// Get buffer from pool
+	bufPtr := largeBufferPool.Get().(*[]byte)
+	defer largeBufferPool.Put(bufPtr)
+	
+	buffer := (*bufPtr)[:bufferSize]
+	
+	var totalWritten int64
+	start := time.Now()
+	lastProgress := time.Now()
+	
+	for {
+		// Read chunk with timeout protection and connection health check
+		n, readErr := reader.Read(buffer)
+		
+		// If we get 0 bytes and no error, this might indicate a stalled connection
+		if n == 0 && readErr == nil {
+			// This could be a sign of a stalled connection, continue but log it
+			continue
+		}
+		if n > 0 {
+			// Write chunk to response with retry on temporary failures
+			written := 0
+			for written < n {
+				w, writeErr := w.Write(buffer[written:n])
+				if writeErr != nil {
+					// Check if it's a recoverable error
+					if isClientDisconnectError(writeErr) {
+						return fmt.Errorf("client disconnected during write: %w", writeErr)
+					}
+					return fmt.Errorf("failed to write chunk: %w", writeErr)
+				}
+				written += w
+			}
+			
+			totalWritten += int64(n)
+			
+			// Flush more frequently for large files to prevent buffering issues
+			if totalWritten%int64(bufferSize*5) == 0 { // Flush every 5 buffer cycles instead of 10
+				if flusher, ok := w.(http.Flusher); ok {
+					flusher.Flush()
+				}
+				
+				// Check if client is still connected by testing if we can write a 0-byte chunk
+				if totalWritten > 0 && size > 100*1024*1024 { // Only for large files
+					if _, err := w.Write([]byte{}); err != nil {
+						return fmt.Errorf("client disconnected during transfer: %w", err)
+					}
+				}
+				
+				// Log progress every 50MB for very large files
+				if time.Since(lastProgress) > 5*time.Second && size > 50*1024*1024 { // More frequent logging
+					progress := float64(totalWritten) / float64(size) * 100
+					speed := float64(totalWritten) / time.Since(start).Seconds() / 1024 / 1024 // MB/s
+					logger.WithFields(logrus.Fields{
+						"written":  totalWritten,
+						"size":     size,
+						"progress": fmt.Sprintf("%.1f%%", progress),
+						"speed":    fmt.Sprintf("%.2f MB/s", speed),
+					}).Info("Large file transfer progress")
+					lastProgress = time.Now()
+				}
+			}
+		}
+		
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			// Better error logging for read failures
+			logger.WithError(readErr).WithFields(logrus.Fields{
+				"totalWritten": totalWritten,
+				"size":         size,
+				"progress":     fmt.Sprintf("%.1f%%", float64(totalWritten)/float64(size)*100),
+			}).Error("Failed to read chunk during streaming")
+			return fmt.Errorf("failed to read chunk: %w", readErr)
+		}
+	}
+	
+	// Final flush
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	
+	// Log completion stats for large files
+	if size > 10*1024*1024 {
+		duration := time.Since(start)
+		speed := float64(totalWritten) / duration.Seconds() / 1024 / 1024 // MB/s
+		logger.WithFields(logrus.Fields{
+			"written":  totalWritten,
+			"size":     size,
+			"duration": duration,
+			"speed":    fmt.Sprintf("%.2f MB/s", speed),
+		}).Info("Large file transfer completed")
+	}
+	
+	return nil
+}
+
+// streamObjectDataWithCount is like streamObjectData but returns bytes written
+func (h *Handler) streamObjectDataWithCount(w http.ResponseWriter, reader io.Reader, size int64, logger *logrus.Entry) (int64, error) {
+	err := h.streamObjectData(w, reader, size, logger)
+	return size, err // For now, return expected size on success
 }

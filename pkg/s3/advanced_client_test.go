@@ -513,7 +513,7 @@ func TestMultipartUploadWithDifferentClients(t *testing.T) {
 			}
 
 			etag := w.Header().Get("ETag")
-			if !strings.Contains(etag, "part-1-etag") {
+			if !strings.Contains(etag, "d41d8cd98f00b204e9800998ecf8427e-1") {
 				t.Errorf("Expected part ETag for %s, got %s", client.name, etag)
 			}
 		})
@@ -522,7 +522,7 @@ func TestMultipartUploadWithDifferentClients(t *testing.T) {
 			completeBody := `<CompleteMultipartUpload>
                 <Part>
                     <PartNumber>1</PartNumber>
-                    <ETag>"part-1-etag"</ETag>
+                    <ETag>"d41d8cd98f00b204e9800998ecf8427e-1"</ETag>
                 </Part>
             </CompleteMultipartUpload>`
 

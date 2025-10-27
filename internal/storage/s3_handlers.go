@@ -2,6 +2,8 @@ package storage
 
 import (
 	"bytes"
+	"crypto/md5" //nolint:gosec // MD5 is required for S3 ETag compatibility
+	"encoding/hex"
 	"fmt"
 	"io"
 	"strings"
@@ -12,6 +14,14 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/sirupsen/logrus"
 )
+
+// generateValidETag creates a valid S3-compatible ETag using MD5 hash
+func generateValidETag() string {
+	// Use current time and a fixed string to generate a unique but deterministic ETag
+	data := fmt.Sprintf("etag_%d", time.Now().UnixNano())
+	hash := md5.Sum([]byte(data)) //nolint:gosec // MD5 is required for S3 ETag compatibility
+	return hex.EncodeToString(hash[:])
+}
 
 // addCustomHandlers adds custom request handlers to fix known S3 compatibility issues
 func addCustomHandlers(client *s3.S3) {
@@ -54,8 +64,8 @@ func addCopyObjectResponseFixer(client *s3.S3) {
 			}).Warn("Empty or invalid XML response from CopyObject, injecting valid response")
 
 			// Create a valid CopyObjectResult XML
-			// Use current time for ETag to ensure uniqueness
-			etag := fmt.Sprintf("%x", time.Now().UnixNano())
+			// Generate a proper MD5-based ETag to ensure S3 compatibility
+			etag := generateValidETag()
 			lastModified := time.Now().UTC().Format(time.RFC3339)
 			
 			validXML := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
@@ -104,7 +114,7 @@ func addCopyObjectResponseFixer(client *s3.S3) {
 				
 				// Generate ETag if missing
 				if output.CopyObjectResult.ETag == nil || *output.CopyObjectResult.ETag == "" {
-					etag := fmt.Sprintf("\"%x\"", time.Now().UnixNano())
+					etag := fmt.Sprintf("\"%s\"", generateValidETag())
 					output.CopyObjectResult.ETag = aws.String(etag)
 				}
 				

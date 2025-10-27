@@ -101,11 +101,11 @@ const (
 	maxConcurrentUploads = 10
 	minResultsToTruncate = 10 // Minimum results to continue pagination with blob path marker
 
-	// Timeouts and delays
-	defaultClientTimeout = 1800 * time.Second // 30 minutes for large file operations
+	// Timeouts and delays - extended for large file stability
+	defaultClientTimeout = 3600 * time.Second // 1 hour for large file operations
 	defaultRetryDelay    = 500 * time.Millisecond
 	maxRetryDelay        = 5 * time.Second
-	maxRetries           = 1
+	maxRetries           = 1 // Keep retries minimal to avoid connection issues
 
 	// Special markers and identifiers
 	directoryMarkerSuffix = "/.dir"
@@ -136,6 +136,8 @@ type AzureBackend struct {
 	bufferPool    sync.Pool
 	// Track multipart upload metadata
 	uploadMetadata sync.Map // uploadID -> metadata map[string]string
+	// Track ETag to block ID mapping for multipart uploads
+	etagToBlockID sync.Map // "uploadID:etag" -> blockID
 	// Limit concurrent operations to prevent resource exhaustion
 	uploadSem chan struct{}
 }
@@ -957,10 +959,26 @@ func (a *AzureBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 
 	expectedSize := *props.ContentLength
 
-	// Download the blob with content-length validation
-	downloadResponse, err := blobClient.DownloadStream(ctx, &blob.DownloadStreamOptions{
-		// Force Azure to validate content-length
-		Range: blob.HTTPRange{},
+	// Create extended timeout for large file downloads to prevent 894MB drops
+	downloadCtx := ctx
+	if expectedSize > 500*1024*1024 { // Files > 500MB get extended timeout
+		var cancel context.CancelFunc
+		timeout := 2 * time.Hour // 2 hours for very large files
+		downloadCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+		
+		logrus.WithFields(logrus.Fields{
+			"bucket":      bucket,
+			"key":         normalizedKey,
+			"size":        expectedSize,
+			"timeout":     timeout,
+		}).Info("Using extended timeout for large file download")
+	}
+
+	// Download the blob with optimized settings for large files
+	downloadResponse, err := blobClient.DownloadStream(downloadCtx, &blob.DownloadStreamOptions{
+		// Don't specify range to avoid Azure internal limits on large transfers
+		// Range: blob.HTTPRange{}, // Removed - may cause 894MB limit
 	})
 	if err != nil {
 		return nil, wrapAzureError("download blob", bucket, normalizedKey, err)
@@ -1406,8 +1424,23 @@ func (a *AzureBackend) UploadPart(ctx context.Context, bucket, key, uploadID str
 		"size":       size,
 	}).Info("Successfully staged block")
 
-	// Return the block ID as ETag for S3 compatibility
-	return fmt.Sprintf("\"%s\"", blockID), nil
+	// Generate S3-compatible MD5 ETag instead of using base64 block ID
+	// AWS clients expect hex-encoded ETags, not base64
+	hash := md5.Sum(data) //nolint:gosec // MD5 is required for S3 ETag compatibility
+	etag := hex.EncodeToString(hash[:])
+	
+	// Store the mapping from ETag to block ID for commit operation
+	etagKey := fmt.Sprintf("%s:%s", uploadID, etag)
+	a.etagToBlockID.Store(etagKey, blockID)
+	
+	logrus.WithFields(logrus.Fields{
+		"blockID":    blockID,
+		"partNumber": partNumber,
+		"etag":       etag,
+		"etagKey":    etagKey,
+	}).Debug("Generated S3-compatible ETag and stored block ID mapping")
+	
+	return fmt.Sprintf("\"%s\"", etag), nil
 }
 
 func (a *AzureBackend) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadID string, parts []CompletedPart) error {
@@ -1420,21 +1453,30 @@ func (a *AzureBackend) CompleteMultipartUpload(ctx context.Context, bucket, key,
 
 	blockBlobClient := a.client.ServiceClient().NewContainerClient(bucket).NewBlockBlobClient(key)
 
-	// Create block list with progress logging for large uploads
+	// Create block list using stored ETag to block ID mapping
 	blockList := make([]string, len(parts))
 	for i, part := range parts {
-		// Extract block ID from ETag (remove quotes if present)
-		blockID := strings.Trim(part.ETag, "\"")
-
-		// If the ETag doesn't look like a base64-encoded block ID, generate it from part number
-		// This handles backward compatibility or cases where ETag wasn't properly set
-		if len(blockID) < 10 || !isBase64(blockID) {
+		// Look up the actual block ID using the ETag
+		etag := strings.Trim(part.ETag, "\"")
+		etagKey := fmt.Sprintf("%s:%s", uploadID, etag)
+		
+		var blockID string
+		if storedBlockID, ok := a.etagToBlockID.Load(etagKey); ok {
+			blockID = storedBlockID.(string)
+			logrus.WithFields(logrus.Fields{
+				"partNumber": part.PartNumber,
+				"etag":       etag,
+				"blockID":    blockID,
+			}).Debug("Found stored block ID for ETag")
+		} else {
+			// Fallback: generate block ID from part number (for backward compatibility)
 			blockID = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(azureBlockIDFormat, part.PartNumber)))
 			logrus.WithFields(logrus.Fields{
 				"partNumber":       part.PartNumber,
-				"originalETag":     part.ETag,
+				"etag":             etag,
+				"etagKey":          etagKey,
 				"generatedBlockID": blockID,
-			}).Warn("ETag doesn't contain valid block ID, generating from part number")
+			}).Warn("ETag to block ID mapping not found, generating from part number")
 		}
 
 		blockList[i] = blockID
@@ -1483,6 +1525,13 @@ func (a *AzureBackend) CompleteMultipartUpload(ctx context.Context, bucket, key,
 		return fmt.Errorf("failed to commit block list: %w", err)
 	}
 
+	// Clean up ETag to block ID mappings
+	for _, part := range parts {
+		etag := strings.Trim(part.ETag, "\"")
+		etagKey := fmt.Sprintf("%s:%s", uploadID, etag)
+		a.etagToBlockID.Delete(etagKey)
+	}
+
 	logrus.WithFields(logrus.Fields{
 		"bucket":   bucket,
 		"key":      key,
@@ -1495,6 +1544,17 @@ func (a *AzureBackend) CompleteMultipartUpload(ctx context.Context, bucket, key,
 func (a *AzureBackend) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
 	// Clean up stored metadata
 	a.uploadMetadata.Delete(uploadID)
+
+	// Clean up ETag to block ID mappings
+	// Since we don't know which ETags belong to this upload, we need to range over the map
+	// and delete entries that start with the uploadID prefix
+	a.etagToBlockID.Range(func(k, v interface{}) bool {
+		key := k.(string)
+		if strings.HasPrefix(key, uploadID+":") {
+			a.etagToBlockID.Delete(key)
+		}
+		return true
+	})
 
 	// Azure doesn't have explicit abort for uncommitted blocks
 	// Uncommitted blocks are automatically garbage collected

@@ -89,7 +89,7 @@ func TestCompleteMultipartUpload(t *testing.T) {
 	completeReq := `<CompleteMultipartUpload>
 		<Part>
 			<PartNumber>1</PartNumber>
-			<ETag>"test-etag"</ETag>
+			<ETag>"d41d8cd98f00b204e9800998ecf8427e"</ETag>
 		</Part>
 	</CompleteMultipartUpload>`
 

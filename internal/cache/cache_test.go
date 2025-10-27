@@ -405,6 +405,23 @@ func (m *mockBackend) GetObject(ctx context.Context, bucket, key string) (*stora
 	return nil, errors.New("object not found")
 }
 
+func (m *mockBackend) GetObjectRange(ctx context.Context, bucket, key string, start, end int64) (*storage.Object, error) {
+	obj, err := m.GetObject(ctx, bucket, key)
+	if err != nil {
+		return nil, err
+	}
+	// For testing, just return the same object with adjusted size
+	rangeSize := end - start + 1
+	return &storage.Object{
+		Body:         obj.Body,
+		ContentType:  obj.ContentType,
+		Size:         rangeSize,
+		ETag:         obj.ETag,
+		LastModified: obj.LastModified,
+		Metadata:     obj.Metadata,
+	}, nil
+}
+
 func (m *mockBackend) HeadObject(ctx context.Context, bucket, key string) (*storage.ObjectInfo, error) {
 	k := bucket + "/" + key
 	if err, exists := m.errors[k]; exists {
