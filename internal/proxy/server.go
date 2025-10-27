@@ -358,6 +358,9 @@ func (s *Server) setupRoutes() {
 			// Add admin page route (protected)
 			s.router.HandleFunc(s.config.UI.BasePath + "/admin", s.serveAdminUI).Methods("GET")
 			
+			// Add metrics dashboard route (protected)
+			s.router.HandleFunc(s.config.UI.BasePath + "/metrics", s.serveMetricsUI).Methods("GET")
+			
 			// Protected static assets - these should be served without auth middleware
 			// but the session check will happen on the main UI pages that load these assets
 			s.router.PathPrefix(s.config.UI.BasePath + "/js/").Handler(
@@ -793,6 +796,36 @@ func (s *Server) serveAdminUI(w http.ResponseWriter, r *http.Request) {
 
 	// Serve the admin.html file
 	http.ServeFile(w, r, filepath.Join(s.config.UI.StaticPath, "admin.html"))
+}
+
+// serveMetricsUI serves the metrics dashboard interface
+func (s *Server) serveMetricsUI(w http.ResponseWriter, r *http.Request) {
+	// Check authentication
+	if s.auth0 == nil || !s.auth0.IsAuthenticated(r) {
+		http.Redirect(w, r, "/api/auth/login", http.StatusTemporaryRedirect)
+		return
+	}
+
+	// Check if user has metrics access (admin, storage-admin, or developer)
+	session, _ := s.auth0.store.Get(r, sessionName)
+	var hasAccess bool
+	if rolesStr, ok := session.Values["user_roles"].(string); ok && rolesStr != "" {
+		roles := strings.Split(rolesStr, ",")
+		for _, role := range roles {
+			if role == "admin" || role == "storage-admin" || role == "developer" {
+				hasAccess = true
+				break
+			}
+		}
+	}
+
+	if !hasAccess {
+		http.Error(w, "Access denied. Admin, storage-admin, or developer role required.", http.StatusForbidden)
+		return
+	}
+
+	// Serve the metrics.html file
+	http.ServeFile(w, r, filepath.Join(s.config.UI.StaticPath, "metrics.html"))
 }
 
 // Close releases server resources gracefully

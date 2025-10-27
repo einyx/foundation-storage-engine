@@ -165,6 +165,17 @@ func (w *AzureWrapper) GetObject(ctx context.Context, bucket, key string) (*Obje
 	return w.backend.GetObject(ctx, container, fullKey)
 }
 
+func (w *AzureWrapper) GetObjectRange(ctx context.Context, bucket, key string, start, end int64) (*Object, error) {
+	container := w.translateBucketToContainer(bucket)
+	fullKey := w.addPrefix(bucket, key)
+	
+	oldContainer := w.backend.containerName
+	w.backend.containerName = container
+	defer func() { w.backend.containerName = oldContainer }()
+	
+	return w.backend.GetObjectRange(ctx, container, fullKey, start, end)
+}
+
 func (w *AzureWrapper) PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64, metadata map[string]string) error {
 	container := w.translateBucketToContainer(bucket)
 	fullKey := w.addPrefix(bucket, key)

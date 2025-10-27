@@ -151,6 +151,14 @@ func (m *MultiBackendSimple) GetObject(ctx context.Context, bucket, key string) 
 	return backend.GetObject(ctx, bucket, key)
 }
 
+func (m *MultiBackendSimple) GetObjectRange(ctx context.Context, bucket, key string, start, end int64) (*Object, error) {
+	backend, err := m.getBackendForBucket(bucket)
+	if err != nil {
+		return nil, err
+	}
+	return backend.GetObjectRange(ctx, bucket, key, start, end)
+}
+
 func (m *MultiBackendSimple) PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64, metadata map[string]string) error {
 	backend, err := m.getBackendForBucket(bucket)
 	if err != nil {

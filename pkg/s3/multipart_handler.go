@@ -107,10 +107,16 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	var body io.Reader = r.Body
-	if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" ||
-		r.Header.Get("Content-Encoding") == "aws-chunked" {
-		body = storage.NewSmartChunkDecoder(r.Body)
-		logger.Info("Using SmartChunkDecoder for chunked part upload")
+	
+	// Only decode chunks when explicitly declared via headers
+	isChunked := r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" ||
+		r.Header.Get("Content-Encoding") == "aws-chunked"
+	
+	if isChunked {
+		body = storage.NewSafeChunkDecoder(r.Body)
+		logger.Info("Using safe chunk decoder for declared chunked encoding")
+	} else {
+		logger.Debug("Using raw body reader - no chunked encoding declared")
 	}
 
 	partReader := body
@@ -206,6 +212,18 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 			PartNumber: p.PartNumber,
 			ETag:       etag,
 		})
+	}
+
+	// Log UUID tracking for debugging corruption issue
+	if strings.Contains(key, ".parquet") && strings.Contains(key, "886647") {
+		logrus.WithFields(logrus.Fields{
+			"bucket":         bucket,
+			"originalKey":    key,
+			"uploadID":       uploadID,
+			"keyContainsA":   strings.Contains(key, "a886647"),
+			"keyContains0":   strings.Contains(key, "0886647"),
+			"completedParts": len(completedParts),
+		}).Warn("TRACKING UUID CORRUPTION: Before CompleteMultipartUpload")
 	}
 
 	if err := h.storage.CompleteMultipartUpload(r.Context(), bucket, key, uploadID, completedParts); err != nil {

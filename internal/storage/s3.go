@@ -30,73 +30,39 @@ const (
 	minPartSize        = 1 * 1024 * 1024  // 1MB - minimum part size for very slow clients
 )
 
-type chunkedDecodingReader struct {
-	reader   io.ReadCloser
-	buffer   []byte
-	chunkBuf []byte
-	inChunk  bool
-	done     bool
+// corruptionDetectingReader wraps a reader to detect and handle corrupted Parquet files
+type corruptionDetectingReader struct {
+	io.ReadCloser
+	key        string
+	firstRead  bool
+	isCorrupt  bool
 }
 
-func newChunkedDecodingReader(r io.ReadCloser) io.ReadCloser {
-	return &chunkedDecodingReader{
-		reader:   r,
-		buffer:   make([]byte, 0),
-		chunkBuf: make([]byte, 8192),
-	}
-}
-
-func (c *chunkedDecodingReader) Read(p []byte) (int, error) {
-	if c.done {
-		return 0, io.EOF
-	}
-
-	// If we have buffered data, return it first
-	if len(c.buffer) > 0 {
-		n := copy(p, c.buffer)
-		c.buffer = c.buffer[n:]
-		return n, nil
-	}
-
-	// Read more data
-	n, err := c.reader.Read(c.chunkBuf)
-	if n > 0 {
-		data := c.chunkBuf[:n]
-
-		// Check if this looks like chunked encoding
-		if !c.inChunk && len(data) > 0 {
-			// Look for chunk signature pattern (hex size followed by ;chunk-signature=)
-			if idx := bytes.Index(data, []byte(";chunk-signature=")); idx > 0 && idx < 20 {
-				// Skip the chunk header line
-				if endIdx := bytes.IndexByte(data, '\n'); endIdx > idx {
-					data = data[endIdx+1:]
-					c.inChunk = true
-				}
-			}
+func (c *corruptionDetectingReader) Read(p []byte) (int, error) {
+	n, err := c.ReadCloser.Read(p)
+	
+	// Check for Parquet corruption on first read
+	if !c.firstRead && n >= 4 {
+		c.firstRead = true
+		
+		// Check if file starts with corrupted magic bytes [21, 0, 21, 92]
+		if len(p) >= 4 && p[0] == 21 && p[1] == 0 && p[2] == 21 && p[3] == 92 {
+			c.isCorrupt = true
+			logrus.WithFields(logrus.Fields{
+				"key":          c.key,
+				"corruptBytes": p[:4],
+			}).Error("Detected corrupted Parquet file - file was likely corrupted during previous upload")
+			
+			return 0, fmt.Errorf("corrupted Parquet file detected: %s (magic bytes: %v)", c.key, p[:4])
 		}
-
-		// Remove any trailing chunk markers (0\r\n\r\n at the end)
-		if bytes.HasSuffix(data, []byte("0\r\n\r\n")) {
-			data = data[:len(data)-5]
-			c.done = true
-		}
-
-		// Copy what we can to the output buffer
-		copied := copy(p, data)
-		// Save any remaining data for next read
-		if copied < len(data) {
-			c.buffer = append(c.buffer, data[copied:]...)
-		}
-
-		return copied, nil
 	}
-
-	return 0, err
+	
+	return n, err
 }
 
-func (c *chunkedDecodingReader) Close() error {
-	return c.reader.Close()
-}
+// DEPRECATED: chunkedDecodingReader is unsafe and causes data corruption.
+// Use SafeChunkDecoder instead for all chunked transfer encoding.
+// This implementation is kept only for reference and should not be used.
 
 type S3Backend struct {
 	defaultClient               *s3.S3                          // Default S3 client
@@ -809,25 +775,81 @@ func (s *S3Backend) GetObject(ctx context.Context, bucket, key string) (*Object,
 		}
 	}
 
-	// IMPORTANT: For Iceberg metadata files and other JSON content, we should NOT
-	// use the chunked decoding reader as it can corrupt the data.
+	// IMPORTANT: For binary files like Parquet, we should use SafeChunkDecoder
+	// to prevent corruption from incorrect chunked decoding
 	var body = resp.Body
 
 	contentLength := aws.Int64Value(resp.ContentLength)
 	contentType := aws.StringValue(resp.ContentType)
 
-	// For chunked responses without content length, use chunked decoder
+	// For chunked responses without content length, use safe chunk decoder
 	if resp.ContentLength == nil || contentLength == -1 {
-		// Response might be chunked, use chunked decoder
+		// Response might be chunked, use safe chunk decoder that validates format
 		logrus.WithFields(logrus.Fields{
 			"key":         realKey,
 			"contentType": contentType,
-		}).Debug("Using chunked decoding reader")
-		body = newChunkedDecodingReader(resp.Body)
+		}).Debug("Using safe chunked decoding reader")
+		body = NewSafeChunkDecoder(resp.Body)
+	}
+
+	// For Parquet files, add corruption detection wrapper
+	if strings.HasSuffix(key, ".parquet") {
+		body = &corruptionDetectingReader{
+			ReadCloser: body,
+			key:        key,
+		}
 	}
 
 	return &Object{
 		Body:         body,
+		ContentType:  aws.StringValue(resp.ContentType),
+		Size:         aws.Int64Value(resp.ContentLength),
+		ETag:         aws.StringValue(resp.ETag),
+		LastModified: aws.TimeValue(resp.LastModified),
+		Metadata:     metadata,
+	}, nil
+}
+
+func (s *S3Backend) GetObjectRange(ctx context.Context, bucket, key string, start, end int64) (*Object, error) {
+	realBucket := s.mapBucket(bucket)
+	realKey := s.addPrefixToKey(bucket, key)
+
+	// Create range header for S3
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", start, end)
+
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(realBucket),
+		Key:    aws.String(realKey),
+		Range:  aws.String(rangeHeader),
+	}
+
+	client, err := s.getClientForBucket(bucket)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for bucket: %w", err)
+	}
+
+	resp, err := client.GetObjectWithContext(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get object range: %w", err)
+	}
+
+	metadata := make(map[string]string)
+	for k, v := range resp.Metadata {
+		if v != nil {
+			metadata[k] = *v
+		}
+	}
+
+	// Add KMS encryption metadata if present
+	if resp.ServerSideEncryption != nil && *resp.ServerSideEncryption == "aws:kms" {
+		metadata["x-amz-server-side-encryption"] = "aws:kms"
+		if resp.SSEKMSKeyId != nil {
+			metadata["x-amz-server-side-encryption-aws-kms-key-id"] = *resp.SSEKMSKeyId
+		}
+	}
+
+	return &Object{
+		Body:         resp.Body,
 		ContentType:  aws.StringValue(resp.ContentType),
 		Size:         aws.Int64Value(resp.ContentLength),
 		ETag:         aws.StringValue(resp.ETag),
@@ -1457,7 +1479,7 @@ func (s *S3Backend) putObjectMultipartStreaming(ctx context.Context, virtualBuck
 
 func (s *S3Backend) putObjectMultipart(ctx context.Context, virtualBucket, realBucket, key string, reader io.Reader, metadata map[string]string) error {
 	// Check if we're dealing with a streaming upload (size unknown)
-	if _, ok := reader.(*SmartChunkDecoder); ok {
+	if _, ok := reader.(*AWSChunkDecoder); ok {
 		logrus.WithFields(logrus.Fields{
 			"bucket": virtualBucket,
 			"key":    key,

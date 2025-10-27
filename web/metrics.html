@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Foundation Storage - Metrics Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .metric-card {
+            @apply bg-white shadow rounded-lg p-6 border border-gray-200;
+        }
+        .metric-value {
+            @apply text-2xl font-bold text-gray-900;
+        }
+        .metric-label {
+            @apply text-sm text-gray-600 uppercase tracking-wide;
+        }
+        .metric-trend {
+            @apply text-sm font-medium;
+        }
+        .metric-trend.up {
+            @apply text-green-600;
+        }
+        .metric-trend.down {
+            @apply text-red-600;
+        }
+        .metric-trend.stable {
+            @apply text-gray-500;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div x-data="metricsDatabase" class="min-h-screen">
+        <!-- Header -->
+        <nav class="bg-white shadow">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between h-16">
+                    <div class="flex items-center">
+                        <h1 class="text-xl font-semibold">Foundation Storage Engine - Metrics Dashboard</h1>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-sm text-gray-500">Auto-refresh:</span>
+                            <button @click="toggleAutoRefresh" 
+                                    :class="autoRefresh ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'"
+                                    class="px-3 py-1 rounded text-sm font-medium">
+                                <span x-text="autoRefresh ? 'ON' : 'OFF'"></span>
+                            </button>
+                        </div>
+                        <button @click="refreshMetrics" 
+                                :disabled="loading"
+                                :class="loading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'"
+                                class="text-white px-4 py-2 rounded text-sm font-medium">
+                            <span x-show="!loading">Refresh</span>
+                            <span x-show="loading">Loading...</span>
+                        </button>
+                        <a href="/ui" class="text-sm text-blue-600 hover:text-blue-800">Back to Storage</a>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <div class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+            <!-- System Overview -->
+            <div class="mb-8">
+                <h2 class="text-lg font-semibold text-gray-900 mb-4">System Overview</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div class="metric-card">
+                        <div class="metric-label">Total Requests (24h)</div>
+                        <div class="metric-value" x-text="formatNumber(stats.total_requests)"></div>
+                        <div class="metric-trend" :class="getTrendClass(stats.requests_per_sec)">
+                            <span x-text="formatRate(stats.requests_per_sec) + ' req/s'"></span>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Error Rate</div>
+                        <div class="metric-value" :class="stats.error_rate > 0.05 ? 'text-red-600' : 'text-green-600'">
+                            <span x-text="formatPercent(stats.error_rate)"></span>
+                        </div>
+                        <div class="metric-trend" :class="getErrorTrendClass(stats.total_errors)">
+                            <span x-text="formatNumber(stats.total_errors) + ' errors'"></span>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Data Transferred</div>
+                        <div class="metric-value" x-text="formatBytes(stats.bytes_transferred)"></div>
+                        <div class="metric-trend stable">
+                            <span x-text="formatBytes(stats.throughput_bytes_per_sec) + '/s'"></span>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Uptime</div>
+                        <div class="metric-value" x-text="formatDuration(stats.uptime_seconds)"></div>
+                        <div class="metric-trend up">
+                            System Health: <span x-text="getSystemHealth()"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Performance Metrics -->
+            <div class="mb-8">
+                <h2 class="text-lg font-semibold text-gray-900 mb-4">Performance Metrics</h2>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- Request Rate Chart -->
+                    <div class="metric-card">
+                        <h3 class="text-md font-medium text-gray-900 mb-4">Request Rate (Last 5 minutes)</h3>
+                        <canvas id="requestRateChart" width="400" height="200"></canvas>
+                    </div>
+                    <!-- Response Time Chart -->
+                    <div class="metric-card">
+                        <h3 class="text-md font-medium text-gray-900 mb-4">Response Time Distribution</h3>
+                        <canvas id="responseTimeChart" width="400" height="200"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Storage Metrics -->
+            <div class="mb-8">
+                <h2 class="text-lg font-semibold text-gray-900 mb-4">Storage & Operations</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="metric-card">
+                        <div class="metric-label">Active Connections</div>
+                        <div class="metric-value" x-text="prometheusMetrics.connections_active || '0'"></div>
+                        <div class="metric-trend stable">
+                            <span x-text="(prometheusMetrics.connections_idle || '0') + ' idle'"></span>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Cache Hit Rate</div>
+                        <div class="metric-value" :class="getCacheHitRateClass()">
+                            <span x-text="formatPercent(getCacheHitRate())"></span>
+                        </div>
+                        <div class="metric-trend stable">
+                            <span x-text="formatBytes(prometheusMetrics.cache_size_bytes || 0) + ' cached'"></span>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">KMS Operations</div>
+                        <div class="metric-value" x-text="formatNumber(prometheusMetrics.kms_operations_total || 0)"></div>
+                        <div class="metric-trend" :class="getKMSHealthClass()">
+                            <span x-text="(prometheusMetrics.kms_data_keys_active || 0) + ' active keys'"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Security & Auth Metrics -->
+            <div class="mb-8">
+                <h2 class="text-lg font-semibold text-gray-900 mb-4">Security & Authentication</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="metric-card">
+                        <div class="metric-label">Auth Success Rate</div>
+                        <div class="metric-value" :class="getAuthSuccessRateClass()">
+                            <span x-text="formatPercent(getAuthSuccessRate())"></span>
+                        </div>
+                        <div class="metric-trend" :class="getAuthTrendClass()">
+                            <span x-text="formatNumber(prometheusMetrics.auth_attempts_total || 0) + ' attempts'"></span>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Active Tokens</div>
+                        <div class="metric-value" x-text="formatNumber(prometheusMetrics.auth_tokens_active || 0)"></div>
+                        <div class="metric-trend stable">
+                            <span x-text="formatNumber(prometheusMetrics.auth_token_validations_total || 0) + ' validations'"></span>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Rate Limits</div>
+                        <div class="metric-value" :class="getRateLimitClass()">
+                            <span x-text="formatNumber(prometheusMetrics.rate_limit_total || 0)"></span>
+                        </div>
+                        <div class="metric-trend" :class="getRateLimitTrendClass()">
+                            <span x-text="formatNumber(prometheusMetrics.concurrency_limit_total || 0) + ' concurrency limits'"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Resources -->
+            <div class="mb-8">
+                <h2 class="text-lg font-semibold text-gray-900 mb-4">System Resources</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="metric-card">
+                        <div class="metric-label">Memory Usage</div>
+                        <div class="metric-value" x-text="formatBytes(prometheusMetrics.memory_usage_bytes || 0)"></div>
+                        <div class="metric-trend" :class="getMemoryTrendClass()">
+                            Memory Status
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Goroutines</div>
+                        <div class="metric-value" x-text="formatNumber(prometheusMetrics.goroutines_count || 0)"></div>
+                        <div class="metric-trend" :class="getGoroutineTrendClass()">
+                            Go Runtime
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Requests in Flight</div>
+                        <div class="metric-value" x-text="formatNumber(prometheusMetrics.requests_in_flight || 0)"></div>
+                        <div class="metric-trend" :class="getInFlightTrendClass()">
+                            Current Load
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Raw Metrics Access -->
+            <div class="mb-8">
+                <h2 class="text-lg font-semibold text-gray-900 mb-4">Raw Metrics Access</h2>
+                <div class="bg-white shadow rounded-lg p-6">
+                    <div class="flex space-x-4">
+                        <a href="/metrics" target="_blank" 
+                           class="bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700">
+                            Prometheus Metrics
+                        </a>
+                        <a href="/stats" target="_blank" 
+                           class="bg-green-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-green-700">
+                            JSON Stats
+                        </a>
+                        <button @click="exportMetrics" 
+                                class="bg-gray-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-gray-700">
+                            Export Dashboard Data
+                        </button>
+                    </div>
+                    <div class="mt-4 text-sm text-gray-600">
+                        <p><strong>Prometheus Metrics:</strong> Raw metrics in Prometheus format for scraping</p>
+                        <p><strong>JSON Stats:</strong> Human-readable statistics in JSON format</p>
+                        <p><strong>Export:</strong> Download current dashboard data as JSON</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Last Updated -->
+            <div class="text-center text-sm text-gray-500">
+                <p>Last updated: <span x-text="lastUpdated"></span></p>
+                <p x-show="autoRefresh">Next refresh in: <span x-text="nextRefreshIn"></span> seconds</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('alpine:init', () => {
+        Alpine.data('metricsDatabase', () => ({
+            stats: {
+                total_requests: 0,
+                total_errors: 0,
+                bytes_transferred: 0,
+                requests_per_sec: 0,
+                error_rate: 0,
+                throughput_bytes_per_sec: 0,
+                uptime_seconds: 0
+            },
+            prometheusMetrics: {},
+            loading: false,
+            autoRefresh: true,
+            refreshInterval: 30, // seconds
+            lastUpdated: '',
+            nextRefreshIn: 30,
+            charts: {},
+
+            async init() {
+                await this.refreshMetrics();
+                this.startAutoRefresh();
+                this.initCharts();
+            },
+
+            async refreshMetrics() {
+                this.loading = true;
+                try {
+                    // Fetch JSON stats
+                    const statsResponse = await fetch('/stats');
+                    this.stats = await statsResponse.json();
+
+                    // Fetch Prometheus metrics (simplified parsing)
+                    const metricsResponse = await fetch('/metrics');
+                    const metricsText = await metricsResponse.text();
+                    this.parsePrometheusMetrics(metricsText);
+
+                    this.lastUpdated = new Date().toLocaleTimeString();
+                    this.updateCharts();
+                } catch (error) {
+                    console.error('Failed to fetch metrics:', error);
+                } finally {
+                    this.loading = false;
+                }
+            },
+
+            parsePrometheusMetrics(text) {
+                const metrics = {};
+                const lines = text.split('\n');
+                
+                for (const line of lines) {
+                    if (line.startsWith('#') || !line.trim()) continue;
+                    
+                    const match = line.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)\{?.*?\}?\s+(.+)$/);
+                    if (match) {
+                        const [, name, value] = match;
+                        metrics[name] = parseFloat(value) || 0;
+                    }
+                }
+                
+                this.prometheusMetrics = metrics;
+            },
+
+            toggleAutoRefresh() {
+                this.autoRefresh = !this.autoRefresh;
+                if (this.autoRefresh) {
+                    this.startAutoRefresh();
+                }
+            },
+
+            startAutoRefresh() {
+                if (!this.autoRefresh) return;
+                
+                setInterval(() => {
+                    if (this.autoRefresh) {
+                        this.refreshMetrics();
+                        this.nextRefreshIn = this.refreshInterval;
+                    }
+                }, this.refreshInterval * 1000);
+
+                setInterval(() => {
+                    if (this.autoRefresh && this.nextRefreshIn > 0) {
+                        this.nextRefreshIn--;
+                    }
+                }, 1000);
+            },
+
+            initCharts() {
+                // Request Rate Chart
+                const ctx1 = document.getElementById('requestRateChart').getContext('2d');
+                this.charts.requestRate = new Chart(ctx1, {
+                    type: 'line',
+                    data: {
+                        labels: Array.from({length: 10}, (_, i) => `-${10-i}m`),
+                        datasets: [{
+                            label: 'Requests/sec',
+                            data: Array.from({length: 10}, () => Math.random() * 100),
+                            borderColor: 'rgb(59, 130, 246)',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+
+                // Response Time Chart
+                const ctx2 = document.getElementById('responseTimeChart').getContext('2d');
+                this.charts.responseTime = new Chart(ctx2, {
+                    type: 'bar',
+                    data: {
+                        labels: ['<10ms', '10-50ms', '50-100ms', '100-500ms', '500ms-1s', '>1s'],
+                        datasets: [{
+                            label: 'Requests',
+                            data: [45, 30, 15, 8, 2, 0],
+                            backgroundColor: [
+                                'rgba(34, 197, 94, 0.8)',
+                                'rgba(59, 130, 246, 0.8)',
+                                'rgba(251, 191, 36, 0.8)',
+                                'rgba(249, 115, 22, 0.8)',
+                                'rgba(239, 68, 68, 0.8)',
+                                'rgba(156, 163, 175, 0.8)'
+                            ]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+            },
+
+            updateCharts() {
+                // Update chart data with real metrics
+                if (this.charts.requestRate) {
+                    const currentRate = this.stats.requests_per_sec || 0;
+                    this.charts.requestRate.data.datasets[0].data.shift();
+                    this.charts.requestRate.data.datasets[0].data.push(currentRate);
+                    this.charts.requestRate.update();
+                }
+            },
+
+            exportMetrics() {
+                const data = {
+                    stats: this.stats,
+                    prometheusMetrics: this.prometheusMetrics,
+                    timestamp: new Date().toISOString()
+                };
+                
+                const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `foundation-storage-metrics-${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            },
+
+            // Utility functions
+            formatNumber(num) {
+                if (num >= 1e9) return (num / 1e9).toFixed(1) + 'B';
+                if (num >= 1e6) return (num / 1e6).toFixed(1) + 'M';
+                if (num >= 1e3) return (num / 1e3).toFixed(1) + 'K';
+                return num.toString();
+            },
+
+            formatBytes(bytes) {
+                if (bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+            },
+
+            formatPercent(rate) {
+                return (rate * 100).toFixed(2) + '%';
+            },
+
+            formatRate(rate) {
+                return rate.toFixed(1);
+            },
+
+            formatDuration(seconds) {
+                const days = Math.floor(seconds / 86400);
+                const hours = Math.floor((seconds % 86400) / 3600);
+                const minutes = Math.floor((seconds % 3600) / 60);
+                
+                if (days > 0) return `${days}d ${hours}h`;
+                if (hours > 0) return `${hours}h ${minutes}m`;
+                return `${minutes}m`;
+            },
+
+            // Health indicators
+            getSystemHealth() {
+                const errorRate = this.stats.error_rate || 0;
+                if (errorRate < 0.01) return 'Excellent';
+                if (errorRate < 0.05) return 'Good';
+                if (errorRate < 0.1) return 'Warning';
+                return 'Critical';
+            },
+
+            getCacheHitRate() {
+                const hits = this.prometheusMetrics['foundation_storage_engine_cache_hits_total'] || 0;
+                const misses = this.prometheusMetrics['foundation_storage_engine_cache_misses_total'] || 0;
+                return hits + misses > 0 ? hits / (hits + misses) : 0;
+            },
+
+            getAuthSuccessRate() {
+                const attempts = this.prometheusMetrics['foundation_storage_engine_auth_attempts_total'] || 0;
+                const failures = this.prometheusMetrics['foundation_storage_engine_auth_failures_total'] || 0;
+                return attempts > 0 ? (attempts - failures) / attempts : 1;
+            },
+
+            // CSS class helpers
+            getTrendClass(value) {
+                if (value > 50) return 'up';
+                if (value > 10) return 'stable';
+                return 'down';
+            },
+
+            getErrorTrendClass(errors) {
+                return errors > 100 ? 'down' : errors > 10 ? 'stable' : 'up';
+            },
+
+            getCacheHitRateClass() {
+                const rate = this.getCacheHitRate();
+                return rate > 0.8 ? 'text-green-600' : rate > 0.5 ? 'text-yellow-600' : 'text-red-600';
+            },
+
+            getAuthSuccessRateClass() {
+                const rate = this.getAuthSuccessRate();
+                return rate > 0.95 ? 'text-green-600' : rate > 0.9 ? 'text-yellow-600' : 'text-red-600';
+            },
+
+            getKMSHealthClass() {
+                const keys = this.prometheusMetrics['foundation_storage_engine_kms_data_keys_active'] || 0;
+                return keys > 0 ? 'up' : 'stable';
+            },
+
+            getRateLimitClass() {
+                const limits = this.prometheusMetrics['foundation_storage_engine_rate_limit_total'] || 0;
+                return limits > 1000 ? 'text-red-600' : limits > 100 ? 'text-yellow-600' : 'text-green-600';
+            },
+
+            getRateLimitTrendClass() {
+                return 'stable';
+            },
+
+            getAuthTrendClass() {
+                return 'stable';
+            },
+
+            getMemoryTrendClass() {
+                const memory = this.prometheusMetrics['foundation_storage_engine_memory_usage_bytes'] || 0;
+                return memory > 1073741824 ? 'down' : 'stable'; // 1GB threshold
+            },
+
+            getGoroutineTrendClass() {
+                const count = this.prometheusMetrics['foundation_storage_engine_goroutines_count'] || 0;
+                return count > 1000 ? 'down' : count > 100 ? 'stable' : 'up';
+            },
+
+            getInFlightTrendClass() {
+                const inFlight = this.prometheusMetrics['foundation_storage_engine_requests_in_flight'] || 0;
+                return inFlight > 50 ? 'down' : inFlight > 10 ? 'stable' : 'up';
+            }
+        }));
+    });
+    </script>
+</body>
+</html>

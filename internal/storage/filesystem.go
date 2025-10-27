@@ -293,6 +293,75 @@ func (fs *FileSystemBackend) GetObject(ctx context.Context, bucket, key string) 
 	}, nil
 }
 
+func (fs *FileSystemBackend) GetObjectRange(ctx context.Context, bucket, key string, start, end int64) (*Object, error) {
+	objectPath, err := fs.secureObjectPath(bucket, key)
+	if err != nil {
+		return nil, fmt.Errorf("invalid path parameters: %w", err)
+	}
+
+	// Check if file exists
+	info, err := os.Stat(objectPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("object not found")
+		}
+		return nil, fmt.Errorf("failed to stat object: %w", err)
+	}
+
+	// Open file for range reading
+	file, err := os.Open(objectPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open object: %w", err)
+	}
+
+	// Seek to start position
+	_, err = file.Seek(start, io.SeekStart)
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("failed to seek to start position: %w", err)
+	}
+
+	// Create limited reader for the range
+	rangeSize := end - start + 1
+	limitedReader := io.LimitReader(file, rangeSize)
+
+	// Load metadata from .meta file if it exists
+	metadata := make(map[string]string)
+	metadataPath := objectPath + ".meta"
+	if metadataBytes, err := os.ReadFile(metadataPath); err == nil { //nolint:gosec // metadataPath is controlled
+		_ = json.Unmarshal(metadataBytes, &metadata)
+	}
+
+	// Set default content type if not in metadata
+	contentType := metadata["Content-Type"]
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	return &Object{
+		Body:         &fileRangeCloser{file: file, reader: limitedReader},
+		ContentType:  contentType,
+		Size:         rangeSize,
+		ETag:         fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()),
+		LastModified: info.ModTime(),
+		Metadata:     metadata,
+	}, nil
+}
+
+// fileRangeCloser wraps a limited reader with file closing capability
+type fileRangeCloser struct {
+	file   *os.File
+	reader io.Reader
+}
+
+func (f *fileRangeCloser) Read(p []byte) (int, error) {
+	return f.reader.Read(p)
+}
+
+func (f *fileRangeCloser) Close() error {
+	return f.file.Close()
+}
+
 func (fs *FileSystemBackend) PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64, metadata map[string]string) error {
 	objectPath, err := fs.secureObjectPath(bucket, key)
 	if err != nil {

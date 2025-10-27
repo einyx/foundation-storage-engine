@@ -19,6 +19,89 @@ import (
 	"github.com/einyx/foundation-storage-engine/internal/storage"
 )
 
+// parseRange parses HTTP Range header like "bytes=start-end"
+func parseRange(rangeHeader string, size int64) (start, end int64, err error) {
+	if !strings.HasPrefix(rangeHeader, "bytes=") {
+		return 0, 0, fmt.Errorf("unsupported range type")
+	}
+	
+	rangeSpec := strings.TrimPrefix(rangeHeader, "bytes=")
+	parts := strings.Split(rangeSpec, "-")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid range format")
+	}
+	
+	// Parse start
+	if parts[0] == "" {
+		return 0, 0, fmt.Errorf("suffix ranges not supported")
+	}
+	start, err = strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid start: %w", err)
+	}
+	
+	// Parse end
+	if parts[1] == "" {
+		end = size - 1
+	} else {
+		end, err = strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			return 0, 0, fmt.Errorf("invalid end: %w", err)
+		}
+	}
+	
+	// Validate range
+	if start < 0 || end < 0 || start > end || start >= size {
+		return 0, 0, fmt.Errorf("invalid range: start=%d, end=%d, size=%d", start, end, size)
+	}
+	if end >= size {
+		end = size - 1
+	}
+	
+	return start, end, nil
+}
+
+// getFileCorruptionRisk determines the corruption risk level for different file types
+func getFileCorruptionRisk(key string) string {
+	if strings.HasSuffix(key, ".orc") || strings.HasSuffix(key, ".avro") {
+		return "high" // These formats are very sensitive to corruption
+	}
+	if strings.HasSuffix(key, ".parquet") {
+		return "low" // Parquet files now handled safely by SafeChunkDecoder
+	}
+	return "low"
+}
+
+// validateSizeForFileType validates size mismatches based on file corruption risk
+func (h *Handler) validateSizeForFileType(key string, expectedDecoded, actualRead int64) error {
+	sizeMismatch := actualRead != expectedDecoded
+	risk := getFileCorruptionRisk(key)
+
+	if !sizeMismatch {
+		return nil // No mismatch, all good
+	}
+
+	// Log the mismatch for monitoring
+	logger := logrus.WithFields(logrus.Fields{
+		"key":             key,
+		"expectedDecoded": expectedDecoded,
+		"actualRead":      actualRead,
+		"riskLevel":       risk,
+	})
+
+	switch risk {
+	case "high":
+		logger.Error("Rejecting upload due to size mismatch for high-risk file format")
+		return fmt.Errorf("size mismatch: expected %d bytes, got %d bytes", expectedDecoded, actualRead)
+	case "medium":
+		logger.Warn("Size mismatch detected for medium-risk file format, but allowing upload")
+		return nil
+	default:
+		logger.Info("Size mismatch detected for low-risk file format, allowing upload")
+		return nil
+	}
+}
+
 // handleObject handles object-level operations (GET, PUT, DELETE, HEAD, POST)
 func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -243,49 +326,73 @@ func (h *Handler) getRangeObject(w http.ResponseWriter, r *http.Request, bucket,
 	logger.Info("Processing range request")
 
 	// Get object metadata first to validate range
-	_, err := h.storage.HeadObject(ctx, bucket, key)
+	objInfo, err := h.storage.HeadObject(ctx, bucket, key)
 	if err != nil {
 		logger.WithError(err).Error("Failed to get object info for range request")
 		h.sendError(w, err, http.StatusNotFound)
 		return
 	}
 
-	// For now, simple implementation - return full object with proper headers
-	// TODO: Implement actual range parsing and partial content serving
-	fullObj, err := h.storage.GetObject(ctx, bucket, key)
+	// Parse the range header
+	start, end, err := parseRange(rangeHeader, objInfo.Size)
 	if err != nil {
-		logger.WithError(err).Error("Failed to get object for range request")
-		h.sendError(w, err, http.StatusNotFound)
+		logger.WithError(err).Error("Invalid range header")
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", objInfo.Size))
+		h.sendError(w, fmt.Errorf("invalid range"), http.StatusRequestedRangeNotSatisfiable)
 		return
 	}
-	defer fullObj.Body.Close()
 
+	logger.WithFields(logrus.Fields{
+		"start": start,
+		"end":   end,
+		"size":  objInfo.Size,
+	}).Info("Parsed range request")
+
+	// Get object with range
+	rangeObj, err := h.storage.GetObjectRange(ctx, bucket, key, start, end)
+	if err != nil {
+		logger.WithError(err).Error("Failed to get object range")
+		h.sendError(w, err, http.StatusInternalServerError)
+		return
+	}
+	defer rangeObj.Body.Close()
+
+	// Set headers for partial content response
+	contentLength := end - start + 1
 	headers := w.Header()
-	headers.Set("Content-Type", fullObj.ContentType)
-	headers.Set("Content-Length", strconv.FormatInt(fullObj.Size, 10))
-	headers.Set("ETag", fullObj.ETag)
-	headers.Set("Last-Modified", fullObj.LastModified.Format(http.TimeFormat))
 	headers.Set("Accept-Ranges", "bytes")
+	headers.Set("Content-Type", rangeObj.ContentType)
+	headers.Set("Content-Length", strconv.FormatInt(contentLength, 10))
+	headers.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, objInfo.Size))
+	headers.Set("ETag", rangeObj.ETag)
+	headers.Set("Last-Modified", rangeObj.LastModified.UTC().Format(http.TimeFormat))
 
 	// Add cache headers based on file type
 	if cacheControl, hasCacheControl := getCacheHeaders(key); hasCacheControl {
 		headers.Set("Cache-Control", cacheControl)
 	}
 
-	// For now, return 200 OK with full content instead of 206 Partial Content
-	// This maintains compatibility while we implement proper range support
-	w.WriteHeader(http.StatusOK)
-
-	// Copy object data to response
-	if _, err := io.Copy(w, fullObj.Body); err != nil {
+	// Return 206 Partial Content
+	w.WriteHeader(http.StatusPartialContent)
+	
+	// Copy the range data
+	copied, err := io.Copy(w, rangeObj.Body)
+	if err != nil {
 		if !isClientDisconnectError(err) {
 			logger.WithError(err).Error("Failed to copy range object data")
 		} else {
 			logger.WithError(err).Debug("Client disconnected during range transfer")
 		}
+		return
 	}
 
-	logger.WithField("size", fullObj.Size).Info("Range request completed (full object served)")
+	logger.WithFields(logrus.Fields{
+		"start":      start,
+		"end":        end,
+		"size":       objInfo.Size,
+		"copied":     copied,
+		"expected":   contentLength,
+	}).Info("Range request completed successfully")
 }
 
 // putObject handles PUT requests for objects
@@ -393,8 +500,8 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 				"userAgent": userAgent,
 			}).Warn("Trino chunked upload without size - streaming directly to avoid timeout")
 
-			// Use SmartChunkDecoder for Trino but don't buffer
-			body = storage.NewSmartChunkDecoder(r.Body)
+			// Use AWS chunk decoder for chunked encoding
+			body = storage.NewSafeChunkDecoder(r.Body)
 			size = -1
 			etag = `"streaming-upload-etag"`
 		} else {
@@ -458,7 +565,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 				logger.WithField("userAgent", userAgent).Info("AWS CLI small file - using direct body reader")
 				body = r.Body
 			} else {
-				body = storage.NewSmartChunkDecoder(r.Body)
+				body = storage.NewSafeChunkDecoder(r.Body)
 				logger.Info("Using smart chunk decoder for small file")
 			}
 		}
@@ -494,10 +601,39 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			buf = buf[:n]
 			actualSize = n
 			
+			// Validate size for critical file types to prevent corruption
+			sizeMismatch := false
+			expectedDecoded := size
+			if decodedHeader := r.Header.Get("X-Amz-Decoded-Content-Length"); decodedHeader != "" {
+				if decoded, parseErr := strconv.ParseInt(decodedHeader, 10, 64); parseErr == nil {
+					expectedDecoded = decoded
+				}
+			}
+
+			if n != expectedDecoded {
+				sizeMismatch = true
+				logger.WithFields(logrus.Fields{
+					"expectedSize":         size,
+					"expectedDecoded":      expectedDecoded,
+					"actualRead":           n,
+					"sizeMismatch":         sizeMismatch,
+					"isParquet":           strings.HasSuffix(key, ".parquet"),
+					"isIcebergData":       isIcebergData(key),
+				}).Error("Size mismatch detected in chunked transfer - potential file corruption")
+			}
+
 			logger.WithFields(logrus.Fields{
-				"expectedSize": size,
-				"actualRead": n,
+				"expectedSize":    size,
+				"expectedDecoded": expectedDecoded,
+				"actualRead":      n,
+				"sizeMismatch":    sizeMismatch,
 			}).Info("Successfully read chunked transfer")
+
+			// Validate size based on file corruption risk
+			if err := h.validateSizeForFileType(key, expectedDecoded, n); err != nil {
+				h.sendError(w, err, http.StatusBadRequest)
+				return
+			}
 			
 		} else {
 			logger.Info("Using standard ReadFull strategy")
@@ -530,13 +666,13 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		if r.Header.Get("x-amz-content-sha256") == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" ||
 			r.Header.Get("Content-Encoding") == "aws-chunked" {
 
-			// For AWS CLI clients, bypass SmartChunkDecoder to avoid hanging issues
+			// For AWS CLI clients, use direct chunk decoder
 			if isAWSCLI {
 				logger.WithField("userAgent", userAgent).Info("AWS CLI large file - using direct body reader")
 				body = r.Body
 			} else {
-				// Use SmartChunkDecoder for other clients that might have chunked encoding issues
-				body = storage.NewSmartChunkDecoder(r.Body)
+				// Use AWS chunk decoder for other clients
+				body = storage.NewSafeChunkDecoder(r.Body)
 				logger.Info("Using smart chunk decoder for large file upload")
 			}
 
@@ -552,7 +688,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 			if r.Header.Get("x-amz-sdk-checksum-algorithm") != "" {
 				logger.Warn("Chunk signature verification requested but using non-validating reader")
 			}
-			body = storage.NewSmartChunkDecoder(r.Body)
+			body = storage.NewSafeChunkDecoder(r.Body)
 		}
 
 		// For large files, use a generic ETag (storage backend should calculate if needed)

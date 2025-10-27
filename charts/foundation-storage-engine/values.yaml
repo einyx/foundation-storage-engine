@@ -319,5 +319,9 @@ monitoring:
     interval: 30s
     scrapeTimeout: 10s
     labels: {}
-    # Additional labels for ServiceMonitor
+    annotations: {}
+    # Additional labels for ServiceMonitor - uncomment and set to match your Prometheus instance
     # release: prometheus
+    # Relabeling and metric relabeling rules
+    relabelings: []
+    metricRelabelings: []

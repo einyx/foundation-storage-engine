@@ -414,6 +414,31 @@ func (m *MultiBackend) GetObject(ctx context.Context, bucket, key string) (*Obje
 	return nil, fmt.Errorf("object not found in any backend")
 }
 
+func (m *MultiBackend) GetObjectRange(ctx context.Context, bucket, key string, start, end int64) (*Object, error) {
+	// Try each backend until we find the object
+	backends := m.getBackendsForBucket(bucket)
+	
+	for _, backend := range backends {
+		obj, err := backend.GetObjectRange(ctx, bucket, key, start, end)
+		if err == nil {
+			// Add backend info to metadata
+			if obj.Metadata == nil {
+				obj.Metadata = make(map[string]string)
+			}
+			obj.Metadata["x-backend-source"] = m.getBackendName(backend)
+			return obj, nil
+		}
+		// Continue to next backend if object not found
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "NoSuchKey") {
+			continue
+		}
+		// Return error for other types of errors
+		return nil, err
+	}
+	
+	return nil, fmt.Errorf("object not found in any backend")
+}
+
 func (m *MultiBackend) PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64, metadata map[string]string) error {
 	backend, err := m.getBackendForBucket(bucket)
 	if err != nil {
