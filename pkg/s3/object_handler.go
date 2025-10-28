@@ -67,7 +67,7 @@ func parseRange(rangeHeader string, size int64) (start, end int64, err error) {
 	}
 	
 	// Validate range
-	if start < 0 || end < 0 || start > end || start >= size {
+	if start < 0 || (end < -1) || (end >= 0 && start > end) || (size > 0 && start >= size) {
 		return 0, 0, fmt.Errorf("invalid range: start=%d, end=%d, size=%d", start, end, size)
 	}
 	if end >= size {
